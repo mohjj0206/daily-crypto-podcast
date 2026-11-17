@@ -27,7 +27,7 @@ with open("subs.srt", "w", encoding="utf-8") as f:
 
 # 3. FFmpeg 合成 1080p 深色背景 + 動態聲波 + 繁體中文字幕
 filter_complex = (
-    "[0:v]drawtext=text='每日幣圈早報｜BTC 技術指標與動區頭條深度解析':fontcolor=white:fontsize=46:x=(w-text_w)/2:y=140,"
+    "[0:v]drawtext=text='幣看趨勢｜比特幣與加密貨幣情報':fontcolor=white:fontsize=46:x=(w-text_w)/2:y=140,"
     "drawtext=text='※ 本節目僅供數據與新聞分享，不構成任何投資建議':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=210[bg];"
     "[1:a]showwaves=s=1400x160:mode=cline:colors=#38bdf8:rate=25[waves];"
     "[bg][waves]overlay=(W-w)/2:440[vid];"
@@ -42,13 +42,14 @@ cmd = [
 ]
 subprocess.run(cmd, check=True)
 
-# 4. 自動上傳至 YouTube (預設不公開 unlisted 供確認，之後可改 public)
+# 4. 自動上傳至 YouTube (分段拼組 token_uri 避免瀏覽器複製吃字)
+token_url = "".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"])
 creds = Credentials(
     None,
-    refresh_token=os.environ["YT_REFRESH_TOKEN"],
-    token_uri="https://googleapis.com",
-    client_id=os.environ["YT_CLIENT_ID"],
-    client_secret=os.environ["YT_CLIENT_SECRET"]
+    refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(),
+    token_uri=token_url,
+    client_id=os.environ["YT_CLIENT_ID"].strip(),
+    client_secret=os.environ["YT_CLIENT_SECRET"].strip()
 )
 youtube = build("youtube", "v3", credentials=creds)
 
@@ -56,7 +57,7 @@ body = {
     "snippet": {
         "title": video_title[:95],
         "description": video_desc,
-        "tags": ["比特幣", "加密貨幣", "BTC", "技術分析", "動區動趨", "AI播客"],
+        "tags": ["比特幣", "加密貨幣", "BTC", "技術分析", "動區動趨", "幣看趨勢"],
         "categoryId": "27"
     },
     "status": {"privacyStatus": "unlisted"}
