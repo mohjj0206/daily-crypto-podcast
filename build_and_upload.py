@@ -75,7 +75,7 @@ coins_summary = "\n".join(coins_lines)
 full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
 
 def call_gemini(prompt_txt):
-    models = ["gemini-3.8-flash", "gemini-3.8-pro"]
+    models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
@@ -84,17 +84,23 @@ def call_gemini(prompt_txt):
     for model in models:
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
         body = json.dumps({"contents": [{"parts": [{"text": prompt_txt}]}]}).encode("utf-8")
-        req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-        try:
-            res = json.loads(urllib.request.urlopen(req, timeout=90).read().decode("utf-8"))
-            return res["candidates"][0]["content"]["parts"][0]["text"]
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode("utf-8", errors="ignore")
-            print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
-            last_err = e
-        except Exception as e:
-            print(f"Error calling Gemini model '{model}': {e}")
-            last_err = e
+        for attempt in range(3):
+            req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                res = json.loads(urllib.request.urlopen(req, timeout=90).read().decode("utf-8"))
+                return res["candidates"][0]["content"]["parts"][0]["text"]
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode("utf-8", errors="ignore")
+                print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
+                last_err = e
+                if e.code == 503 and attempt < 2:
+                    time.sleep(10 * (attempt + 1))
+                    continue
+                break
+            except Exception as e:
+                print(f"Error calling Gemini model '{model}': {e}")
+                last_err = e
+                break
 
     if last_err:
         raise last_err
