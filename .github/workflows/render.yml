@@ -27,15 +27,15 @@ jobs:
 
       - name: Run render and upload script
         env:
-          AUDIO_URL: ${{ github.event.client_payload.audio_url }}
-          VIDEO_TITLE: ${{ github.event.client_payload.video_title }}
-          VIDEO_DESC: ${{ github.event.client_payload.video_desc }}
-          SRT_BASE64: ${{ github.event.client_payload.srt_base64 }}
-          SLIDE1_DATA: ${{ github.event.client_payload.slide1_data }}
-          SLIDE2_DATA: ${{ github.event.client_payload.slide2_data }}
-          SLIDE3_DATA: ${{ github.event.client_payload.slide3_data }}
-          TODAY_STR: ${{ github.event.client_payload.today_str }}
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          AUDIO_URL: '${{ github.event.client_payload.audio_url }}'
+          VIDEO_TITLE: '${{ github.event.client_payload.video_title }}'
+          VIDEO_DESC: '${{ github.event.client_payload.video_desc }}'
+          SRT_BASE64: '${{ github.event.client_payload.srt_base64 }}'
+          SLIDE1_DATA: '${{ github.event.client_payload.slide1_data }}'
+          SLIDE2_DATA: '${{ github.event.client_payload.slide2_data }}'
+          SLIDE3_DATA: '${{ github.event.client_payload.slide3_data }}'
+          TODAY_STR: '${{ github.event.client_payload.today_str }}'
+          YT_CLIENT_ID: '${{ secrets.YT_CLIENT_ID }}'
+          YT_CLIENT_SECRET: '${{ secrets.YT_CLIENT_SECRET }}'
+          YT_REFRESH_TOKEN: '${{ secrets.YT_REFRESH_TOKEN }}'
         run: python build_and_upload.py
