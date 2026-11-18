@@ -9,7 +9,8 @@ with open("payload.json", "r", encoding="utf-8") as f:
     payload = json.load(f)
 
 raw_audio = payload["audio_url"]
-audio_url = raw_audio if isinstance(raw_audio, list) else raw_audio
+audio_url = next(iter(raw_audio)) if isinstance(raw_audio, list) else raw_audio
+
 video_title = payload["video_title"]
 video_desc = payload["video_desc"]
 srt_base64 = payload.get("srt_base64", "")
