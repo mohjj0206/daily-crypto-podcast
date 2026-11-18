@@ -87,14 +87,21 @@ def call_gemini(prompt_txt):
         for attempt in range(3):
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             try:
-                res = json.loads(urllib.request.urlopen(req, timeout=90).read().decode("utf-8"))
+                res = json.loads(urllib.request.urlopen(req, timeout=180).read().decode("utf-8"))
                 return res["candidates"][0]["content"]["parts"][0]["text"]
             except urllib.error.HTTPError as e:
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
                 last_err = e
-                if e.code == 503 and attempt < 2:
-                    time.sleep(10 * (attempt + 1))
+                if e.code in (429, 500, 502, 503, 504) and attempt < 2:
+                    time.sleep(15 * (attempt + 1))
+                    continue
+                break
+            except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
+                print(f"Gemini network timeout/error for model '{model}' (attempt {attempt + 1}/3): {e}")
+                last_err = e
+                if attempt < 2:
+                    time.sleep(15 * (attempt + 1))
                     continue
                 break
             except Exception as e:
