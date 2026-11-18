@@ -81,7 +81,7 @@ for idx, (title, color, body, add_chart) in enumerate(cards, 1):
     d.text((845, 175), title, fill=color, font=ft)
     d.line(((845, 235), (1815, 235)), fill="#334155", width=2)
     d.multiline_text((845, 265), body, fill="#f8fafc", font=fb, spacing=20)
-    if add_chart: img.paste(Image.open("chart.png"), (845, 495))
+    if add_chart: img.paste(Image.open("chart.png").convert("RGB"), (845, 495))    
     d.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=fn)
     img.save(f"slide{idx}.png")
 
@@ -89,8 +89,8 @@ with open("slides.txt", "w", encoding="utf-8") as f:
     for i in range(1, 4): f.write(f"file 'slide{i}.png'\nduration {seg:.2f}\n")
     f.write("file 'slide4.png'\nduration 2000\nfile 'slide4.png'\n")
 
-vf = "fps=10,subtitles=subs.srt:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=42'"
-subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-vf", vf, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
+subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-vf", "fps=10,format=yuv420p", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "128k", "-shortest", "base.mp4"], check=True)
+subprocess.run(["ffmpeg", "-y", "-i", "base.mp4", "-vf", "subtitles=subs.srt:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=42'", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "copy", "output.mp4"], check=True)
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
