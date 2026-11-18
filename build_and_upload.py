@@ -1,4 +1,4 @@
-import os, json, base64, subprocess, urllib.request
+import os, re, json, base64, subprocess, urllib.request
 from PIL import Image, ImageDraw, ImageFont
 from opencc import OpenCC
 import matplotlib
