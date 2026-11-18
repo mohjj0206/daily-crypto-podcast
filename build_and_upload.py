@@ -18,18 +18,25 @@ urllib.request.urlretrieve(audio_url, "podcast.mp3")
 cc = OpenCC("s2twp")
 clean_srt = cc.convert(base64.b64decode(payload.get("srt_base64", "")).decode("utf-8"))
 
-def highlight_subs(srt_text):
+def build_ass_subs(srt_text):
+    header = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,30,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,1,0,2,40,40,36,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
     punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
-    out_lines = []
-    for line in srt_text.splitlines():
-        if "-->" in line or line.strip().isdigit() or not line.strip():
-            out_lines.append(line)
-        else:
-            no_punct = re.sub(r'\s+', ' ', re.sub(punct_pat, ' ', line)).strip()
+    events = []
+    for block in srt_text.strip().split("\n\n"):
+        lines = block.splitlines()
+        if len(lines) >= 3 and "-->" in lines[1]:
+            t_parts = lines[1].replace(",", ".").split(" --> ")
+            start = t_parts[0].strip()[1:-1]
+            end = t_parts[1].strip()[1:-1]
+            raw_txt = " ".join(lines[2:])
+            no_punct = re.sub(r'\s+', ' ', re.sub(punct_pat, ' ', raw_txt)).strip()
             hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', no_punct)
-            out_lines.append(hl)
-    return "\n".join(out_lines)
+            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{hl}")
+    return header + "\n".join(events)
+
+with open("subs.ass", "w", encoding="utf-8") as f:
+    f.write(build_ass_subs(clean_srt))
 
 
 with open("subs.srt", "w", encoding="utf-8") as f:
@@ -95,7 +102,7 @@ with open("list.txt", "w", encoding="utf-8") as f:
         f.write(f"file 'p{i}.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
-vf = "subtitles=subs.srt:force_style='FontSize=14,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=36'"
+vf = "ass=subs.ass"
 subprocess.run(["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3", "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
