@@ -75,7 +75,7 @@ coins_summary = "\n".join(coins_lines)
 full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
 
 def call_gemini(prompt_txt):
-    models = ["gemini-2.5-flash", "gemini-2.0-flash"]
+    models = ["gemini-3.8-flash"]
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
