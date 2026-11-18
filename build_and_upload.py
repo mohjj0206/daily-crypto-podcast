@@ -17,8 +17,21 @@ urllib.request.urlretrieve(audio_url, "podcast.mp3")
 
 cc = OpenCC("s2twp")
 clean_srt = cc.convert(base64.b64decode(payload.get("srt_base64", "")).decode("utf-8"))
+
+def highlight_subs(srt_text):
+    kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
+    out_lines = []
+    for line in srt_text.splitlines():
+        if "-->" in line or line.strip().isdigit() or not line.strip():
+            out_lines.append(line)
+        else:
+            hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', line)
+            out_lines.append(hl)
+    return "\n".join(out_lines)
+
 with open("subs.srt", "w", encoding="utf-8") as f:
-    f.write(clean_srt)
+    f.write(highlight_subs(clean_srt))
+
 
 probe = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "podcast.mp3"])
 total_sec = float(probe.decode().strip())
@@ -76,7 +89,7 @@ with open("slides.txt", "w", encoding="utf-8") as f:
     for i in range(1, 5): f.write(f"file 'slide{i}.png'\nduration {seg:.2f}\n")
     f.write("file 'slide4.png'\n")
 
-fc = "[1:a]showwaves=s=620x260:mode=cline:colors=#38bdf8:rate=15[w];[0:v][w]overlay=100:420,fps=15,subtitles=subs.srt:force_style='FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,MarginV=85'[out]"
+fc = "[1:a]showwaves=s=620x220:mode=cline:colors=#38bdf8:rate=15[w];[0:v][w]overlay=100:560,fps=15,subtitles=subs.srt:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=42'[out]"
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-filter_complex", fc, "-map", "[out]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
