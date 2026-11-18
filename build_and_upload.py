@@ -86,11 +86,11 @@ for idx, (title, color, body, add_chart) in enumerate(cards, 1):
     img.save(f"slide{idx}.png")
 
 with open("slides.txt", "w", encoding="utf-8") as f:
-    for i in range(1, 5): f.write(f"file 'slide{i}.png'\nduration {seg:.2f}\n")
-    f.write("file 'slide4.png'\n")
+    for i in range(1, 4): f.write(f"file 'slide{i}.png'\nduration {seg:.2f}\n")
+    f.write("file 'slide4.png'\nduration 2000\nfile 'slide4.png'\n")
 
-vf = "subtitles=subs.srt:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=42'"
-subprocess.run(["ffmpeg", "-y", "-r", "2", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-vf", vf, "-r", "10", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
+vf = "fps=10,subtitles=subs.srt:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=42'"
+subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-vf", vf, "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
