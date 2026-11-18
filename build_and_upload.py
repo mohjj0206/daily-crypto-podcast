@@ -9,7 +9,9 @@ from googleapiclient.http import MediaFileUpload
 with open("payload.json", "r", encoding="utf-8") as f:
     payload = json.load(f)
 
-audio_url = payload["audio_url"]
+raw_audio = payload["audio_url"]
+audio_url = raw_audio if isinstance(raw_audio, list) else raw_audio
+
 video_title = payload["video_title"]
 video_desc = payload["video_desc"]
 srt_base64 = payload.get("srt_base64", "")
