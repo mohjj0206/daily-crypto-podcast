@@ -5,13 +5,11 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# 1. 從 payload.json 安全讀取所有資料與字幕
 with open("payload.json", "r", encoding="utf-8") as f:
     payload = json.load(f)
 
 raw_audio = payload["audio_url"]
 audio_url = raw_audio if isinstance(raw_audio, list) else raw_audio
-
 video_title = payload["video_title"]
 video_desc = payload["video_desc"]
 srt_base64 = payload.get("srt_base64", "")
@@ -20,7 +18,6 @@ slide2_data = payload.get("slide2_data", "")
 slide3_data = payload.get("slide3_data", "")
 today_str = payload.get("today_str", "")
 
-# 2. 下載音檔並還原 100% 零錯字台灣繁體字幕
 urllib.request.urlretrieve(audio_url, "podcast.mp3")
 cc = OpenCC('s2twp')
 raw_srt = base64.b64decode(srt_base64).decode("utf-8")
@@ -28,7 +25,6 @@ clean_srt = cc.convert(raw_srt)
 with open("subs.srt", "w", encoding="utf-8") as f:
     f.write(clean_srt)
 
-# 3. 繪製 4 張 1920x1080 財經簡報投影片
 font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 if not os.path.exists(font_path):
     font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
@@ -49,14 +45,14 @@ slides_info = [
 for idx, (sec_title, accent_color, body_text) in enumerate(slides_info, 1):
     img = Image.new("RGB", (1920, 1080), "#090d16")
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 0, 1920, 110], fill="#1e293b")
+    draw.rectangle((0, 0, 1920, 110), fill="#1e293b")
     draw.text((60, 30), f"幣看趨勢｜比特幣與加密貨幣情報  ({today_str})", fill="#ffffff", font=f_header)
-    draw.rectangle([60, 140, 760, 820], fill="#111827", outline="#38bdf8", width=3)
+    draw.rectangle((60, 140, 760, 820), fill="#111827", outline="#38bdf8", width=3)
     draw.text((165, 190), "雙人深度財經播客對談", fill="#38bdf8", font=f_card_title)
     draw.text((140, 260), "每日精選網路公開市場數據與焦點議題", fill="#94a3b8", font=f_sub)
-    draw.rectangle([800, 140, 1860, 820], fill="#111827", outline=accent_color, width=4)
+    draw.rectangle((800, 140, 1860, 820), fill="#111827", outline=accent_color, width=4)
     draw.text((850, 185), sec_title, fill=accent_color, font=f_card_title)
-    draw.line([(850, 250), (1810, 250)], fill="#334155", width=2)
+    draw.line(((850, 250), (1810, 250)), fill="#334155", width=2)
     draw.multiline_text((850, 290), body_text, fill="#f8fafc", font=f_body, spacing=24)
     draw.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=f_note)
     img.save(f"slide{idx}.png")
@@ -68,7 +64,6 @@ with open("slides.txt", "w", encoding="utf-8") as f:
     f.write("file 'slide4.png'\nduration 600\n")
     f.write("file 'slide4.png'\n")
 
-# 4. FFmpeg 合成輪播簡報 + 動態聲波 + 零錯字字幕
 filter_complex = (
     "[1:a]showwaves=s=620x260:mode=cline:colors=#38bdf8:rate=25[waves];"
     "[0:v][waves]overlay=100:420[vid];"
@@ -83,7 +78,6 @@ cmd = [
 ]
 subprocess.run(cmd, check=True)
 
-# 5. 自動上傳至 YouTube
 token_url = "".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"])
 creds = Credentials(
     None,
