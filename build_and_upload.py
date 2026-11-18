@@ -93,9 +93,12 @@ def call_gemini(prompt_txt):
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
                 last_err = e
-                if e.code in (429, 500, 502, 503, 504) and attempt < 2:
-                    time.sleep(15 * (attempt + 1))
-                    continue
+                if e.code in (429, 500, 502, 503, 504):
+                    if e.code == 429:
+                        break
+                    if attempt < 2:
+                        time.sleep(30 * (attempt + 1))
+                        continue
                 break
             except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
                 print(f"Gemini network timeout/error for model '{model}' (attempt {attempt + 1}/3): {e}")
