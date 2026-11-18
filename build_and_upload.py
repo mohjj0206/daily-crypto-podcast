@@ -20,14 +20,17 @@ clean_srt = cc.convert(base64.b64decode(payload.get("srt_base64", "")).decode("u
 
 def highlight_subs(srt_text):
     kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
+    punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
     out_lines = []
     for line in srt_text.splitlines():
         if "-->" in line or line.strip().isdigit() or not line.strip():
             out_lines.append(line)
         else:
-            hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', line)
+            no_punct = re.sub(r'\s+', ' ', re.sub(punct_pat, ' ', line)).strip()
+            hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', no_punct)
             out_lines.append(hl)
     return "\n".join(out_lines)
+
 
 with open("subs.srt", "w", encoding="utf-8") as f:
     f.write(highlight_subs(clean_srt))
@@ -92,7 +95,7 @@ with open("list.txt", "w", encoding="utf-8") as f:
         f.write(f"file 'p{i}.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
-vf = "subtitles=subs.srt:force_style='FontSize=28,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=42'"
+vf = "subtitles=subs.srt:force_style='FontSize=14,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,BorderStyle=3,Outline=1,MarginV=36'"
 subprocess.run(["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3", "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
