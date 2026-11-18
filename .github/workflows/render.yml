@@ -23,7 +23,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install pillow opencc-python-reimplemented google-api-python-client google-auth-oauthlib
+          pip install pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib
 
       - name: Save payload to JSON
         run: |
