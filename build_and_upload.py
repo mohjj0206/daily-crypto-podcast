@@ -75,11 +75,13 @@ coins_summary = "\n".join(coins_lines)
 full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
 
 def call_gemini(prompt_txt):
-    g_url = f"https://googleapis.com{os.environ['GEMINI_API_KEY'].strip()}"
+    host = "".join(["https", "://", "generativelanguage.", "googleapis.", "com"])
+    g_url = f"{host}/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
     body = json.dumps({"contents": [{"parts": [{"text": prompt_txt}]}]}).encode("utf-8")
     req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     res = json.loads(urllib.request.urlopen(req, timeout=90).read().decode("utf-8"))
     return res["candidates"][0]["content"]["parts"][0]["text"]
+
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。根據數據寫前半段逐字稿（約2200字繁中）。\n{full_report}\n【角色】「男：」熱情直率柴犬；「女：」冷靜傲嬌橘貓。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。禁提媒體名稱、禁提上下半場分段字眼、禁加動作括號與Markdown。\n【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）\n第二行起只能用「男：」「女：」開頭。內容含：反直覺開場、女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負）、BTC均線與恐慌指數体檢、三大焦點正反理性打折解析。結尾自然過渡到看具體幣價（不說再見）。"""
 part1_raw = call_gemini(p1_prompt)
 t_match = re.search(r'^標題[：:]\s*(.+)', part1_raw, re.M)
@@ -95,7 +97,9 @@ for line in full_script.splitlines():
     m = re.match(r'^(男|女)[：:]\s*(.+)', line.strip())
     if m: dialogues.append((m.group(1), m.group(2).strip()))
 
-tts_url = f"https://googleapis.com{os.environ['GOOGLE_TTS_KEY'].strip()}"
+tts_host = "".join(["https", "://", "texttospeech.", "googleapis.", "com"])
+tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].strip()}"
+
 def synth_one(item):
     idx, (role, txt) = item
     v_name = "cmn-TW-Standard-B" if role == "男" else "cmn-TW-Wavenet-A"
