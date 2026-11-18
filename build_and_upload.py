@@ -74,8 +74,8 @@ with open("slides.txt", "w", encoding="utf-8") as f:
     for i in range(1, 5): f.write(f"file 'slide{i}.png'\nduration {seg:.2f}\n")
     f.write("file 'slide4.png'\n")
 
-fc = "[0:v]fps=25,setpts=PTS-STARTPTS[bg];[1:a]showwaves=s=620x260:mode=cline:colors=#38bdf8:rate=25[w];[bg][w]overlay=100:420[v];[v]subtitles=subs.srt:force_style='FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,MarginV=85'[out]"
-subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-filter_complex", fc, "-map", "[out]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
+fc = "[1:a]showwaves=s=620x260:mode=cline:colors=#38bdf8:rate=15[w];[0:v][w]overlay=100:420,fps=15,subtitles=subs.srt:force_style='FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,MarginV=85'[out]"
+subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-filter_complex", fc, "-map", "[out]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
