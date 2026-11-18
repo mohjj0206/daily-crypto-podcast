@@ -143,7 +143,7 @@ def fmt_ass_t(sec):
     m, s = divmod(r, 60)
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
-ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,30,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,1,0,2,40,40,36,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,20,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,1,0,2,27,27,24,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
 punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
 cur_t, evs = 0.0, []
@@ -229,12 +229,13 @@ for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
     elif ctype == "bars": img.paste(Image.open("chart_bars.png").convert("RGB"), (845, 520))
     elif ctype == "dual": img.paste(Image.open("chart_dual.png").convert("RGB"), (845, 520))
     d.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=fn)
+    img = img.resize((1280, 720), Image.LANCZOS)
     img.save(f"slide{idx}.png")
 seg = cur_t / 8.0
 with open("list.txt", "w", encoding="utf-8") as f:
     for i in range(1, 9):
         dur = seg if i < 8 else (seg + 30)
-        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "10", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
+        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "2", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
         f.write(f"file 'p{i}.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
