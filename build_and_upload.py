@@ -143,3 +143,26 @@ req = youtube.videos().insert(part="snippet,status", body={"snippet": {"title": 
 res = None
 while res is None: _, res = req.next_chunk()
 print("Uploaded Video ID:", res["id"])
+# 自動生成 1280x720 爆款紅黃大字報封面縮圖 (結合橘貓柴犬 IP + 今日爆款標題)
+t_img = Image.new("RGB", (1280, 720), "#090d16")
+td = ImageDraw.Draw(t_img)
+td.rectangle((0, 0, 1280, 720), outline="#fbbf24", width=12)
+td.rectangle((45, 45, 520, 110), fill="#ef4444")
+td.text((68, 56), "幣看趨勢｜每日深度財經情報", fill="#ffffff", font=ImageFont.truetype(fp, 32))
+
+raw_t = re.sub(r'^【幣看趨勢】|\([^)]+\)$', '', payload["video_title"]).strip()
+mid = len(raw_t) // 2
+line1, line2 = raw_t[:mid], raw_t[mid:]
+f_big = ImageFont.truetype(fp, 66)
+td.text((50, 175), line1, fill="#fbbf24", font=f_big)
+td.rectangle((45, 295, 760, 405), fill="#dc2626")
+td.text((60, 312), line2, fill="#ffffff", font=f_big)
+td.text((50, 480), "・BTC / ETH / SOL / XRP 多空均線與 RSI 掃描", fill="#38bdf8", font=ImageFont.truetype(fp, 30))
+td.text((50, 540), "・拒絕盲目跟風，理性拆解市場數據與風險", fill="#cbd5e1", font=ImageFont.truetype(fp, 30))
+
+if os.path.exists("avatar.png"):
+    t_img.paste(Image.open("avatar.png").resize((430, 430)), (800, 145))
+
+t_img.save("thumb.jpg", "JPEG", quality=92)
+youtube.thumbnails().set(videoId=res["id"], media_body=MediaFileUpload("thumb.jpg")).execute()
+print("Custom thumbnail uploaded successfully!")
