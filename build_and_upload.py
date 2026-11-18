@@ -75,8 +75,8 @@ for idx, (title, color, body, add_chart) in enumerate(cards, 1):
     d.rectangle((60, 135, 760, 825), fill="#111827", outline="#38bdf8", width=3)
     d.text((195, 165), "幣看趨勢・雙人財經播客", fill="#38bdf8", font=ft)
     if os.path.exists("avatar.png"):
-        av = Image.open("avatar.png").resize((320, 320))
-        img.paste(av, (250, 225))
+        av = Image.open("avatar.png").resize((480, 480))
+        img.paste(av, (170, 260))
     d.rectangle((800, 135, 1860, 825), fill="#111827", outline=color, width=4)
     d.text((845, 175), title, fill=color, font=ft)
     d.line(((845, 235), (1815, 235)), fill="#334155", width=2)
