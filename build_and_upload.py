@@ -60,8 +60,10 @@ for idx, (title, color, body, add_chart) in enumerate(cards, 1):
     d.rectangle((0, 0, 1920, 105), fill="#1e293b")
     d.text((60, 28), f"幣看趨勢｜比特幣與加密貨幣情報  ({payload.get('today_str', '')})", fill="#ffffff", font=fh)
     d.rectangle((60, 135, 760, 825), fill="#111827", outline="#38bdf8", width=3)
-    d.text((165, 185), "雙人深度財經播客對談", fill="#38bdf8", font=ft)
-    d.text((135, 250), "每日精選網路公開市場數據與焦點議題", fill="#94a3b8", font=fs)
+    d.text((195, 165), "幣看趨勢・雙人財經播客", fill="#38bdf8", font=ft)
+    if os.path.exists("avatar.png"):
+        av = Image.open("avatar.png").resize((320, 320))
+        img.paste(av, (250, 225))
     d.rectangle((800, 135, 1860, 825), fill="#111827", outline=color, width=4)
     d.text((845, 175), title, fill=color, font=ft)
     d.line(((845, 235), (1815, 235)), fill="#334155", width=2)
