@@ -1,6 +1,9 @@
 import os, json, base64, subprocess, urllib.request
 from PIL import Image, ImageDraw, ImageFont
 from opencc import OpenCC
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -10,97 +13,73 @@ with open("payload.json", "r", encoding="utf-8") as f:
 
 raw_audio = payload["audio_url"]
 audio_url = next(iter(raw_audio)) if isinstance(raw_audio, list) else raw_audio
-
-video_title = payload["video_title"]
-video_desc = payload["video_desc"]
-srt_base64 = payload.get("srt_base64", "")
-slide1_data = payload.get("slide1_data", "")
-slide2_data = payload.get("slide2_data", "")
-slide3_data = payload.get("slide3_data", "")
-today_str = payload.get("today_str", "")
-
 urllib.request.urlretrieve(audio_url, "podcast.mp3")
-cc = OpenCC('s2twp')
-raw_srt = base64.b64decode(srt_base64).decode("utf-8")
-clean_srt = cc.convert(raw_srt)
+
+cc = OpenCC("s2twp")
+clean_srt = cc.convert(base64.b64decode(payload.get("srt_base64", "")).decode("utf-8"))
 with open("subs.srt", "w", encoding="utf-8") as f:
     f.write(clean_srt)
 
-font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
-if not os.path.exists(font_path):
-    font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+probe = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "podcast.mp3"])
+total_sec = float(probe.decode().strip())
+seg = total_sec / 4.0
 
-f_header = ImageFont.truetype(font_path, 42)
-f_sub = ImageFont.truetype(font_path, 26)
-f_card_title = ImageFont.truetype(font_path, 38)
-f_body = ImageFont.truetype(font_path, 32)
-f_note = ImageFont.truetype(font_path, 22)
+k_url = "".join(["https", "://", "data-api.binance.", "vision", "/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=100"])
+klines = json.loads(urllib.request.urlopen(k_url).read().decode("utf-8"))
+closes = [float(k[4]) for k in klines]
+ma20 = [sum(closes[max(0, i-19):i+1])/len(closes[max(0, i-19):i+1]) for i in range(len(closes))]
 
-slides_info = [
-    ("第一段｜市場體檢與情緒溫度計", "#38bdf8", cc.convert(slide1_data)),
-    ("第二段｜近期三大市場焦點深度解析", "#fbbf24", cc.convert(slide2_data)),
-    ("第三段｜前20大市值主流幣即時行情與均線攻防", "#34d399", cc.convert(slide3_data)),
-    ("第四段｜BTC 與 ETH 多空關鍵觀察策略", "#f472b6", "聚焦兩大龍頭關鍵支撐與壓力結構\n・觀察 BTC 能否重新站回 200週與 200日均線\n・留意 14日 RSI 超賣後的動能修復訊號\n・嚴控部位風險，避免盲目追高殺低")
-]
+fig, ax = plt.subplots(figsize=(9.2, 3.0), dpi=100)
+fig.patch.set_facecolor("#111827")
+ax.set_facecolor("#0f172a")
+ax.plot(closes, color="#38bdf8", linewidth=2.5, label="BTC Close")
+ax.plot(ma20, color="#fbbf24", linewidth=1.8, linestyle="--", label="20D MA")
+ax.tick_params(colors="#94a3b8", labelsize=9)
+ax.grid(color="#1e293b", linestyle="-", linewidth=0.8)
+ax.legend(facecolor="#1e293b", edgecolor="none", labelcolor="white", fontsize=9)
+for s in ["top", "right"]: ax.spines[s].set_visible(False)
+for s in ["bottom", "left"]: ax.spines[s].set_color("#334155")
+plt.tight_layout()
+plt.savefig("chart.png", facecolor="#111827")
+plt.close()
 
-for idx, (sec_title, accent_color, body_text) in enumerate(slides_info, 1):
+fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+if not os.path.exists(fp): fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+fh, fs, ft, fb, fn = ImageFont.truetype(fp, 40), ImageFont.truetype(fp, 24), ImageFont.truetype(fp, 36), ImageFont.truetype(fp, 30), ImageFont.truetype(fp, 22)
+
+s1 = cc.convert(payload.get("slide1_data", ""))
+s2 = "\n\n".join(cc.convert(payload.get("slide2_data", "")).split("\n"))
+s3 = cc.convert(payload.get("slide3_data", ""))
+s4 = "【多頭進攻觀察重點】\n・關注 BTC 能否放量站回 200週與 200日均線\n・留意 ETH 能否守穩關鍵整數關卡並帶動資金回流\n\n【空頭防守與風險控管】\n・觀察 14日 RSI 極度超賣後是否出現背離修復\n・短線波動劇烈，嚴控槓桿與單一幣種倉位比例"
+
+cards = [("第一段｜市場體檢與情緒溫度計", "#38bdf8", s1, False), ("第二段｜近期三大市場焦點深度解析", "#fbbf24", s2, False), ("第三段｜主流幣行情與 BTC 100日均線走勢", "#34d399", s3, True), ("第四段｜BTC 與 ETH 多空關鍵觀察策略", "#f472b6", s4, False)]
+
+for idx, (title, color, body, add_chart) in enumerate(cards, 1):
     img = Image.new("RGB", (1920, 1080), "#090d16")
-    draw = ImageDraw.Draw(img)
-    draw.rectangle((0, 0, 1920, 110), fill="#1e293b")
-    draw.text((60, 30), f"幣看趨勢｜比特幣與加密貨幣情報  ({today_str})", fill="#ffffff", font=f_header)
-    draw.rectangle((60, 140, 760, 820), fill="#111827", outline="#38bdf8", width=3)
-    draw.text((165, 190), "雙人深度財經播客對談", fill="#38bdf8", font=f_card_title)
-    draw.text((140, 260), "每日精選網路公開市場數據與焦點議題", fill="#94a3b8", font=f_sub)
-    draw.rectangle((800, 140, 1860, 820), fill="#111827", outline=accent_color, width=4)
-    draw.text((850, 185), sec_title, fill=accent_color, font=f_card_title)
-    draw.line(((850, 250), (1810, 250)), fill="#334155", width=2)
-    draw.multiline_text((850, 290), body_text, fill="#f8fafc", font=f_body, spacing=24)
-    draw.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=f_note)
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 0, 1920, 105), fill="#1e293b")
+    d.text((60, 28), f"幣看趨勢｜比特幣與加密貨幣情報  ({payload.get('today_str', '')})", fill="#ffffff", font=fh)
+    d.rectangle((60, 135, 760, 825), fill="#111827", outline="#38bdf8", width=3)
+    d.text((165, 185), "雙人深度財經播客對談", fill="#38bdf8", font=ft)
+    d.text((135, 250), "每日精選網路公開市場數據與焦點議題", fill="#94a3b8", font=fs)
+    d.rectangle((800, 135, 1860, 825), fill="#111827", outline=color, width=4)
+    d.text((845, 175), title, fill=color, font=ft)
+    d.line(((845, 235), (1815, 235)), fill="#334155", width=2)
+    d.multiline_text((845, 265), body, fill="#f8fafc", font=fb, spacing=20)
+    if add_chart: img.paste(Image.open("chart.png"), (845, 495))
+    d.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=fn)
     img.save(f"slide{idx}.png")
 
 with open("slides.txt", "w", encoding="utf-8") as f:
-    f.write("file 'slide1.png'\nduration 240\n")
-    f.write("file 'slide2.png'\nduration 270\n")
-    f.write("file 'slide3.png'\nduration 300\n")
-    f.write("file 'slide4.png'\nduration 600\n")
+    for i in range(1, 5): f.write(f"file 'slide{i}.png'\nduration {seg:.2f}\n")
     f.write("file 'slide4.png'\n")
 
-filter_complex = (
-    "[1:a]showwaves=s=620x260:mode=cline:colors=#38bdf8:rate=25[waves];"
-    "[0:v][waves]overlay=100:420[vid];"
-    "[vid]subtitles=subs.srt:force_style='FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,MarginV=85'[out]"
-)
+fc = "[0:v]fps=25,setpts=PTS-STARTPTS[bg];[1:a]showwaves=s=620x260:mode=cline:colors=#38bdf8:rate=25[w];[bg][w]overlay=100:420[v];[v]subtitles=subs.srt:force_style='FontSize=26,PrimaryColour=&H00FFFFFF,BackColour=&H80000000,BorderStyle=3,Outline=1,MarginV=85'[out]"
+subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt", "-i", "podcast.mp3", "-filter_complex", fc, "-map", "[out]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
-cmd = [
-    "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "slides.txt",
-    "-i", "podcast.mp3", "-filter_complex", filter_complex,
-    "-map", "[out]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast",
-    "-crf", "25", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"
-]
-subprocess.run(cmd, check=True)
-
-token_url = "".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"])
-creds = Credentials(
-    None,
-    refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(),
-    token_uri=token_url,
-    client_id=os.environ["YT_CLIENT_ID"].strip(),
-    client_secret=os.environ["YT_CLIENT_SECRET"].strip()
-)
+creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
-
-body = {
-    "snippet": {
-        "title": video_title[:95],
-        "description": video_desc,
-        "tags": ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
-        "categoryId": "27"
-    },
-    "status": {"privacyStatus": "unlisted"}
-}
-media = MediaFileUpload("output.mp4", chunksize=1024*1024*5, resumable=True)
-req = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+req = youtube.videos().insert(part="snippet,status", body={"snippet": {"title": payload["video_title"][:95], "description": payload["video_desc"], "tags": ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"], "categoryId": "27"}, "status": {"privacyStatus": "unlisted"}}, media_body=MediaFileUpload("output.mp4", chunksize=1024*1024*5, resumable=True))
 res = None
-while res is None:
-    _, res = req.next_chunk()
+while res is None: _, res = req.next_chunk()
 print("Uploaded Video ID:", res["id"])
