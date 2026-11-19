@@ -285,14 +285,85 @@ td.rectangle((0, 0, 1280, 720), outline="#fbbf24", width=12)
 td.rectangle((45, 45, 520, 110), fill="#ef4444")
 td.text((68, 56), "幣看趨勢｜每日深度財經情報", fill="#ffffff", font=ImageFont.truetype(fp, 32))
 raw_t = re.sub(r'^【幣看趨勢】|\([^)]+\)$', '', video_title).strip()
-mid = len(raw_t) // 2
-f_big = ImageFont.truetype(fp, 66)
-td.text((50, 175), raw_t[:mid], fill="#fbbf24", font=f_big)
-td.rectangle((45, 295, 760, 405), fill="#dc2626")
-td.text((60, 312), raw_t[mid:], fill="#ffffff", font=f_big)
+
+# 封面主標題：依實際像素寬度自動縮放並換行，避免超出安全區或遮住右側角色。
+def split_thumb_title(text, font, draw, max_width, max_lines=3):
+    text = re.sub(r'\s+', '', text).strip()
+    if not text:
+        return []
+
+    preferred_breaks = ('！', '？', '：', '｜', '｜', '，', '、')
+    lines = []
+    current = ''
+    for char in text:
+        trial = current + char
+        if draw.textbbox((0, 0), trial, font=font)[2] <= max_width:
+            current = trial
+        else:
+            if current:
+                lines.append(current)
+            current = char
+        if len(current) >= 11 and char in preferred_breaks:
+            lines.append(current)
+            current = ''
+        elif len(current) >= 12:
+            lines.append(current)
+            current = ''
+
+    if current:
+        lines.append(current)
+
+    if len(lines) > max_lines:
+        merged = ' '.join(lines)
+        lines = []
+        current = ''
+        for char in merged.replace(' ', ''):
+            trial = current + char
+            if draw.textbbox((0, 0), trial, font=font)[2] <= max_width:
+                current = trial
+            elif current:
+                lines.append(current)
+                current = char
+        if current:
+            lines.append(current)
+        while len(lines) > max_lines:
+            lines[max_lines - 1] += lines.pop()
+
+    return lines[:max_lines]
+
+thumb_font = None
+thumb_lines = []
+thumb_max_width = 720
+for thumb_size in range(58, 43, -1):
+    candidate_font = ImageFont.truetype(fp, thumb_size)
+    candidate_lines = split_thumb_title(raw_t, candidate_font, td, thumb_max_width)
+    widest = max((td.textbbox((0, 0), line, font=candidate_font)[2] for line in candidate_lines), default=0)
+    if len(candidate_lines) <= 3 and widest <= thumb_max_width:
+        thumb_font = candidate_font
+        thumb_lines = candidate_lines
+        break
+if thumb_font is None:
+    thumb_font = ImageFont.truetype(fp, 44)
+    thumb_lines = split_thumb_title(raw_t, thumb_font, td, thumb_max_width)
+
+line_count = max(1, len(thumb_lines))
+line_height = 85 if line_count >= 3 else 78
+red_y = 155 if line_count == 3 else (175 if line_count == 2 else 205)
+red_height = 110 if line_count == 1 else (line_count * 85 + 15)
+red_bottom = min(435, red_y + red_height)
+text_block_height = line_count * line_height
+text_y = red_y + max(15, (red_height - text_block_height) // 2)
+
+td.rectangle((45, red_y - 10, 760, red_bottom), fill="#dc2626")
+for line_index, line in enumerate(thumb_lines):
+    line_width = td.textbbox((0, 0), line, font=thumb_font)[2]
+    line_x = max(50, min(770 - line_width, 50 + (720 - line_width) // 2))
+    td.text((line_x, text_y + line_index * line_height), line, fill="#ffffff", font=thumb_font)
+
 td.text((50, 480), "・BTC / ETH / SOL / XRP 多空均線與 RSI 掃描", fill="#38bdf8", font=ImageFont.truetype(fp, 30))
 td.text((50, 540), "・拒絕盲目跟風，理性拆解市場數據與風險", fill="#cbd5e1", font=ImageFont.truetype(fp, 30))
 if os.path.exists("avatar.png"): t_img.paste(Image.open("avatar.png").resize((430, 430)), (800, 145))
+
 t_img.save("thumb.jpg", "JPEG", quality=92)
 youtube.thumbnails().set(videoId=res["id"], media_body=MediaFileUpload("thumb.jpg")).execute()
 print("Custom thumbnail uploaded successfully!")
