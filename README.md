@@ -11,7 +11,7 @@ daily-crypto-podcast
 
 ## 日常版動態簡報
 
-`.github/workflows/render.yml` 會安裝 Playwright 與 Chromium。`build_and_upload.py` 使用 1280×720 HTML/CSS 圖卡錄製動態進場，再以 FFmpeg 轉成 24fps 影片；超過 6 秒的圖卡會定格延長。封面主題圖優先由 Gemini 圖像模型產生，失敗時依序改用 CoinGecko 幣種圖示或本機繪製的金屬幣徽。
+`.github/workflows/render.yml` 會安裝 Playwright 與 Chromium。`build_and_upload.py` 使用 1280×720 HTML/CSS 圖卡錄製動態進場，再以 FFmpeg 轉成 24fps 影片；超過 6 秒的圖卡會定格延長。簡報固定顯示 BTC、ETH、恐慌貪婪指數與 DCA 報酬狀態列，內容依頁面使用圖表、利多／風險對照或重點字卡版型。封面主題圖優先由 Gemini 圖像模型產生，失敗時依序改用 CoinGecko 幣種圖示或本機繪製的金屬幣徽。
 
 主影片逐字稿以 `[SLIDE_1]` 至 `[SLIDE_15]` 錨點決定圖卡切換，時間取自每段 TTS 音檔實長；章節時間也沿用相同錨點。第 2 張圖卡以歷史月底市值柱狀圖對照累計投入成本線（當月顯示截至今日估值），語音只報當月買進概況與累計成績。簡報每頁最多強調 3 個核心金額、百分比或指標值，日期、編號與一般描述數字不加底線。語音會將英文 HODL 縮寫統一轉成自然中文。頻道以長期持有與紀律 DCA 為核心，不鼓勵盲目短線或高槓桿交易；觀察卡聚焦未來 24 小時（今日至明晨）。
 

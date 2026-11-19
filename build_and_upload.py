@@ -534,7 +534,7 @@ p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段�
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
-【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，每行濃縮一個焦點的利多與理性折價，不可包含媒體名稱。
+【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，格式必須為「利多：…；風險：…」，清楚拆分焦點利多與以太喵理性折價，不可包含媒體名稱。
 【內容】由以太喵簡短開場，並以[SLIDE_1]標記開場對話；風險提醒後必須緊接DCA帳本播報，由比特汪或以太喵以[SLIDE_2]開頭新對話。只用一句話說明自2025年10月起按指定日期與金額紀律定投，再報最新當月買進概況、總投入台幣、累計BTC（8位小數）、台幣及美元平均買入價格、目前總價值與帳面賺賠金額及百分比；不可朗讀完整月表，也不可把帳本播報移到風險提醒之前。之後依序分析恐慌貪婪指數、BTC四大均線、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 def normalize_long_term_terms(text):
     text = re.sub(r"\bHODLers?\b", "長期持有者", str(text), flags=re.I)
@@ -918,12 +918,29 @@ fng_direction = "升高" if fng_change > 0 else "降低" if fng_change < 0 else 
 sentiment_slide = f"今日：{fng_num}（{today_fng['value_classification']}）\n昨日：{fng_yesterday}，{fng_direction} {abs(fng_change)} 點"
 conditions_24h = slide_24h_conditions
 
+
+def split_news_summary(summary):
+    cleaned = re.sub(r"^\s*多空打折摘要\s*", "", str(summary)).strip()
+    match = re.search(
+        r"利多[：:]\s*(.*?)\s*[；;]\s*(?:風險|理性折價)[：:]\s*(.*)",
+        cleaned,
+        flags=re.DOTALL,
+    )
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+
+    return (
+        cleaned,
+        "利多敘事仍需由後續價格、量能與實際進展驗證，並留意預期落空風險。",
+    )
+
+
 news_slides = [
     (
         f"市場焦點 {index + 1}｜{t3[index]}",
         "#fbbf24",
-        f"多空打折摘要\n{slide_news[index]}",
-        None,
+        slide_news[index],
+        "compare",
     )
     for index in range(3)
 ]
@@ -1003,11 +1020,13 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
         highlights = highlights.splitlines()
     highlight_state = {"remaining": 3}
     title_markup = highlight_key_numbers(slide_data.get("title", ""), highlight_state)
-    list_markup = "".join(
-        f"<li>{highlight_key_numbers(item, highlight_state)}</li>"
-        for item in highlights
-        if str(item).strip()
-    )
+    list_markup = ""
+    if slide_data.get("layout") != "compare":
+        list_markup = "".join(
+            f"<li>{highlight_key_numbers(item, highlight_state)}</li>"
+            for item in highlights
+            if str(item).strip()
+        )
     chart_markup = ""
     chart_path = slide_data.get("chart_path")
     if chart_path:
@@ -1031,12 +1050,51 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
             '</div>'
         )
 
-    content_class = "content with-visual" if chart_markup else "content"
+    layout = slide_data.get("layout")
+    if layout not in {"chart", "compare", "hero"}:
+        layout = "chart" if chart_markup else "hero"
+    if layout == "chart" and not chart_markup:
+        layout = "hero"
+
+    if layout == "compare":
+        positive_markup = highlight_key_numbers(
+            slide_data.get("compare_positive", ""), highlight_state
+        )
+        risk_markup = highlight_key_numbers(
+            slide_data.get("compare_risk", ""), highlight_state
+        )
+        content_markup = (
+            '<section class="content compare-layout">'
+            '<article class="compare-panel positive">'
+            '<h2>市場焦點與利多敘事</h2>'
+            f'<ul><li>{positive_markup}</li></ul></article>'
+            '<article class="compare-panel risk">'
+            '<h2>以太喵理性打折與隱藏風險</h2>'
+            f'<ul><li>{risk_markup}</li></ul></article>'
+            '</section>'
+        )
+    elif layout == "chart":
+        content_markup = (
+            '<section class="content chart-layout">'
+            f'{chart_markup}<ul>{list_markup}</ul></section>'
+        )
+    else:
+        content_markup = (
+            f'<section class="content hero-layout"><ul>{list_markup}</ul></section>'
+        )
+
     frame_class = "frame compact" if slide_data.get("compact") else "frame"
-    if slide_data.get("compact"):
-        content_class += " compact"
     label_markup = html.escape(str(slide_data.get("label", "")))
     accent = html.escape(str(slide_data.get("accent", "#fbbf24")))
+    ticker_markup = "".join(
+        '<div class="ticker-item">'
+        f'<span class="ticker-label">{html.escape(str(item.get("label", "")))}</span>'
+        f'<strong class="{html.escape(str(item.get("tone", "neutral")))}">'
+        f'{html.escape(str(item.get("value", "")))}</strong>'
+        f'<span class="ticker-detail {html.escape(str(item.get("tone", "neutral")))}">'
+        f'{html.escape(str(item.get("detail", "")))}</span></div>'
+        for item in slide_data.get("ticker_items", [])
+    )
     record_seconds = min(float(dur_sec), 6.0)
     remaining = max(0.0, float(dur_sec) - record_seconds)
     tpad_filter = (
@@ -1069,17 +1127,35 @@ body::before {{
   from {{ transform: translate3d(0, 0, 0); }}
   to {{ transform: translate3d(48px, 24px, 0); }}
 }}
-.topline {{
-  position: absolute; top: 28px; left: 60px; right: 60px; z-index: 1;
-  color: #94a3b8; font-size: 19px; letter-spacing: 2px;
+.ticker {{
+  position: absolute; inset: 0 0 auto; z-index: 2; height: 46px;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center; padding: 0 26px;
+  background: rgba(15, 23, 42, .92);
+  border-bottom: 1px solid rgba(251, 191, 36, .72);
+  box-shadow: 0 2px 14px rgba(251, 191, 36, .12);
+  backdrop-filter: blur(12px);
 }}
-.topline::before {{
-  display: inline-block; width: 9px; height: 9px; margin-right: 12px;
-  border-radius: 50%; background: #38bdf8; content: "";
-  box-shadow: 0 0 16px #38bdf8;
+.ticker-item {{
+  min-width: 0; display: flex; justify-content: center; align-items: baseline;
+  gap: 8px; padding: 0 10px; white-space: nowrap; overflow: hidden;
+}}
+.ticker-item + .ticker-item {{ border-left: 1px solid rgba(148, 163, 184, .22); }}
+.ticker-label {{ color: #94a3b8; font-size: 12px; }}
+.ticker-item strong {{ color: #f8fafc; font-size: 15px; font-variant-numeric: tabular-nums; }}
+.ticker-item strong.positive {{ color: #4ade80; }}
+.ticker-item strong.negative {{ color: #fb7185; }}
+.ticker-item strong.neutral {{ color: #f8fafc; }}
+.ticker-detail {{ font-size: 12px; overflow: hidden; text-overflow: ellipsis; }}
+.ticker-detail.positive {{ color: #4ade80; }}
+.ticker-detail.negative {{ color: #fb7185; }}
+.ticker-detail.neutral {{ color: #cbd5e1; }}
+.sr-only {{
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 60px; right: 60px; top: 92px; bottom: 132px;
+  position: absolute; left: 60px; right: 60px; top: 62px; bottom: 118px;
   padding: 28px 40px; border: 2px solid rgba(251,191,36,.78);
   border-radius: 18px; background: rgba(15,23,42,.86);
   box-shadow: 0 0 34px rgba(56,189,248,.12), inset 0 0 34px rgba(251,191,36,.035);
@@ -1098,8 +1174,8 @@ h1 {{
   min-height: 0; flex: 1 1 auto; display: grid;
   grid-template-columns: minmax(0, 1fr); align-items: center;
 }}
-.content.with-visual {{ grid-template-columns: minmax(0, 1fr) minmax(380px, .95fr); gap: 24px; }}
-.content.compact.with-visual {{ grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }}
+.chart-layout {{ grid-template-columns: minmax(0, 62fr) minmax(0, 38fr); gap: 24px; }}
+.compare-layout {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }}
 ul {{ list-style: none; margin: 0; padding: 0; min-width: 0; }}
 li {{
   position: relative; margin: 0 0 12px; padding-left: 26px;
@@ -1118,8 +1194,8 @@ li:nth-child(4) {{ animation-delay: 2.15s; }}
 li:nth-child(5) {{ animation-delay: 2.75s; }}
 li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame.compact h1 {{ font-size: 32px; margin-bottom: 12px; }}
-.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
-.compact li::before {{ width: 7px; height: 7px; }}
+.frame.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
+.frame.compact li::before {{ width: 7px; height: 7px; }}
 @keyframes fadeInUp {{
   from {{ opacity: 0; transform: translateY(24px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -1137,7 +1213,8 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
   display: flex; align-items: center; justify-content: center;
   animation: chartIn .9s cubic-bezier(.2,.8,.2,1) .45s both, breathe 5s ease-in-out 1.4s infinite;
 }}
-.chart img {{ display: block; width: 100%; max-height: 280px; object-fit: contain; }}
+.chart-layout .visual {{ min-height: 300px; max-height: none; }}
+.chart img {{ display: block; width: 100%; height: 100%; max-height: 410px; object-fit: contain; }}
 @keyframes chartIn {{
   from {{ opacity: 0; transform: scale(.88); }}
   to {{ opacity: 1; transform: scale(1); }}
@@ -1153,16 +1230,38 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .gauge-marker {{ position: absolute; top: 43%; width: 5px; height: 42px; background: white; box-shadow: 0 0 12px white; }}
 .gauge-value {{ color: #fbbf24; font-size: 52px; font-weight: 800; }}
 .gauge-value small {{ color: #94a3b8; font-size: 21px; }}
+.compare-panel {{
+  min-width: 0; padding: 22px 24px; border: 2px solid; border-radius: 16px;
+  background: rgba(8, 15, 28, .72); overflow: hidden;
+}}
+.compare-panel.positive {{ border-color: rgba(56, 189, 248, .82); animation: compareLeft .8s cubic-bezier(.2,.8,.2,1) .25s both; }}
+.compare-panel.risk {{ border-color: rgba(251, 191, 36, .82); animation: compareRight .8s cubic-bezier(.2,.8,.2,1) .65s both; }}
+.compare-panel h2 {{ margin: 0 0 20px; font-size: 22px; color: #7dd3fc; }}
+.compare-panel.risk h2 {{ color: #fbbf24; }}
+.compare-panel li {{ margin: 0; padding-left: 22px; font-size: 25px; }}
+.compare-panel li::before {{ width: 7px; height: 7px; }}
+@keyframes compareLeft {{ from {{ opacity: 0; transform: translateX(-36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
+@keyframes compareRight {{ from {{ opacity: 0; transform: translateX(36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
+.hero-layout ul {{ width: 100%; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }}
+.hero-layout li {{
+  max-width: 100%; margin: 0; padding: 16px 28px; border: 1px solid rgba(251,191,36,.38);
+  border-radius: 14px; background: rgba(15,23,42,.72);
+  box-shadow: 0 0 24px rgba(251,191,36,.08);
+  font-size: 42px; font-weight: 750; line-height: 1.28;
+  animation: heroPop .75s cubic-bezier(.16,1,.3,1) both;
+}}
+.hero-layout li::before {{ display: none; }}
+.hero-layout li:nth-child(1) {{ animation-delay: .35s; }}
+.hero-layout li:nth-child(2) {{ animation-delay: .6s; }}
+.hero-layout li:nth-child(3) {{ animation-delay: .85s; }}
+@keyframes heroPop {{ from {{ opacity: 0; transform: scale(.86) translateY(20px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
 </style>
 </head>
 <body>
-<div class="topline">{label_markup}</div>
-<main class="{frame_class}" style="--accent:{accent}">
+<header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
+<main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
-  <section class="{content_class}">
-    <ul>{list_markup}</ul>
-    {chart_markup}
-  </section>
+  {content_markup}
 </main>
   <script>
   window.fitSlideLayout = () => {{
@@ -1377,6 +1476,34 @@ if slideshow_duration <= 0:
 slide_durations = calculate_slide_durations(
     slide_start_times, slideshow_duration, intro_video_duration
 )
+dca_return_pct = float(dca_portfolio.get("total_return_pct", 0.0))
+fng_tone = "negative" if fng_num <= 40 else "positive" if fng_num >= 60 else "neutral"
+ticker_items = [
+    {
+        "label": "BTC",
+        "value": f"${float(cur_p):,.2f}",
+        "detail": f"{btc_pct:+.2f}% 24H",
+        "tone": "positive" if btc_pct >= 0 else "negative",
+    },
+    {
+        "label": "ETH",
+        "value": f"${float(eth_cl[-1]):,.2f}",
+        "detail": f"{eth_pct:+.2f}% 24H",
+        "tone": "positive" if eth_pct >= 0 else "negative",
+    },
+    {
+        "label": "恐慌貪婪指數",
+        "value": str(fng_num),
+        "detail": str(today_fng["value_classification"]),
+        "tone": fng_tone,
+    },
+    {
+        "label": "DCA 實戰帳本",
+        "value": f"{dca_return_pct:+.2f}%",
+        "detail": "累計總報酬",
+        "tone": "positive" if dca_return_pct >= 0 else "negative",
+    },
+]
 
 with sync_playwright() as playwright:
     _slide_browser = playwright.chromium.launch()
@@ -1388,15 +1515,30 @@ with sync_playwright() as playwright:
                 else "chart_dual.png" if ctype == "dual"
                 else None
             )
+            layout = (
+                "compare" if ctype == "compare"
+                else "chart" if chart_path or ctype == "gauge"
+                else "hero"
+            )
+            compare_positive, compare_risk = (
+                split_news_summary(body) if layout == "compare" else ("", "")
+            )
             slide_data = {
                 "label": f"幣看趨勢｜比特幣與加密貨幣情報　{today_str}",
                 "title": title,
-                "highlights": [line for line in body.splitlines() if line.strip()],
+                "highlights": (
+                    [] if layout == "compare"
+                    else [line for line in body.splitlines() if line.strip()]
+                ),
                 "chart_path": chart_path,
                 "chart_type": ctype,
                 "gauge_value": fng_num,
                 "accent": color,
                 "compact": idx == 2,
+                "layout": layout,
+                "compare_positive": compare_positive,
+                "compare_risk": compare_risk,
+                "ticker_items": ticker_items,
             }
             render_animated_slide(
                 idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4"
