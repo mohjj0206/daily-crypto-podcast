@@ -16,12 +16,14 @@ from googleapiclient.http import MediaFileUpload
 from playwright.sync_api import sync_playwright
 
 tw_tz = timezone(timedelta(hours=8))
-today_str = datetime.now(tw_tz).strftime("%Y年%m月%d日")
+now_tw = datetime.now(tw_tz)
+today_str = now_tw.strftime("%Y年%m月%d日")
 two_days_ago = time.time() - 48 * 3600
 is_test = os.environ.get("TEST_MODE", "").lower() == "true"
+show_dca = (now_tw.weekday() == 4) or (now_tw.day == 26)
 OUTRO_DURATION = 12.0
 OUTRO_PAUSE = 1.5
-SLIDE_COUNT = 15
+SLIDE_COUNT = 15 if show_dca else 14
 
 def clean_txt(s):
     s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
@@ -159,7 +161,7 @@ def scheduled_dca_dates(start_date, end_date):
     dates = []
     year, month = start_date.year, start_date.month
     while (year, month) <= (end_date.year, end_date.month):
-        for day in (5, 10, 15, 20, 25):
+        for day in (25,):
             try:
                 scheduled_date = datetime(year, month, day).date()
             except ValueError:
@@ -177,8 +179,8 @@ def update_dca_portfolio(current_btc_usd):
     current_btc_usd = float(current_btc_usd)
     if not math.isfinite(current_btc_usd) or current_btc_usd <= 0:
         raise ValueError("current_btc_usd must be a positive finite price.")
-    today = datetime.now(tw_tz).date()
-    start_date = datetime(2025, 10, 5).date()
+    today = now_tw.date()
+    start_date = datetime(2025, 10, 25).date()
     schedule_dates = scheduled_dca_dates(start_date, today)
     ledger_path = "dca_portfolio.json"
 
@@ -193,6 +195,30 @@ def update_dca_portfolio(current_btc_usd):
     records = portfolio["records"]
     if any(not isinstance(record, dict) or not record.get("date") for record in records):
         raise ValueError(f"{ledger_path} contains a record without a date.")
+    record_dates = []
+    for record in records:
+        try:
+            record_dates.append(datetime.fromisoformat(record["date"]).date())
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{ledger_path} contains an invalid DCA date.") from error
+    expected_record_fields = {
+        "date", "twd_invested", "btc_price_usd", "btc_price_twd",
+        "twd_rate", "btc_bought",
+    }
+    if records and (
+        portfolio.get("start_date") != start_date.isoformat()
+        or portfolio.get("schedule_days") != [25]
+        or any(
+            date.day != 25 or date < start_date or date not in schedule_dates
+            or record["date"] != date.isoformat()
+            for record, date in zip(records, record_dates)
+        )
+        or any(not expected_record_fields.issubset(record) for record in records)
+        or any(record.get("twd_invested") != 10000 for record in records)
+    ):
+        print("Resetting legacy DCA records to the monthly 25th-only schedule.")
+        portfolio = {"records": []}
+        records = portfolio["records"]
     existing_dates = {record["date"] for record in records}
     if len(existing_dates) != len(records):
         raise ValueError(f"{ledger_path} contains duplicate DCA dates.")
@@ -230,6 +256,7 @@ def update_dca_portfolio(current_btc_usd):
                 "date": deposit_date.isoformat(),
                 "twd_invested": 10000,
                 "btc_price_usd": round(btc_price, 2),
+                "btc_price_twd": round(btc_price * twd_rate, 2),
                 "twd_rate": round(twd_rate, 4),
                 "btc_bought": btc_bought,
             })
@@ -280,7 +307,7 @@ def update_dca_portfolio(current_btc_usd):
     portfolio.update({
         "start_date": start_date.isoformat(),
         "monthly_contribution_twd": 10000,
-        "schedule_days": [5, 10, 15, 20, 25],
+        "schedule_days": [25],
         "records": records,
         "monthly_summary": monthly_summary,
         "total_twd": total_twd,
@@ -304,15 +331,18 @@ def update_dca_portfolio(current_btc_usd):
 
 
 dca_portfolio = update_dca_portfolio(btc_cl[-1])
-dca_today = datetime.now(tw_tz).date()
-dca_latest_month = dca_today.strftime("%Y-%m")
+dca_today = now_tw.date()
+dca_latest_record = dca_portfolio["records"][-1]
+dca_latest_month = dca_latest_record["date"][:7]
 dca_latest_month_data = dca_portfolio["monthly_summary"].get(
     dca_latest_month, {"twd_invested": 0, "btc_bought": "0.00000000"}
 )
 dca_report = (
     "【BTC 長期定投（DCA）實戰帳本】\n"
-    "自2025年10月起，每月5、10、15、20、25日各投入NT$10,000，紀律執行至今。\n"
-    f"最新當月（{dca_latest_month}）買進概況：投入NT${dca_latest_month_data['twd_invested']:,}，"
+    "自2025年10月起，每月25日固定投入NT$10,000，紀律執行至今。\n"
+    f"最近一次買進（{dca_latest_record['date']}）：BTC US${dca_latest_record['btc_price_usd']:,.2f}，"
+    f"約NT${dca_latest_record['btc_price_twd']:,.2f}；"
+    f"該月累計投入NT${dca_latest_month_data['twd_invested']:,}，"
     f"買入{dca_latest_month_data['btc_bought']} BTC。\n"
     f"總投入：NT${dca_portfolio['total_twd']:,}；"
     f"累計持有：{dca_portfolio['total_btc']} BTC。\n"
@@ -322,12 +352,25 @@ dca_report = (
     f"帳面賺賠：NT${dca_portfolio['unrealized_pnl_twd']:+,.2f} "
     f"（{dca_portfolio['total_return_pct']:+.2f}%）。"
 )
+recent_dca_records = dca_portfolio["records"][-3:]
+lowest_dca_record = min(
+    dca_portfolio["records"], key=lambda record: float(record["btc_price_usd"])
+)
+highest_dca_record = max(
+    dca_portfolio["records"], key=lambda record: float(record["btc_price_usd"])
+)
 dca_slide_body = "\n".join(
     [
-        f"最新當月 {dca_latest_month}｜投入 {dca_latest_month_data['twd_invested']:,} TWD｜買進 {dca_latest_month_data['btc_bought']} BTC",
-        f"總投入 NT${dca_portfolio['total_twd']:,}｜累計持有 {dca_portfolio['total_btc']} BTC",
-        f"平均買入 TWD {dca_portfolio['avg_buy_price_twd']:,.2f} / USD {dca_portfolio['avg_buy_price_usd']:,.2f}",
-        f"總價值 TWD {dca_portfolio['current_market_value_twd']:,.2f}｜帳面賺賠 NT${dca_portfolio['unrealized_pnl_twd']:+,.2f}（{dca_portfolio['total_return_pct']:+.2f}%）",
+        f"總投入 NT${dca_portfolio['total_twd']:,}｜累計 {dca_portfolio['total_btc']} BTC",
+        f"平均成本 TWD {dca_portfolio['avg_buy_price_twd']:,.0f} / USD {dca_portfolio['avg_buy_price_usd']:,.0f}",
+        f"總市值 NT${dca_portfolio['current_market_value_twd']:,.0f}｜損益 NT${dca_portfolio['unrealized_pnl_twd']:+,.0f}（{dca_portfolio['total_return_pct']:+.2f}%）",
+        "每月25日買進價位（BTC USD / TWD）",
+        *[
+            f"{record['date']}  ${record['btc_price_usd']:,.0f} / NT${record['btc_price_twd']:,.0f}"
+            for record in recent_dca_records
+        ],
+        f"歷史低價 {lowest_dca_record['date']}｜${lowest_dca_record['btc_price_usd']:,.0f} / NT${lowest_dca_record['btc_price_twd']:,.0f}",
+        f"歷史高價 {highest_dca_record['date']}｜${highest_dca_record['btc_price_usd']:,.0f} / NT${highest_dca_record['btc_price_twd']:,.0f}",
     ]
 )
 
@@ -449,7 +492,7 @@ def generate_dca_chart(portfolio):
     return "chart_dca.png"
 
 
-chart_dca_path = generate_dca_chart(dca_portfolio)
+chart_dca_path = generate_dca_chart(dca_portfolio) if show_dca else None
 
 coins_lines = []
 for name, (cl, pct, rsi) in cdata.items():
@@ -503,39 +546,85 @@ def call_gemini(prompt_txt):
         raise last_err
     raise RuntimeError("No Gemini models available.")
 
-target_words = "約200字繁中（精簡測試版，15張圖卡各保留一句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
+target_words = "約200字繁中（精簡測試版，各圖卡保留一句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
+if show_dca:
+    p1_part_slide_count = 8
+    p1_slide_anchors = (
+        "[SLIDE_1]開場與風險提醒；[SLIDE_2]BTC長期定投（DCA）實戰帳本；"
+        "[SLIDE_3]恐慌與貪婪指數；[SLIDE_4]BTC四大均線與RSI；"
+        "[SLIDE_5]ETH日線均線與RSI；[SLIDE_6]第一則市場焦點；"
+        "[SLIDE_7]第二則市場焦點；[SLIDE_8]第三則市場焦點。"
+    )
+    p2_slide_anchors = (
+        "[SLIDE_9]六大主流幣報價與指標總表；[SLIDE_10]六大主流幣24H漲跌；"
+        "[SLIDE_11]BTC與ETH百日走勢圖解讀；[SLIDE_12]關鍵價位攻防；"
+        "[SLIDE_13]美股開盤連動；[SLIDE_14]短線清算風險；"
+        "[SLIDE_15]總結行動策略。"
+    )
+    dca_prompt_section = (
+        "風險提醒後播報DCA實戰帳本：只用一句話交代自2025年10月起每月25日投入"
+        "NT$10,000，再報最近一次買進日期及BTC美金／台幣價位、總投入、累計BTC"
+        "（8位小數）、平均成本、總賺賠金額及百分比。數字必須依帳本：\n"
+        f"{dca_report}"
+    )
+    p1_content_guidance = (
+        "先以[SLIDE_1]開場並完成風險提醒，下一段由[SLIDE_2]播報DCA帳本；"
+        "接續依序以[SLIDE_3]分析恐慌貪婪指數、[SLIDE_4]分析BTC均線、"
+        "[SLIDE_5]分析ETH，再以[SLIDE_6]至[SLIDE_8]逐一深入解析三大市場焦點。"
+    )
+    p1_formal_length = (
+        "正式版本段必須達2,600至2,900字：開場風險提醒50至65字；DCA帳本播報約220至250字；"
+        "BTC四大均線、恐慌貪婪指數與ETH均線RSI合計700至800字；三大市場焦點各450至500字，"
+        "逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。"
+    )
+else:
+    p1_part_slide_count = 7
+    p1_slide_anchors = (
+        "[SLIDE_1]開場與風險提醒；[SLIDE_2]恐慌與貪婪指數；"
+        "[SLIDE_3]BTC四大均線與RSI；[SLIDE_4]ETH日線均線與RSI；"
+        "[SLIDE_5]第一則市場焦點；[SLIDE_6]第二則市場焦點；"
+        "[SLIDE_7]第三則市場焦點。"
+    )
+    p2_slide_anchors = (
+        "[SLIDE_8]六大主流幣報價與指標總表；[SLIDE_9]六大主流幣24H漲跌；"
+        "[SLIDE_10]BTC與ETH百日走勢圖解讀；[SLIDE_11]關鍵價位攻防；"
+        "[SLIDE_12]美股開盤連動；[SLIDE_13]短線清算風險；"
+        "[SLIDE_14]總結行動策略。"
+    )
+    dca_prompt_section = (
+        "今日不是DCA帳本播報日，逐字稿不得提及帳本數據或插入獨立的DCA播報段落；"
+        "仍可自然維持長期持有與紀律投資的頻道精神。"
+    )
+    p1_content_guidance = (
+        "以[SLIDE_1]開場並完成風險提醒，接續依序以[SLIDE_2]分析恐慌貪婪指數、"
+        "[SLIDE_3]分析BTC均線、[SLIDE_4]分析ETH，再以[SLIDE_5]至[SLIDE_7]逐一深入解析三大市場焦點。"
+    )
+    p1_formal_length = (
+        "正式版本段必須達2,600至2,900字：開場風險提醒50至65字；"
+        "BTC四大均線、恐慌貪婪指數與ETH均線RSI合計900至1,000字；"
+        "三大市場焦點各500至550字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。"
+    )
 p1_length_guidance = (
-    "測試模式仍須為前半段8個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
+    f"測試模式仍須為前半段{p1_part_slide_count}個投影片錨點各輸出一段極短口播，"
+    "總長約200字以內，不套用正式版字數配額。"
     if is_test else
-    "正式版本段必須達2,600至2,900字：開場含一則50至65字風險提醒約180字；緊接播報DCA實戰帳本進度220至250字；BTC四大均線、恐慌貪婪指數與ETH均線RSI合計700至800字；三大市場焦點各450至500字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+    f"{p1_formal_length}兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
 p2_length_guidance = (
     "測試模式仍須為後半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
     if is_test else
     "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC/ETH百日走勢圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
-p1_slide_anchors = (
-    "[SLIDE_1]開場與風險提醒；[SLIDE_2]BTC長期定投（DCA）實戰帳本；"
-    "[SLIDE_3]恐慌與貪婪指數；[SLIDE_4]BTC四大均線與RSI；"
-    "[SLIDE_5]ETH日線均線與RSI；[SLIDE_6]第一則市場焦點；"
-    "[SLIDE_7]第二則市場焦點；[SLIDE_8]第三則市場焦點。"
-)
-p2_slide_anchors = (
-    "[SLIDE_9]六大主流幣報價與指標總表；[SLIDE_10]六大主流幣24H漲跌；"
-    "[SLIDE_11]BTC與ETH百日走勢圖解讀；[SLIDE_12]關鍵價位攻防；"
-    "[SLIDE_13]美股開盤連動；[SLIDE_14]短線清算風險；"
-    "[SLIDE_15]總結行動策略。"
-)
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 {full_report}
 【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或新聞，自然穿插兩位主持人互相吐槽及幣圈／財經冷笑話，並融入台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；笑點要貼合內容、不生硬、不重複，報數字保持清晰。
 【頻道核心精神】兩位主持人都是堅定的比特幣長期持有者。消息面與技術指標用來理解市場結構，不是鼓勵短線交易；明確反對盲目追高殺低與高槓桿賭博，鼓勵用長期週期看待波動、以紀律DCA逐步累積比特幣。口播禁止使用HODL、HODLer等英文縮寫，一律自然說「長期持有」或「長期持有者」。
-【DCA播報規則】風險提醒後只用一句話交代「自2025年10月起，每月5、10、15、20、25日各投入NT$10,000，紀律執行至今」，接著只報最新當月（{dca_latest_month}）買進概況，以及截至今日總投入台幣、累計BTC（8位小數）、台幣與美元平均買入價格、目前總價值、帳面賺賠金額及百分比。嚴禁逐月逐筆唸過去月份，避免流水帳；所有數值須與帳本一致。
+【DCA播報規則】{dca_prompt_section}
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，格式必須為「利多：…；風險：…」，清楚拆分焦點利多與以太喵理性折價，不可包含媒體名稱。
-【內容】由以太喵簡短開場，並以[SLIDE_1]標記開場對話；風險提醒後必須緊接DCA帳本播報，由比特汪或以太喵以[SLIDE_2]開頭新對話。只用一句話說明自2025年10月起按指定日期與金額紀律定投，再報最新當月買進概況、總投入台幣、累計BTC（8位小數）、台幣及美元平均買入價格、目前總價值與帳面賺賠金額及百分比；不可朗讀完整月表，也不可把帳本播報移到風險提醒之前。之後依序分析恐慌貪婪指數、BTC四大均線、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
+【內容】{p1_content_guidance}結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 def normalize_long_term_terms(text):
     text = re.sub(r"\bHODLers?\b", "長期持有者", str(text), flags=re.I)
     return re.sub(r"\bHODL\b", "長期持有", text, flags=re.I)
@@ -990,7 +1079,12 @@ condition_slides = [
 ]
 slides_cfg = [
     ("開場｜盤勢觀察與投資風險提醒", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
-    ("BTC 長期定投（DCA）實戰成績單", "#fbbf24", dca_slide_body, "focus"),
+]
+if show_dca:
+    slides_cfg.append(
+        ("BTC 長期定投（DCA）實戰成績單", "#fbbf24", dca_slide_body, "dca")
+    )
+slides_cfg += [
     ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
     ("BTC 動態｜四大均線與 RSI", "#38bdf8", s1, "dual"),
     ("ETH 動態｜日線均線與 RSI", "#a78bfa", eth_slide, "dual"),
@@ -1550,7 +1644,7 @@ with sync_playwright() as playwright:
     try:
         for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
             chart_path = (
-                chart_dca_path if idx == 2
+                chart_dca_path if ctype == "dca"
                 else "chart_bars.png" if ctype == "bars"
                 else "chart_dual.png" if ctype == "dual"
                 else None
@@ -1574,7 +1668,7 @@ with sync_playwright() as playwright:
                 "chart_type": ctype,
                 "gauge_value": fng_num,
                 "accent": color,
-                "compact": idx == 2,
+                "compact": ctype == "dca",
                 "layout": layout,
                 "compare_positive": compare_positive,
                 "compare_risk": compare_risk,
@@ -1662,7 +1756,11 @@ chapter_lines = "\n".join(
     for position, (_, title) in enumerate(chapter_entries)
 )
 
-v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！頻道以長期持有與紀律DCA為核心，不鼓勵盲目短線或高槓桿交易。\n\n⏱️ 本集簡報章節（依15張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 BTC 長期定投（DCA）實戰帳本：\n{dca_report}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢 #DCA"
+dca_description_section = (
+    f"\n\n📊 BTC 長期定投（DCA）實戰帳本：\n{dca_report}"
+    if show_dca else ""
+)
+v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！頻道以長期持有與紀律DCA為核心，不鼓勵盲目短線或高槓桿交易。\n\n⏱️ 本集簡報章節（依{slide_count}張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}{dca_description_section}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢 #DCA"
 
 topic_icon_path = generate_topic_icon(slide_news[0], "BTC")
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
