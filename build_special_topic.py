@@ -795,14 +795,19 @@ def create_outro_frame():
 
 def make_outro_assets():
     create_outro_frame()
-    if os.path.exists("info.mp3"):
+    outro_source = next(
+        (path for path in ("outro.mp3", "info.mp3") if os.path.exists(path)),
+        None,
+    )
+    if outro_source:
         audio_filter = (
-            f"volume=0.35,afade=t=in:st=0:d=1.5,"
-            f"afade=t=out:st={OUTRO_DURATION - 2.5:g}:d=2.5,apad=whole_dur={OUTRO_DURATION:g}"
+            f"volume=0.35,apad=whole_dur={OUTRO_DURATION:g},"
+            "afade=t=in:st=0:d=1,"
+            f"afade=t=out:st={OUTRO_DURATION - 2.5:g}:d=2.5"
         )
         subprocess.run(
             [
-                "ffmpeg", "-y", "-i", "info.mp3", "-t", f"{OUTRO_DURATION:g}",
+                "ffmpeg", "-y", "-i", outro_source, "-t", f"{OUTRO_DURATION:g}",
                 "-af", audio_filter, "-ar", "24000", "-ac", "1",
                 "-c:a", "libmp3lame", "-b:a", "64k", "outro_music.mp3",
             ],

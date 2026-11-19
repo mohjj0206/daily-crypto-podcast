@@ -1,4 +1,4 @@
-import os, re, json, time, calendar, base64, subprocess, urllib.request
+import os, re, json, time, calendar, base64, html, io, tempfile, subprocess, urllib.request
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import feedparser
@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from playwright.sync_api import sync_playwright
 
 tw_tz = timezone(timedelta(hours=8))
 today_str = datetime.now(tw_tz).strftime("%Y年%m月%d日")
@@ -266,14 +267,19 @@ with ThreadPoolExecutor(max_workers=5) as ex:
 results.sort(key=lambda x: x[0])
 
 def create_outro_audio():
-    if os.path.exists("info.mp3"):
+    outro_source = next(
+        (path for path in ("outro.mp3", "info.mp3") if os.path.exists(path)),
+        None,
+    )
+    if outro_source:
         audio_filter = (
-            f"volume=0.35,afade=t=in:st=0:d=1.5,"
-            f"afade=t=out:st={OUTRO_DURATION - 2.5:g}:d=2.5,apad=whole_dur={OUTRO_DURATION:g}"
+            f"volume=0.35,apad=whole_dur={OUTRO_DURATION:g},"
+            f"afade=t=in:st=0:d=1,"
+            f"afade=t=out:st={OUTRO_DURATION - 2.5:g}:d=2.5"
         )
         subprocess.run(
             [
-                "ffmpeg", "-y", "-i", "info.mp3", "-t", f"{OUTRO_DURATION:g}",
+                "ffmpeg", "-y", "-i", outro_source, "-t", f"{OUTRO_DURATION:g}",
                 "-af", audio_filter, "-ar", "24000", "-ac", "1",
                 "-c:a", "libmp3lame", "-b:a", "64k", "outro_music.mp3",
             ],
@@ -300,23 +306,21 @@ def create_outro_audio():
 
 has_intro_video = os.path.exists("info.mp4") and os.path.exists("info.mp3")
 intro_dur = 0.0
-if os.path.exists("info.mp3"):
-    intro_audio_filter = "afade=t=out:st=13.5:d=1.5"
-    if has_intro_video:
-        intro_source_duration = float(
-            subprocess.check_output(
-                [
-                    "ffprobe", "-v", "error", "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1", "info.mp3",
-                ]
-            ).decode().strip()
-        )
-        fade_duration = min(1.5, intro_source_duration) if intro_source_duration > 0 else 1.5
-        fade_start = max(0.0, min(13.5, intro_source_duration - fade_duration))
-        intro_audio_filter = (
-            f"afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f},"
-            "apad=whole_dur=15"
-        )
+if has_intro_video:
+    intro_source_duration = float(
+        subprocess.check_output(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", "info.mp3",
+            ]
+        ).decode().strip()
+    )
+    fade_duration = min(1.5, intro_source_duration) if intro_source_duration > 0 else 1.5
+    fade_start = max(0.0, min(13.5, intro_source_duration - fade_duration))
+    intro_audio_filter = (
+        f"afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f},"
+        "apad=whole_dur=15"
+    )
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", "info.mp3", "-t", "15",
@@ -388,7 +392,7 @@ for _, _, txt, dur in results:
 with open("subs.ass", "w", encoding="utf-8") as f:
     f.write(ass_head + "\n".join(evs))
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.8, 2.2), dpi=100)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 3.2), dpi=120)
 fig.patch.set_facecolor("#111827")
 for ax, name, col in [(ax1, "BTC", "#38bdf8"), (ax2, "ETH", "#a78bfa")]:
     cl = cdata[name][0][-100:]
@@ -406,7 +410,7 @@ plt.tight_layout()
 plt.savefig("chart_dual.png", facecolor="#111827")
 plt.close()
 
-fig, ax = plt.subplots(figsize=(10.8, 2.2), dpi=100)
+fig, ax = plt.subplots(figsize=(8.4, 3.2), dpi=120)
 fig.patch.set_facecolor("#111827")
 ax.set_facecolor("#0f172a")
 names = list(cdata.keys())
@@ -501,6 +505,335 @@ def wrap_by_width(draw, text, font, max_width):
         wrapped_lines.append(line)
     return wrapped_lines
 
+
+_slide_browser = None
+
+
+def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
+    if _slide_browser is None:
+        raise RuntimeError("Playwright Chromium must be started before rendering slides.")
+    if dur_sec <= 0:
+        raise ValueError(f"Slide {idx} duration must be positive.")
+
+    def highlight_markup(text):
+        escaped_text = html.escape(str(text))
+        numeric_pattern = re.compile(
+            r"\$[\d,]+(?:\.\d+)?(?:\s?USD)?|(?<![\w])\d+(?:,\d{3})*(?:\.\d+)?(?:%|日|週|點|天)?"
+        )
+        return numeric_pattern.sub(
+            lambda match: f'<span class="hl">{match.group(0)}</span>',
+            escaped_text,
+        )
+
+    highlights = slide_data.get("highlights", [])
+    if isinstance(highlights, str):
+        highlights = highlights.splitlines()
+    list_markup = "".join(
+        f"<li>{highlight_markup(item)}</li>"
+        for item in highlights
+        if str(item).strip()
+    )
+    chart_markup = ""
+    chart_path = slide_data.get("chart_path")
+    if chart_path:
+        with open(chart_path, "rb") as chart_file:
+            chart_data = base64.b64encode(chart_file.read()).decode("ascii")
+        chart_markup = (
+            '<div class="visual chart"><img alt="" '
+            f'src="data:image/png;base64,{chart_data}"></div>'
+        )
+    elif slide_data.get("chart_type") == "gauge":
+        gauge_value = min(100, max(0, int(slide_data.get("gauge_value", 0))))
+        chart_markup = (
+            '<div class="visual gauge">'
+            '<div class="gauge-title">市場情緒指數</div>'
+            '<div class="gauge-track">'
+            '<span class="fear"></span><span class="caution"></span>'
+            '<span class="neutral"></span><span class="greed"></span>'
+            '<span class="extreme-greed"></span></div>'
+            f'<div class="gauge-marker" style="left:{gauge_value}%"></div>'
+            f'<div class="gauge-value">{gauge_value}<small> / 100</small></div>'
+            '</div>'
+        )
+
+    content_class = "content with-visual" if chart_markup else "content"
+    title_markup = highlight_markup(slide_data.get("title", ""))
+    label_markup = html.escape(str(slide_data.get("label", "")))
+    accent = html.escape(str(slide_data.get("accent", "#fbbf24")))
+    record_seconds = min(float(dur_sec), 6.0)
+    remaining = max(0.0, float(dur_sec) - record_seconds)
+    tpad_filter = (
+        f",tpad=stop_mode=clone:stop_duration={remaining:.6f}"
+        if remaining > 0 else ""
+    )
+    html_doc = f"""<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, initial-scale=1">
+<style>
+* {{ box-sizing: border-box; }}
+html, body {{ width: 1280px; height: 720px; margin: 0; overflow: hidden; }}
+body {{
+  position: relative; color: #f8fafc; background: #090d16;
+  font-family: 'Noto Sans CJK TC', sans-serif;
+}}
+body::before {{
+  position: absolute; inset: -20%; content: ""; opacity: .46;
+  background:
+    radial-gradient(ellipse at 18% 22%, rgba(56,189,248,.18), transparent 34%),
+    radial-gradient(ellipse at 82% 55%, rgba(167,139,250,.15), transparent 38%),
+    linear-gradient(rgba(56,189,248,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56,189,248,.045) 1px, transparent 1px);
+  background-size: auto, auto, 48px 48px, 48px 48px;
+  animation: gridFlow 18s linear infinite;
+}}
+@keyframes gridFlow {{
+  from {{ transform: translate3d(0, 0, 0); }}
+  to {{ transform: translate3d(48px, 24px, 0); }}
+}}
+.topline {{
+  position: absolute; top: 28px; left: 60px; right: 60px; z-index: 1;
+  color: #94a3b8; font-size: 19px; letter-spacing: 2px;
+}}
+.topline::before {{
+  display: inline-block; width: 9px; height: 9px; margin-right: 12px;
+  border-radius: 50%; background: #38bdf8; content: "";
+  box-shadow: 0 0 16px #38bdf8;
+}}
+.frame {{
+  position: absolute; left: 60px; right: 60px; top: 92px; bottom: 132px;
+  padding: 28px 40px; border: 2px solid rgba(251,191,36,.78);
+  border-radius: 18px; background: rgba(15,23,42,.86);
+  box-shadow: 0 0 34px rgba(56,189,248,.12), inset 0 0 34px rgba(251,191,36,.035);
+  display: flex; flex-direction: column; overflow: hidden;
+}}
+h1 {{
+  position: relative; flex: 0 0 auto; max-width: 100%; margin: 0 0 20px;
+  color: var(--accent); font-size: 39px; line-height: 1.2; font-weight: 800;
+  animation: titleIn .8s cubic-bezier(.2,.8,.2,1) both;
+}}
+@keyframes titleIn {{
+  from {{ opacity: 0; transform: translateX(-58px); }}
+  to {{ opacity: 1; transform: translateX(0); }}
+}}
+.content {{
+  min-height: 0; flex: 1 1 auto; display: grid;
+  grid-template-columns: minmax(0, 1fr); align-items: center;
+}}
+.content.with-visual {{ grid-template-columns: minmax(0, 1fr) minmax(380px, .95fr); gap: 24px; }}
+ul {{ list-style: none; margin: 0; padding: 0; min-width: 0; }}
+li {{
+  position: relative; margin: 0 0 12px; padding-left: 26px;
+  color: #e2e8f0; font-size: 26px; line-height: 1.36; overflow-wrap: anywhere;
+  animation: fadeInUp .65s ease-out both;
+}}
+li::before {{
+  position: absolute; top: .56em; left: 0; width: 9px; height: 9px;
+  border-radius: 50%; background: var(--accent); content: "";
+  box-shadow: 0 0 12px var(--accent);
+}}
+li:nth-child(1) {{ animation-delay: .35s; }}
+li:nth-child(2) {{ animation-delay: .95s; }}
+li:nth-child(3) {{ animation-delay: 1.55s; }}
+li:nth-child(4) {{ animation-delay: 2.15s; }}
+li:nth-child(5) {{ animation-delay: 2.75s; }}
+li:nth-child(n+6) {{ animation-delay: 3.35s; }}
+@keyframes fadeInUp {{
+  from {{ opacity: 0; transform: translateY(24px); }}
+  to {{ opacity: 1; transform: translateY(0); }}
+}}
+.hl {{ position: relative; z-index: 0; color: #fff7cc; white-space: nowrap; }}
+.hl::after {{
+  position: absolute; left: 0; bottom: -.08em; z-index: -1; width: 100%; height: .34em;
+  background: linear-gradient(90deg, rgba(251,191,36,.82), rgba(251,191,36,.18));
+  content: ""; transform: scaleX(0); transform-origin: left center;
+  animation: highlightIn .65s ease-out .45s forwards;
+}}
+@keyframes highlightIn {{ to {{ transform: scaleX(1); }} }}
+.visual {{
+  position: relative; width: 100%; min-width: 0; height: 100%; max-height: 300px;
+  display: flex; align-items: center; justify-content: center;
+  animation: chartIn .9s cubic-bezier(.2,.8,.2,1) .45s both, breathe 5s ease-in-out 1.4s infinite;
+}}
+.chart img {{ display: block; width: 100%; max-height: 280px; object-fit: contain; }}
+@keyframes chartIn {{
+  from {{ opacity: 0; transform: scale(.88); }}
+  to {{ opacity: 1; transform: scale(1); }}
+}}
+@keyframes breathe {{ 0%, 100% {{ filter: drop-shadow(0 0 8px rgba(56,189,248,.16)); }} 50% {{ filter: drop-shadow(0 0 18px rgba(56,189,248,.34)); }} }}
+.gauge {{ flex-direction: column; gap: 22px; }}
+.gauge-title {{ color: #cbd5e1; font-size: 24px; }}
+.gauge-track {{ width: 100%; height: 28px; display: flex; overflow: hidden; border-radius: 16px; }}
+.gauge-track span {{ flex: 1; }}
+.fear {{ background: #ef4444; }} .caution {{ background: #f97316; }}
+.neutral {{ background: #eab308; }} .greed {{ background: #84cc16; }}
+.extreme-greed {{ background: #22c55e; }}
+.gauge-marker {{ position: absolute; top: 43%; width: 5px; height: 42px; background: white; box-shadow: 0 0 12px white; }}
+.gauge-value {{ color: #fbbf24; font-size: 52px; font-weight: 800; }}
+.gauge-value small {{ color: #94a3b8; font-size: 21px; }}
+</style>
+</head>
+<body>
+<div class="topline">{label_markup}</div>
+<main class="frame" style="--accent:{accent}">
+  <h1>{title_markup}</h1>
+  <section class="{content_class}">
+    <ul>{list_markup}</ul>
+    {chart_markup}
+  </section>
+</main>
+  <script>
+  window.fitSlideLayout = () => {{
+    const frame = document.querySelector(".frame");
+    const title = document.querySelector("h1");
+    const content = document.querySelector(".content");
+    const items = [...document.querySelectorAll("li")];
+    const overflows = () => {{
+      const contentBox = content.getBoundingClientRect();
+      return content.scrollHeight > content.clientHeight + 1 ||
+        items.some(item => item.scrollWidth > item.clientWidth + 1 ||
+          item.getBoundingClientRect().bottom > contentBox.bottom + 1) ||
+        title.getBoundingClientRect().bottom > contentBox.top - 8 ||
+        frame.scrollHeight > frame.clientHeight + 1;
+    }};
+    for (let attempt = 0; attempt < 18 && overflows(); attempt++) {{
+      const titleSize = parseFloat(getComputedStyle(title).fontSize);
+      if (titleSize > 28) title.style.fontSize = `${{titleSize - 1}}px`;
+      for (const item of items) {{
+        const bodySize = parseFloat(getComputedStyle(item).fontSize);
+        if (bodySize > 17) item.style.fontSize = `${{bodySize - 1}}px`;
+      }}
+    }}
+    return !overflows();
+  }};
+  </script>
+</body>
+</html>"""
+
+    with tempfile.TemporaryDirectory(prefix=f"slide_{idx}_") as record_dir:
+        context = _slide_browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            device_scale_factor=1,
+            record_video_dir=record_dir,
+            record_video_size={"width": 1280, "height": 720},
+        )
+        page = context.new_page()
+        video = page.video
+        try:
+            page.set_content(html_doc, wait_until="load")
+            page.evaluate("() => document.fonts.ready.then(() => true)")
+            if not page.evaluate("() => window.fitSlideLayout()"):
+                raise ValueError(f"Slide {idx} content exceeds its safe area.")
+            page.wait_for_timeout(max(1, round(record_seconds * 1000)))
+        finally:
+            context.close()
+        recording_path = video.path()
+        filters = (
+            f"fps=24,scale=1280:720:flags=lanczos,"
+            f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS"
+            f"{tpad_filter},format=yuv420p"
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", recording_path,
+                "-vf", filters, "-t", f"{dur_sec:.6f}",
+                "-an", "-r", "24", "-c:v", "libx264",
+                "-preset", "ultrafast", "-pix_fmt", "yuv420p", out_mp4,
+            ],
+            check=True,
+        )
+
+
+def generate_topic_icon(topic_summary, coin_code):
+    icon_path = "topic_icon.png"
+    coin_ids = {
+        "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana",
+        "XRP": "ripple", "ADA": "cardano", "ZEC": "zcash",
+    }
+    coin_code = str(coin_code or "BTC").upper()
+    image_prompt = (
+        f"Create a polished, cinematic 3D finance illustration inspired by {coin_code} "
+        f"and this daily market topic: {topic_summary}. No letters, no words, no logos, "
+        "square composition, luminous metallic gold and deep midnight blue, premium "
+        "financial editorial art."
+    )
+
+    try:
+        image_prompt = call_gemini(
+            "Rewrite this description as one concise English image-generation prompt. "
+            "Require a square 3D financial editorial illustration with no text, letters, "
+            "or logos. Return only the prompt:\n" + image_prompt
+        ).strip()
+        request = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            data=json.dumps({
+                "model": "gemini-nano-banana-2.1",
+                "input": image_prompt,
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": os.environ["GEMINI_API_KEY"].strip(),
+                "Api-Revision": "2026-05-20",
+            },
+            method="POST",
+        )
+        response = json.loads(
+            urllib.request.urlopen(request, timeout=180).read().decode("utf-8")
+        )
+        image_bytes = base64.b64decode(response["output_image"]["data"])
+        with Image.open(io.BytesIO(image_bytes)) as generated:
+            generated.convert("RGB").resize((512, 512), Image.LANCZOS).save(icon_path)
+        print("Generated daily topic icon with Gemini image generation.")
+        return icon_path
+    except Exception as e:
+        print(f"Topic image generation failed; trying the official coin icon: {e}")
+
+    try:
+        coin_id = coin_ids.get(coin_code, "bitcoin")
+        coin_data = fetch_json(
+            f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+            "?localization=false&tickers=false&market_data=false&community_data=false"
+            "&developer_data=false&sparkline=false"
+        )
+        image_url = coin_data["image"]["large"]
+        image_request = urllib.request.Request(
+            image_url, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(image_request, timeout=20) as response:
+            with Image.open(io.BytesIO(response.read())) as coin_image:
+                coin_image.convert("RGBA").resize(
+                    (512, 512), Image.LANCZOS
+                ).save(icon_path)
+        print(f"Using the official CoinGecko {coin_code} icon.")
+        return icon_path
+    except Exception as e:
+        print(f"CoinGecko icon unavailable; drawing a local coin emblem: {e}")
+
+    emblem = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(emblem)
+    for radius, alpha in ((224, 18), (204, 32), (182, 52)):
+        draw.ellipse(
+            (256 - radius, 256 - radius, 256 + radius, 256 + radius),
+            fill=(251, 191, 36, alpha),
+        )
+    draw.ellipse((70, 70, 442, 442), fill="#102238", outline="#fbbf24", width=16)
+    draw.ellipse((92, 92, 420, 420), outline="#fde68a", width=5)
+    emblem_font = ImageFont.truetype(fp, 158)
+    emblem_draw = ImageDraw.Draw(emblem)
+    symbol = coin_code[:4]
+    bounds = emblem_draw.textbbox((0, 0), symbol, font=emblem_font)
+    emblem_draw.text(
+        ((512 - (bounds[2] - bounds[0])) // 2, (512 - (bounds[3] - bounds[1])) // 2 - bounds[1]),
+        symbol,
+        fill="#fbbf24",
+        font=emblem_font,
+    )
+    emblem.save(icon_path)
+    print("Using a locally rendered metallic topic emblem.")
+    return icon_path
+
+
 def create_outro_frame():
     image = Image.new("RGB", (1280, 720), "#090d16")
     draw = ImageDraw.Draw(image)
@@ -554,65 +887,38 @@ def create_outro_video():
         check=True,
     )
 
-for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
-    img = Image.new("RGB", (1280, 720), "#090d16")
-    d = ImageDraw.Draw(img)
-    d.rectangle((0, 0, 1280, 82), fill="#1e293b")
-    d.text((40, 22), f"幣看趨勢｜比特幣與加密貨幣情報  ({today_str})", fill="#ffffff", font=fs)
-    d.rectangle((60, 115, 1220, 610), fill="#111827", outline="#fbbf24", width=4)
+slide_count = len(slides_cfg)
+slideshow_duration = cur_t - intro_dur if has_intro_video else cur_t
+intro_video_duration = 15.0 if has_intro_video else 0.0
+if slideshow_duration <= 0:
+    raise RuntimeError("No dialogue audio is available for the animated slides.")
+seg = slideshow_duration / slide_count
+slide_durations = [seg] * (slide_count - 1) + [seg + OUTRO_PAUSE]
 
-    content_bottom = 350 if ctype in ("dual", "bars") else 395 if ctype == "gauge" else 590
-    title_font = ft
-    title_lines = wrap_by_width(d, title, title_font, 1080)
-    title_y = 135
-    while title_y + len(title_lines) * 44 + 10 > content_bottom - 40 and title_font.size > 22:
-        title_font = ImageFont.truetype(fp, title_font.size - 2)
-        title_lines = wrap_by_width(d, title, title_font, 1080)
-    if title_y + len(title_lines) * 44 + 10 > content_bottom - 40:
-        raise ValueError(f"Slide {idx} title does not fit within the slide frame.")
-    for line in title_lines:
-        d.text((100, title_y), line, fill=color, font=title_font)
-        title_y += 44
-
-    body_y = title_y + 10
-    body_font = ft if ctype == "focus" else fb
-    body_lines = []
-    for paragraph in body.split("\n"):
-        body_lines.extend(wrap_by_width(d, paragraph, body_font, 1080))
-    body_line_height = min(40, body_font.size + 12)
-    while body_y + len(body_lines) * body_line_height > content_bottom and body_font.size > 14:
-        body_font = ImageFont.truetype(fp, body_font.size - 2)
-        body_lines = []
-        for paragraph in body.split("\n"):
-            body_lines.extend(wrap_by_width(d, paragraph, body_font, 1080))
-        body_line_height = min(40, body_font.size + 12)
-    if body_y + len(body_lines) * body_line_height > content_bottom:
-        raise ValueError(f"Slide {idx} text does not fit within the slide frame.")
-    for line in body_lines:
-        d.text((100, body_y), line, fill="#f8fafc", font=body_font)
-        body_y += body_line_height
-
-    if ctype == "gauge":
-        gauge_y = max(body_y + 46, 430)
-        d.text((100, gauge_y - 34), f"市場恐懼與貪婪指數溫度計：{fng_num} / 100", fill="#fbbf24", font=fb)
-        for gx, gc in enumerate(["#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e"]):
-            d.rectangle((100 + gx * 216, gauge_y, 100 + (gx + 1) * 216 - 4, gauge_y + 36), fill=gc)
-        px = 100 + int(min(100, max(0, fng_num)) * 10.4)
-        d.polygon([(px, gauge_y + 41), (px - 12, gauge_y + 65), (px + 12, gauge_y + 65)], fill="#ffffff")
-    elif ctype in ("bars", "dual"):
-        chart_y = max(body_y + 8, 360)
-        if chart_y + 220 > 595:
-            raise ValueError(f"Slide {idx} chart does not fit within the slide frame.")
-        chart_file = "chart_bars.png" if ctype == "bars" else "chart_dual.png"
-        chart = Image.open(chart_file).convert("RGB").resize((1080, 220), Image.LANCZOS)
-        img.paste(chart, (100, chart_y))
-
-    footer = "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。"
-    footer_font = ImageFont.truetype(fp, 14)
-    footer_lines = wrap_by_width(d, footer, footer_font, 1200)
-    for footer_index, line in enumerate(footer_lines):
-        d.text((40, 684 + footer_index * 16), line, fill="#64748b", font=footer_font)
-    img.save(f"slide{idx}.png")
+with sync_playwright() as playwright:
+    _slide_browser = playwright.chromium.launch()
+    try:
+        for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
+            chart_path = (
+                "chart_bars.png" if ctype == "bars"
+                else "chart_dual.png" if ctype == "dual"
+                else None
+            )
+            slide_data = {
+                "label": f"幣看趨勢｜比特幣與加密貨幣情報　{today_str}",
+                "title": title,
+                "highlights": [line for line in body.splitlines() if line.strip()],
+                "chart_path": chart_path,
+                "chart_type": ctype,
+                "gauge_value": fng_num,
+                "accent": color,
+            }
+            render_animated_slide(
+                idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4"
+            )
+    finally:
+        _slide_browser.close()
+        _slide_browser = None
 
 create_outro_frame()
 if has_intro_video:
@@ -652,16 +958,10 @@ if has_intro_video:
     )
 
 create_outro_video()
-slide_count = len(slides_cfg)
-slideshow_duration = cur_t - intro_dur if has_intro_video else cur_t
-intro_video_duration = 15.0 if has_intro_video else 0.0
-seg = slideshow_duration / slide_count
 with open("list.txt", "w", encoding="utf-8") as f:
     if has_intro_video:
         f.write("file 'intro.mp4'\n")
     for i in range(1, slide_count + 1):
-        dur = seg + (OUTRO_PAUSE if i == slide_count else 0)
-        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "24", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
         f.write(f"file 'p{i}.mp4'\n")
     f.write("file 'outro.mp4'\n")
 
@@ -693,6 +993,7 @@ chapter_lines = "\n".join(
 
 v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集簡報章節（依14張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
 
+topic_icon_path = generate_topic_icon(slide_news[0], "BTC")
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
 req = youtube.videos().insert(part="snippet,status", body={"snippet": {"title": video_title[:95], "description": v_desc, "tags": ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"], "categoryId": "27"}, "status": {"privacyStatus": "unlisted"}}, media_body=MediaFileUpload("output.mp4", chunksize=1024*1024*5, resumable=True))
@@ -702,18 +1003,17 @@ print("Uploaded Video ID:", res["id"])
 
 t_img = Image.new("RGB", (1280, 720), "#090d16")
 td = ImageDraw.Draw(t_img)
-td.rectangle((0, 0, 1280, 720), outline="#fbbf24", width=12)
-td.rectangle((45, 45, 520, 110), fill="#ef4444")
-td.text((68, 56), "幣看趨勢｜每日深度財經情報", fill="#ffffff", font=ImageFont.truetype(fp, 32))
+td.rectangle((14, 14, 1266, 706), outline="#fbbf24", width=4)
+td.line((50, 90, 735, 90), fill="#38bdf8", width=3)
+td.text((55, 42), "幣看趨勢｜每日深度財經情報", fill="#fbbf24", font=ImageFont.truetype(fp, 30))
 raw_t = re.sub(r'^【幣看趨勢】|\([^)]+\)$', '', video_title).strip()
 
-# 封面主標題：依實際像素寬度自動縮放並換行，避免超出安全區或遮住右側角色。
 def split_thumb_title(text, font, draw, max_width, max_lines=3):
     text = re.sub(r'\s+', '', text).strip()
     if not text:
         return []
 
-    preferred_breaks = ('！', '？', '：', '｜', '｜', '，', '、')
+    preferred_breaks = ('！', '？', '：', '｜', '，', '、')
     lines = []
     current = ''
     for char in text:
@@ -734,28 +1034,12 @@ def split_thumb_title(text, font, draw, max_width, max_lines=3):
     if current:
         lines.append(current)
 
-    if len(lines) > max_lines:
-        merged = ' '.join(lines)
-        lines = []
-        current = ''
-        for char in merged.replace(' ', ''):
-            trial = current + char
-            if draw.textbbox((0, 0), trial, font=font)[2] <= max_width:
-                current = trial
-            elif current:
-                lines.append(current)
-                current = char
-        if current:
-            lines.append(current)
-        while len(lines) > max_lines:
-            lines[max_lines - 1] += lines.pop()
-
-    return lines[:max_lines]
+    return lines
 
 thumb_font = None
 thumb_lines = []
-thumb_max_width = 720
-for thumb_size in range(58, 43, -1):
+thumb_max_width = 700
+for thumb_size in range(58, 27, -2):
     candidate_font = ImageFont.truetype(fp, thumb_size)
     candidate_lines = split_thumb_title(raw_t, candidate_font, td, thumb_max_width)
     widest = max((td.textbbox((0, 0), line, font=candidate_font)[2] for line in candidate_lines), default=0)
@@ -764,26 +1048,39 @@ for thumb_size in range(58, 43, -1):
         thumb_lines = candidate_lines
         break
 if thumb_font is None:
-    thumb_font = ImageFont.truetype(fp, 44)
+    thumb_font = ImageFont.truetype(fp, 26)
     thumb_lines = split_thumb_title(raw_t, thumb_font, td, thumb_max_width)
 
-line_count = max(1, len(thumb_lines))
-line_height = 85 if line_count >= 3 else 78
-red_y = 155 if line_count == 3 else (175 if line_count == 2 else 205)
-red_height = 110 if line_count == 1 else (line_count * 85 + 15)
-red_bottom = min(435, red_y + red_height)
-text_block_height = line_count * line_height
-text_y = red_y + max(15, (red_height - text_block_height) // 2)
-
-td.rectangle((45, red_y - 10, 760, red_bottom), fill="#dc2626")
+line_height = thumb_font.size + 18
+text_y = 116
 for line_index, line in enumerate(thumb_lines):
-    line_width = td.textbbox((0, 0), line, font=thumb_font)[2]
-    line_x = max(50, min(770 - line_width, 50 + (720 - line_width) // 2))
-    td.text((line_x, text_y + line_index * line_height), line, fill="#ffffff", font=thumb_font)
+    td.text((55, text_y + line_index * line_height), line, fill="#ffffff", font=thumb_font)
 
-td.text((50, 480), "・BTC / ETH / SOL / XRP 多空均線與 RSI 掃描", fill="#38bdf8", font=ImageFont.truetype(fp, 30))
-td.text((50, 540), "・拒絕盲目跟風，理性拆解市場數據與風險", fill="#cbd5e1", font=ImageFont.truetype(fp, 30))
-if os.path.exists("avatar.png"): t_img.paste(Image.open("avatar.png").resize((430, 430)), (800, 145))
+glow = Image.new("RGBA", (1280, 720), (0, 0, 0, 0))
+glow_draw = ImageDraw.Draw(glow)
+for radius, alpha in ((132, 22), (118, 34), (102, 48)):
+    glow_draw.ellipse(
+        (175 - radius, 570 - radius, 175 + radius, 570 + radius),
+        fill=(251, 191, 36, alpha),
+    )
+t_img = Image.alpha_composite(t_img.convert("RGBA"), glow).convert("RGB")
+with Image.open(topic_icon_path) as icon:
+    icon = icon.convert("RGBA").resize((230, 230), Image.LANCZOS)
+    icon_mask = Image.new("L", (230, 230), 0)
+    ImageDraw.Draw(icon_mask).ellipse((0, 0, 229, 229), fill=255)
+    icon.putalpha(icon_mask)
+    t_img.paste(icon, (60, 455), icon)
+td = ImageDraw.Draw(t_img)
+td.ellipse((58, 453, 292, 687), outline="#fbbf24", width=4)
+metric_font = ImageFont.truetype(fp, 27)
+td.text((320, 474), f"BTC 即時價格　${cur_p}", fill="#fbbf24", font=metric_font)
+td.text((320, 532), f"24H 漲跌　{'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%", fill="#38bdf8", font=metric_font)
+td.text((320, 590), f"恐慌貪婪指數　{fng_num} / 100", fill="#cbd5e1", font=metric_font)
+if os.path.exists("avatar.png"):
+    with Image.open("avatar.png") as avatar:
+        avatar = avatar.convert("RGBA").resize((430, 430), Image.LANCZOS)
+        t_img.paste(avatar, (800, 145), avatar)
+    td.rounded_rectangle((796, 141, 1234, 579), radius=20, outline="#fbbf24", width=4)
 
 t_img.save("thumb.jpg", "JPEG", quality=92)
 youtube.thumbnails().set(videoId=res["id"], media_body=MediaFileUpload("thumb.jpg")).execute()
