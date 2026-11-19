@@ -9,6 +9,7 @@ from urllib.parse import quote
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -303,37 +304,152 @@ def update_dca_portfolio(current_btc_usd):
 
 
 dca_portfolio = update_dca_portfolio(btc_cl[-1])
-dca_monthly_lines = [
-    f"{month}: 投入 NT${summary['twd_invested']:,}，買入 {summary['btc_bought']} BTC"
-    for month, summary in dca_portfolio["monthly_summary"].items()
-]
-dca_monthly_slide_lines = []
-for index in range(0, len(dca_monthly_lines), 2):
-    dca_monthly_slide_lines.append(
-        "　｜　".join(dca_monthly_lines[index:index + 2])
-    )
+dca_today = datetime.now(tw_tz).date()
+dca_latest_month = dca_today.strftime("%Y-%m")
+dca_latest_month_data = dca_portfolio["monthly_summary"].get(
+    dca_latest_month, {"twd_invested": 0, "btc_bought": "0.00000000"}
+)
 dca_report = (
     "【BTC 長期定投（DCA）實戰帳本】\n"
-    "自2025-10-05起，每月5、10、15、20、25日各投入NT$10,000。\n"
+    "自2025年10月起，每月5、10、15、20、25日各投入NT$10,000，紀律執行至今。\n"
+    f"最新當月（{dca_latest_month}）買進概況：投入NT${dca_latest_month_data['twd_invested']:,}，"
+    f"買入{dca_latest_month_data['btc_bought']} BTC。\n"
     f"總投入：NT${dca_portfolio['total_twd']:,}；"
     f"累計持有：{dca_portfolio['total_btc']} BTC。\n"
     f"平均成本：NT${dca_portfolio['avg_buy_price_twd']:,.2f} / "
     f"US${dca_portfolio['avg_buy_price_usd']:,.2f} 每BTC。\n"
-    f"目前市值：NT${dca_portfolio['current_market_value_twd']:,.2f} / "
-    f"US${dca_portfolio['current_market_value_usd']:,.2f}；"
-    f"浮盈虧：NT${dca_portfolio['unrealized_pnl_twd']:+,.2f}；"
-    f"總報酬率：{dca_portfolio['total_return_pct']:+.2f}%。\n"
-    "按月摘要：\n" + "\n".join(dca_monthly_lines)
+    f"目前總價值：NT${dca_portfolio['current_market_value_twd']:,.2f}；"
+    f"帳面賺賠：NT${dca_portfolio['unrealized_pnl_twd']:+,.2f} "
+    f"（{dca_portfolio['total_return_pct']:+.2f}%）。"
 )
 dca_slide_body = "\n".join(
-    ["按月累積摘要（月份：投入 / 買入BTC）"]
-    + dca_monthly_slide_lines
-    + [
+    [
+        f"最新當月 {dca_latest_month}｜投入 {dca_latest_month_data['twd_invested']:,} TWD｜買進 {dca_latest_month_data['btc_bought']} BTC",
         f"總投入 NT${dca_portfolio['total_twd']:,}｜累計持有 {dca_portfolio['total_btc']} BTC",
-        f"平均成本 NT${dca_portfolio['avg_buy_price_twd']:,.2f} / US${dca_portfolio['avg_buy_price_usd']:,.2f}",
-        f"現值 NT${dca_portfolio['current_market_value_twd']:,.2f}｜浮盈虧 NT${dca_portfolio['unrealized_pnl_twd']:+,.2f}（{dca_portfolio['total_return_pct']:+.2f}%）",
+        f"平均買入 TWD {dca_portfolio['avg_buy_price_twd']:,.2f} / USD {dca_portfolio['avg_buy_price_usd']:,.2f}",
+        f"總價值 TWD {dca_portfolio['current_market_value_twd']:,.2f}｜帳面賺賠 NT${dca_portfolio['unrealized_pnl_twd']:+,.2f}（{dca_portfolio['total_return_pct']:+.2f}%）",
     ]
 )
+
+
+def generate_dca_chart(portfolio):
+    today = datetime.now(tw_tz).date()
+    start_date = datetime.fromisoformat(portfolio["start_date"]).date()
+    chart_font_path = next(
+        (
+            path for path in (
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "C:\\Windows\\Fonts\\msyh.ttc",
+            )
+            if os.path.exists(path)
+        ),
+        None,
+    )
+    chart_font = FontProperties(fname=chart_font_path) if chart_font_path else None
+    btc_history = fetch_yahoo_daily_closes("BTC-USD", start_date, today)
+    try:
+        fx_history = fetch_yahoo_daily_closes(
+            "USDTWD=X", start_date - timedelta(days=7), today
+        )
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        print(f"DCA chart FX history unavailable; using 32.5 where needed: {error}")
+        fx_history = {}
+
+    month_ends = []
+    year, month = start_date.year, start_date.month
+    while (year, month) <= (today.year, today.month):
+        month_end = datetime(
+            year, month, calendar.monthrange(year, month)[1]
+        ).date()
+        month_ends.append((f"{year}-{month:02d}", min(month_end, today)))
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+
+    records = portfolio["records"]
+    invested_values = []
+    market_values = []
+    fallback_logged = False
+    for month_key, valuation_date in month_ends:
+        cumulative_records = [
+            record for record in records if record["date"] <= valuation_date.isoformat()
+        ]
+        invested = sum(float(record["twd_invested"]) for record in cumulative_records)
+        accumulated_btc = sum(float(record["btc_bought"]) for record in cumulative_records)
+        if month_key == today.strftime("%Y-%m"):
+            btc_price = float(portfolio["current_btc_usd"])
+            twd_rate = float(portfolio["current_twd_rate"])
+        else:
+            btc_price = latest_close_on_or_before(btc_history, valuation_date)
+            if btc_price is None or btc_price <= 0:
+                raise RuntimeError(
+                    f"Missing BTC-USD month-end price for {valuation_date.isoformat()}."
+                )
+            twd_rate = latest_close_on_or_before(fx_history, valuation_date)
+            if twd_rate is None or twd_rate <= 0:
+                if not fallback_logged:
+                    print("DCA chart has no recent month-end USDTWD close; using 32.5.")
+                    fallback_logged = True
+                twd_rate = 32.5
+        invested_values.append(invested)
+        market_values.append(accumulated_btc * btc_price * twd_rate)
+
+    current_month = today.strftime("%Y-%m")
+    months = [
+        f"{month}*" if month == current_month else month
+        for month, _ in month_ends
+    ]
+    pnl = float(portfolio["unrealized_pnl_twd"])
+    pnl_color = "#f87171" if pnl >= 0 else "#4ade80"
+    fig, axis = plt.subplots(figsize=(11, 4.5), dpi=160)
+    fig.patch.set_facecolor("#111827")
+    axis.set_facecolor("#0f172a")
+    bar_colors = [
+        "#f87171" if value >= cost else "#4ade80"
+        for value, cost in zip(market_values, invested_values)
+    ]
+    axis.bar(months, market_values, color=bar_colors, alpha=0.58, label="月底資產總市值")
+    axis.plot(
+        months, invested_values, color="#fbbf24", marker="o",
+        linewidth=2.2, markersize=4, label="累計投入台幣成本",
+    )
+    axis.set_ylabel("TWD", color="#cbd5e1")
+    axis.tick_params(axis="x", colors="#cbd5e1", labelrotation=45, labelsize=8)
+    axis.tick_params(axis="y", colors="#cbd5e1", labelsize=8)
+    axis.grid(axis="y", color="#334155", linewidth=0.6, alpha=0.8)
+    for spine in ("top", "right"):
+        axis.spines[spine].set_visible(False)
+    for spine in ("bottom", "left"):
+        axis.spines[spine].set_color("#475569")
+    axis.legend(
+        loc="upper left", facecolor="#1e293b", edgecolor="none",
+        labelcolor="white", fontsize=9, ncol=2, prop=chart_font,
+    )
+    fig.text(
+        0.06, 0.975,
+        f"累計投入 TWD {portfolio['total_twd']:,.0f}｜持有 {portfolio['total_btc']} BTC｜"
+        f"均價 TWD {portfolio['avg_buy_price_twd']:,.0f} / USD {portfolio['avg_buy_price_usd']:,.0f}",
+        color="#f8fafc", fontsize=10, va="top", fontproperties=chart_font,
+    )
+    fig.text(
+        0.06, 0.925,
+        f"目前總價值 TWD {portfolio['current_market_value_twd']:,.0f}｜"
+        f"帳面賺賠 TWD {pnl:+,.0f}（{portfolio['total_return_pct']:+.2f}%）",
+        color=pnl_color, fontsize=10, va="top", fontproperties=chart_font,
+    )
+    fig.text(
+        0.99, 0.02, "* 當月截至今日估值",
+        color="#94a3b8", fontsize=8, ha="right", fontproperties=chart_font,
+    )
+    fig.tight_layout(rect=(0.03, 0.08, 0.99, 0.86))
+    fig.savefig("chart_dca.png", facecolor="#111827")
+    plt.close(fig)
+    return "chart_dca.png"
+
+
+chart_dca_path = generate_dca_chart(dca_portfolio)
 
 coins_lines = []
 for name, (cl, pct, rsi) in cdata.items():
@@ -413,13 +529,19 @@ p2_slide_anchors = (
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 {full_report}
 【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或新聞，自然穿插兩位主持人互相吐槽及幣圈／財經冷笑話，並融入台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；笑點要貼合內容、不生硬、不重複，報數字保持清晰。
-【頻道核心精神】兩位主持人都是堅定的比特幣長期持有者（HODLer）。消息面與技術指標用來理解市場結構，不是鼓勵短線交易；明確反對盲目追高殺低與高槓桿賭博，鼓勵用長期週期看待波動、以紀律DCA逐步累積比特幣。風險提醒後的DCA實戰帳本段落須照帳本數字精準播報，不可自行改寫金額、BTC顆數或平均成本。
+【頻道核心精神】兩位主持人都是堅定的比特幣長期持有者。消息面與技術指標用來理解市場結構，不是鼓勵短線交易；明確反對盲目追高殺低與高槓桿賭博，鼓勵用長期週期看待波動、以紀律DCA逐步累積比特幣。口播禁止使用HODL、HODLer等英文縮寫，一律自然說「長期持有」或「長期持有者」。
+【DCA播報規則】風險提醒後只用一句話交代「自2025年10月起，每月5、10、15、20、25日各投入NT$10,000，紀律執行至今」，接著只報最新當月（{dca_latest_month}）買進概況，以及截至今日總投入台幣、累計BTC（8位小數）、台幣與美元平均買入價格、目前總價值、帳面賺賠金額及百分比。嚴禁逐月逐筆唸過去月份，避免流水帳；所有數值須與帳本一致。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，每行濃縮一個焦點的利多與理性折價，不可包含媒體名稱。
-【內容】由以太喵簡短開場，並以[SLIDE_1]標記開場對話；風險提醒後必須緊接DCA帳本播報，由比特汪或以太喵以[SLIDE_2]開頭新對話，依序精準說明開始日期、每月定投日期與金額、按月累積進度、總投入台幣、累計BTC（8位小數）、台幣及美元平均買入價格、目前浮盈虧。不可把帳本播報移到風險提醒之前。之後依序分析恐慌貪婪指數、BTC四大均線、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
-part1_raw = call_gemini(p1_prompt)
+【內容】由以太喵簡短開場，並以[SLIDE_1]標記開場對話；風險提醒後必須緊接DCA帳本播報，由比特汪或以太喵以[SLIDE_2]開頭新對話。只用一句話說明自2025年10月起按指定日期與金額紀律定投，再報最新當月買進概況、總投入台幣、累計BTC（8位小數）、台幣及美元平均買入價格、目前總價值與帳面賺賠金額及百分比；不可朗讀完整月表，也不可把帳本播報移到風險提醒之前。之後依序分析恐慌貪婪指數、BTC四大均線、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
+def normalize_long_term_terms(text):
+    text = re.sub(r"\bHODLers?\b", "長期持有者", str(text), flags=re.I)
+    return re.sub(r"\bHODL\b", "長期持有", text, flags=re.I)
+
+
+part1_raw = normalize_long_term_terms(call_gemini(p1_prompt))
 def extract_slide_notes(raw, prefix, fallback_notes):
     notes = []
     for index, fallback in enumerate(fallback_notes, 1):
@@ -441,13 +563,13 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
 【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或觀察條件，自然穿插互相吐槽、幣圈／財經冷笑話及台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；保持自然、貼合情境、不生硬不重複，只用「男：」「女：」開頭，報數字清晰。
-【頻道核心精神】兩位主持人皆為堅定的比特幣長期持有者（HODLer）；技術分析與未來24小時觀察條件是為理解市場結構與管理風險，明確反對盲目短線追高殺低或高槓桿賭博。結尾自然提醒長期週期、紀律DCA累積比特幣，不得把觀察條件說成短線買賣指令。
+【頻道核心精神】兩位主持人皆為堅定的比特幣長期持有者；技術分析與未來24小時觀察條件是為理解市場結構與管理風險，明確反對盲目短線追高殺低或高槓桿賭博。結尾自然提醒長期週期、紀律DCA累積比特幣，不得把觀察條件說成短線買賣指令。口播禁止使用HODL、HODLer等英文縮寫，一律自然說「長期持有」或「長期持有者」。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。後半段標記對應：{p2_slide_anchors}
 【篇幅配額】{p2_length_guidance}
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
 【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC與ETH百日走勢圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據，且必須從長期持有與DCA風險管理角度解讀，不可給短線下單指令。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位、長期週期與紀律DCA並道別，不使用分段字眼。"""
-part2_raw = call_gemini(p2_prompt)
+part2_raw = normalize_long_term_terms(call_gemini(p2_prompt))
 default_24h_conditions = [
     f"均線守位｜BTC ${cur_p}、ETH ${cdata['ETH'][0][-1]:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
     "美股開盤連動｜觀察今日美股開盤後，BTC與ETH是否跟隨納指方向並伴隨成交量變化。",
@@ -482,6 +604,7 @@ def extract_dialogues_and_slide_anchors(script):
                 raise ValueError(f"Duplicate slide anchor [SLIDE_{slide_number}].")
             slide_anchor_dialogue_indexes[len(dialogues)] = slide_number
             dialogue_text = slide_anchor_pattern.sub("", dialogue_text).strip()
+        dialogue_text = normalize_long_term_terms(dialogue_text)
         if not dialogue_text:
             raise ValueError("A dialogue line contains only a slide anchor.")
         dialogues.append((match.group(1), dialogue_text))
@@ -532,6 +655,7 @@ tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].stri
 
 def synth_audio_segment(item, file_prefix):
     idx, (role, txt) = item
+    txt = normalize_long_term_terms(txt)
     v_name = "cmn-TW-Neural2-B" if role == "男" else "cmn-TW-Neural2-A"
     fallback_voice = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
     pitch = -1.5 if role == "男" else 1.5
@@ -840,19 +964,31 @@ def wrap_by_width(draw, text, font, max_width):
 _slide_browser = None
 
 
-def highlight_key_numbers(text):
+def highlight_key_numbers(text, state=None):
     escaped_text = html.escape(str(text))
-    highlight = lambda match: f'<span class="hl">{match.group(0)}</span>'
-    metric_pattern = re.compile(
-        r"(?:RSI|恐慌(?:與貪婪)?指數|市場情緒指數|指標|指數)"
-        r"\s*[:：]?\s*[+-]?\d+(?:\.\d+)?(?:\s*/\s*100)?"
-    )
-    escaped_text = metric_pattern.sub(highlight, escaped_text)
+    highlight_state = state if state is not None else {"remaining": 3}
     important_number_pattern = re.compile(
-        r"[-+]?\$\s?[\d,]+(?:\.\d+)?(?:\s?USD)?"
-        r"|[-+]?\d+(?:,\d{3})*(?:\.\d+)?\s?%"
-        r"|(?<!\d)(?:100|200)(?:日|週)"
+        r"(?P<money>[-+]?(?:NT\$|US\$|USD\$|\$)\s?[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
+        r"|(?P<metric_label>(?:恐慌(?:與貪婪)?指數|市場情緒指數|RSI)\s*[:：]?\s*)"
+        r"(?P<metric_value>[+-]?\d+(?:\.\d+)?(?:\s*/\s*100)?%?)"
+        r"|(?P<percent>[-+]?\d+(?:,\d{3})*(?:\.\d+)?\s?%)"
     )
+
+    def highlight(match):
+        if highlight_state.get("remaining", 0) <= 0:
+            return match.group(0)
+        if match.group("money"):
+            result = f'<span class="hl">{match.group("money")}</span>'
+        elif match.group("metric_label"):
+            result = (
+                f'{match.group("metric_label")}<span class="hl">'
+                f'{match.group("metric_value")}</span>'
+            )
+        else:
+            result = f'<span class="hl">{match.group("percent")}</span>'
+        highlight_state["remaining"] -= 1
+        return result
+
     return important_number_pattern.sub(highlight, escaped_text)
 
 
@@ -865,8 +1001,10 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
     highlights = slide_data.get("highlights", [])
     if isinstance(highlights, str):
         highlights = highlights.splitlines()
+    highlight_state = {"remaining": 3}
+    title_markup = highlight_key_numbers(slide_data.get("title", ""), highlight_state)
     list_markup = "".join(
-        f"<li>{highlight_key_numbers(item)}</li>"
+        f"<li>{highlight_key_numbers(item, highlight_state)}</li>"
         for item in highlights
         if str(item).strip()
     )
@@ -897,7 +1035,6 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
     frame_class = "frame compact" if slide_data.get("compact") else "frame"
     if slide_data.get("compact"):
         content_class += " compact"
-    title_markup = highlight_key_numbers(slide_data.get("title", ""))
     label_markup = html.escape(str(slide_data.get("label", "")))
     accent = html.escape(str(slide_data.get("accent", "#fbbf24")))
     record_seconds = min(float(dur_sec), 6.0)
@@ -962,6 +1099,7 @@ h1 {{
   grid-template-columns: minmax(0, 1fr); align-items: center;
 }}
 .content.with-visual {{ grid-template-columns: minmax(0, 1fr) minmax(380px, .95fr); gap: 24px; }}
+.content.compact.with-visual {{ grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; }}
 ul {{ list-style: none; margin: 0; padding: 0; min-width: 0; }}
 li {{
   position: relative; margin: 0 0 12px; padding-left: 26px;
@@ -1245,7 +1383,8 @@ with sync_playwright() as playwright:
     try:
         for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
             chart_path = (
-                "chart_bars.png" if ctype == "bars"
+                chart_dca_path if idx == 2
+                else "chart_bars.png" if ctype == "bars"
                 else "chart_dual.png" if ctype == "dual"
                 else None
             )
@@ -1341,7 +1480,7 @@ chapter_lines = "\n".join(
     for position, (_, title) in enumerate(chapter_entries)
 )
 
-v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！頻道以長期持有與紀律DCA為核心，不鼓勵盲目短線或高槓桿交易。\n\n⏱️ 本集簡報章節（依15張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 BTC 長期定投（DCA）實戰帳本：\n{dca_report}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢 #DCA #HODL"
+v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！頻道以長期持有與紀律DCA為核心，不鼓勵盲目短線或高槓桿交易。\n\n⏱️ 本集簡報章節（依15張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 BTC 長期定投（DCA）實戰帳本：\n{dca_report}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢 #DCA"
 
 topic_icon_path = generate_topic_icon(slide_news[0], "BTC")
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
@@ -1561,9 +1700,10 @@ def build_and_upload_short():
             f'src="data:image/png;base64,{avatar_encoded}">'
         )
 
+    short_highlight_state = {"remaining": 3}
     short_highlights = [
-        highlight_key_numbers(t3[0][:34]),
-        highlight_key_numbers(slide_news[0][:42]),
+        highlight_key_numbers(t3[0][:34], short_highlight_state),
+        highlight_key_numbers(slide_news[0][:42], short_highlight_state),
         "完整15分鐘市場解析，點擊頻道觀看",
     ]
     highlights_markup = "".join(
