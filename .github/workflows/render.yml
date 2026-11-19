@@ -28,9 +28,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies and Playwright
         run: |
-          pip install feedparser pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib
+          pip install feedparser pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib playwright
+          playwright install chromium --with-deps
 
       - name: Run render and upload script
         env:
