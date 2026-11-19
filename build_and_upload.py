@@ -581,44 +581,80 @@ slide_24h_conditions, part2_raw = extract_slide_notes(
 
 def extract_dialogues_and_slide_anchors(script):
     dialogues = []
-    slide_anchor_dialogue_indexes = {}
-    slide_anchor_pattern = re.compile(r"\[SLIDE_(\d{1,2})\]")
+    first_anchor_dialogue_indexes = {}
+    slide_anchor_pattern = re.compile(r"\[SLIDE_(\d+)\]")
     for line in script.splitlines():
         match = re.match(r"^(男|女)[：:]\s*(.+)", line.strip())
         if not match:
             continue
-        dialogue_text = match.group(2).strip()
-        markers = slide_anchor_pattern.findall(dialogue_text)
-        if len(markers) > 1:
-            raise ValueError(f"A dialogue line has multiple slide anchors: {markers}")
-        if markers:
-            anchor_match = slide_anchor_pattern.match(dialogue_text)
-            if not anchor_match:
-                raise ValueError(
-                    f"Slide anchor must be the first token in its dialogue line: {dialogue_text}"
-                )
-            slide_number = int(markers[0])
-            if not 1 <= slide_number <= SLIDE_COUNT:
-                raise ValueError(f"Invalid slide anchor [SLIDE_{slide_number}].")
-            if slide_number in slide_anchor_dialogue_indexes.values():
-                raise ValueError(f"Duplicate slide anchor [SLIDE_{slide_number}].")
-            slide_anchor_dialogue_indexes[len(dialogues)] = slide_number
-            dialogue_text = slide_anchor_pattern.sub("", dialogue_text).strip()
+        raw_dialogue_text = match.group(2).strip()
+        marker_matches = list(slide_anchor_pattern.finditer(raw_dialogue_text))
+        dialogue_text = slide_anchor_pattern.sub("", raw_dialogue_text).strip()
         dialogue_text = normalize_long_term_terms(dialogue_text)
         if not dialogue_text:
-            raise ValueError("A dialogue line contains only a slide anchor.")
+            continue
+
+        for marker_match in marker_matches:
+            slide_number = int(marker_match.group(1))
+            if 1 <= slide_number <= SLIDE_COUNT:
+                first_anchor_dialogue_indexes.setdefault(
+                    slide_number, len(dialogues)
+                )
+                break
         dialogues.append((match.group(1), dialogue_text))
 
-    anchor_order = [
-        slide_anchor_dialogue_indexes[index]
-        for index in sorted(slide_anchor_dialogue_indexes)
-    ]
-    if anchor_order != list(range(1, SLIDE_COUNT + 1)):
-        raise RuntimeError(
-            "Gemini slide anchors must include [SLIDE_1] through "
-            f"[SLIDE_{SLIDE_COUNT}] exactly once in order; received {anchor_order}."
+    ordered_anchor_points = []
+    last_dialogue_index = -1
+    for slide_number in range(1, SLIDE_COUNT + 1):
+        dialogue_index = first_anchor_dialogue_indexes.get(slide_number)
+        if dialogue_index is not None and dialogue_index > last_dialogue_index:
+            ordered_anchor_points.append((slide_number, float(dialogue_index)))
+            last_dialogue_index = dialogue_index
+
+    if not dialogues:
+        return dialogues, {}
+
+    anchor_points = {1: 0.0, SLIDE_COUNT: float(len(dialogues))}
+    anchor_points.update(ordered_anchor_points)
+    known_slides = sorted(anchor_points)
+    positions = {}
+    for slide_number in range(1, SLIDE_COUNT + 1):
+        if slide_number in anchor_points:
+            positions[slide_number] = anchor_points[slide_number]
+            continue
+
+        previous_slide = max(
+            known for known in known_slides if known < slide_number
         )
-    return dialogues, slide_anchor_dialogue_indexes
+        next_slide = min(
+            known for known in known_slides if known > slide_number
+        )
+        previous_index = anchor_points[previous_slide]
+        next_index = anchor_points[next_slide]
+        fraction = (slide_number - previous_slide) / (next_slide - previous_slide)
+        positions[slide_number] = previous_index + fraction * (
+            next_index - previous_index
+        )
+
+    min_gap = len(dialogues) / (SLIDE_COUNT * 1000)
+    ordered_positions = [
+        min(max(positions[slide_number], 0.0), float(len(dialogues)) - min_gap)
+        for slide_number in range(1, SLIDE_COUNT + 1)
+    ]
+    for index in range(1, SLIDE_COUNT):
+        ordered_positions[index] = max(
+            ordered_positions[index], ordered_positions[index - 1] + min_gap
+        )
+    for index in range(SLIDE_COUNT - 2, -1, -1):
+        ordered_positions[index] = min(
+            ordered_positions[index], ordered_positions[index + 1] - min_gap
+        )
+
+    slide_anchor_positions = {
+        slide_number: ordered_positions[slide_number - 1]
+        for slide_number in range(1, SLIDE_COUNT + 1)
+    }
+    return dialogues, slide_anchor_positions
 
 
 def calculate_slide_durations(slide_start_times, speech_duration, video_intro_duration):
@@ -648,7 +684,7 @@ def calculate_slide_durations(slide_start_times, speech_duration, video_intro_du
 
 
 full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
-dialogues, slide_anchor_dialogue_indexes = extract_dialogues_and_slide_anchors(full_script)
+dialogues, slide_anchor_positions = extract_dialogues_and_slide_anchors(full_script)
 
 tts_host = "".join(["https", "://", "texttospeech.", "googleapis.", "com"])
 tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].strip()}"
@@ -801,9 +837,13 @@ cur_t, evs = intro_dur, []
 speech_elapsed = 0.0
 slide_start_times = {}
 for idx, _, txt, dur in results:
-    slide_number = slide_anchor_dialogue_indexes.get(idx)
-    if slide_number is not None:
-        slide_start_times[slide_number] = intro_video_duration + speech_elapsed
+    for slide_number, anchor_position in slide_anchor_positions.items():
+        anchor_dialogue_index = int(anchor_position)
+        if idx == anchor_dialogue_index:
+            fractional_offset = anchor_position - anchor_dialogue_index
+            slide_start_times[slide_number] = (
+                intro_video_duration + speech_elapsed + dur * fractional_offset
+            )
     tw_txt = cc.convert(txt)
 
     split_txt = [part.strip() for part in re.split(r'[，。！？、；：…!?;\n]+', tw_txt) if part.strip()]
