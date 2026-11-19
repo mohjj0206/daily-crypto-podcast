@@ -75,7 +75,7 @@ coins_summary = "\n".join(coins_lines)
 full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
 
 def call_gemini(prompt_txt):
-    models = ["gemini-3.8-flash"]
+    models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
@@ -84,7 +84,8 @@ def call_gemini(prompt_txt):
     for model in models:
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
         body = json.dumps({"contents": [{"parts": [{"text": prompt_txt}]}]}).encode("utf-8")
-        for attempt in range(3):
+        retried_503 = False
+        while True:
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             try:
                 res = json.loads(urllib.request.urlopen(req, timeout=180).read().decode("utf-8"))
@@ -93,18 +94,9 @@ def call_gemini(prompt_txt):
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
                 last_err = e
-                if e.code in (429, 500, 502, 503, 504):
-                    if e.code == 429:
-                        break
-                    if attempt < 2:
-                        time.sleep(30 * (attempt + 1))
-                        continue
-                break
-            except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
-                print(f"Gemini network timeout/error for model '{model}' (attempt {attempt + 1}/3): {e}")
-                last_err = e
-                if attempt < 2:
-                    time.sleep(15 * (attempt + 1))
+                if e.code == 503 and not retried_503:
+                    retried_503 = True
+                    time.sleep(10)
                     continue
                 break
             except Exception as e:
@@ -116,13 +108,25 @@ def call_gemini(prompt_txt):
         raise last_err
     raise RuntimeError("No Gemini models available.")
 
-p1_prompt = f"""你是財經播客【幣看趨勢】主編。根據數據寫前半段逐字稿（約2200字繁中）。\n{full_report}\n【角色】「男：」熱情直率柴犬；「女：」冷靜傲嬌橘貓。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。禁提媒體名稱、禁提上下半場分段字眼、禁加動作括號與Markdown。\n【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）\n第二行起只能用「男：」「女：」開頭。內容含：反直覺開場、女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負）、BTC均線與恐慌指數体檢、三大焦點正反理性打折解析。結尾自然過渡到看具體幣價（不說再見）。"""
+p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度約1600字繁中，整集兩段合計約16分鐘；不要刻意追求過長。
+{full_report}
+【角色】「男：」熱情直率柴犬；「女：」冷靜傲嬌橘貓。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。
+【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
+【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）第二行起只能用「男：」「女：」開頭。
+【內容】自然開場後，女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負），接著做BTC均線與恐慌指數體檢，以及三大焦點正反理性打折解析。結尾自然銜接到看具體幣價，不說再見、不使用分段結尾。"""
 part1_raw = call_gemini(p1_prompt)
 t_match = re.search(r'^標題[：:]\s*(.+)', part1_raw, re.M)
 ai_title = t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC ${cur_p}｜主流幣均線攻防與恐慌指數全解析"
 video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
-p2_prompt = f"""你是【幣看趨勢】主編。緊接以下對話寫後半段（約2200字繁中），保持一貓一狗性格與諧音梗，無縫接軌禁提分段字眼與媒體名稱，只用「男：」「女：」開頭。\n【前段結尾】{part1_raw[-350:]}\n【數據】{full_report}\n【內容】1.點評六大主流幣即時行情、24H漲跌與14日RSI超賣掃描。2.只針對BTC與ETH做多空策略分析，提出未來一週必須盯緊的三個具體觀察條件。結尾提醒控管倉位與風險並道別。"""
+p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半段逐字稿，約1600字繁中；整集兩段合計約16分鐘，不要重複或擴寫前段已講過的內容。
+【前段逐字稿】{part1_raw}
+【前段結尾】{part1_raw[-350:]}
+【數據】{full_report}
+【角色】保持一貓一狗性格與諧音梗，只用「男：」「女：」開頭，報數字清晰。
+【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
+【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
+【內容】1.只點評六大主流幣即時行情、24H漲跌與14日RSI掃描，不重複前段已談的BTC或ETH背景；2.只針對BTC與ETH提出未來一週必須盯緊的三個具體觀察條件；條件可拆成驗證價位、量能或情緒指標。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
 part2_raw = call_gemini(p2_prompt)
 
 full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
