@@ -1,0 +1,57 @@
+name: Deep Dive Coin Topic Publisher
+
+on:
+  schedule:
+    - cron: '0 0 * * 6'
+  workflow_dispatch:
+    inputs:
+      target_coin:
+        description: '專題主角幣種；AUTO 會依近 48 小時新聞選題'
+        required: false
+        type: choice
+        options:
+          - AUTO
+          - BTC
+          - ETH
+          - SOL
+          - XRP
+          - ADA
+          - ZEC
+        default: AUTO
+      test_mode:
+        description: '測試模式（縮短逐字稿與影片長度）'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg and Traditional Chinese Fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+
+      - name: Install Python dependencies
+        run: |
+          pip install feedparser pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib
+
+      - name: Run special-topic script and upload
+        env:
+          TARGET_COIN: ${{ inputs.target_coin || 'AUTO' }}
+          TEST_MODE: ${{ inputs.test_mode || 'false' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python build_special_topic.py
