@@ -14,6 +14,7 @@ from googleapiclient.http import MediaFileUpload
 tw_tz = timezone(timedelta(hours=8))
 today_str = datetime.now(tw_tz).strftime("%Y年%m月%d日")
 two_days_ago = time.time() - 48 * 3600
+is_test = os.environ.get("TEST_MODE", "").lower() == "true"
 
 def clean_txt(s):
     s = re.sub(r'〈.*?〉這篇文章最早發佈於.*', '', s or '')
@@ -119,7 +120,7 @@ def call_gemini(prompt_txt):
 
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度約1600字繁中，整集兩段合計約16分鐘；不要刻意追求過長。
 {full_report}
-【角色】「男：」熱情直率柴犬；「女：」冷靜傲嬌橘貓。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。
+【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）第二行起只能用「男：」「女：」開頭。
 【內容】自然開場後，女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負），接著做BTC均線與恐慌指數體檢，以及三大焦點正反理性打折解析。結尾自然銜接到看具體幣價，不說再見、不使用分段結尾。"""
@@ -132,7 +133,7 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【前段逐字稿】{part1_raw}
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
-【角色】保持一貓一狗性格與諧音梗，只用「男：」「女：」開頭，報數字清晰。
+【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。保持一貓一狗性格與諧音梗，只用「男：」「女：」開頭，報數字清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
 【內容】1.只點評六大主流幣即時行情、24H漲跌與14日RSI掃描，不重複前段已談的BTC或ETH背景；2.只針對BTC與ETH提出未來一週必須盯緊的三個具體觀察條件；條件可拆成驗證價位、量能或情緒指標。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
@@ -287,16 +288,26 @@ for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
     img = img.resize((1280, 720), Image.LANCZOS)
     img.save(f"slide{idx}.png")
 seg = cur_t / 8.0
+final_buffer = 2 if is_test else 30
 with open("list.txt", "w", encoding="utf-8") as f:
     for i in range(1, 9):
-        dur = seg if i < 8 else (seg + 30)
+        dur = seg if i < 8 else (seg + final_buffer)
         subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "2", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
         f.write(f"file 'p{i}.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
 subprocess.run(["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3", "-vf", "ass=subs.ass", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
-v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集由 AI 數據引擎整理 {today_str} 最新市場指標與網路公開重點議題，帶你透過「多空理性打折」視角掌握幣圈脈動！\n\n⏱️ 本集節目章節（點擊時間軸快速跳轉）：\n00:00 反直覺盤勢開場與投資風險提醒\n01:30 市場體檢：BTC 均線攻防與恐慌貪婪指數溫度計\n05:30 近兩日三大市場焦點深度解析與理性打折\n11:30 六大主流幣（BTC/ETH/SOL/XRP/ADA/ZEC）行情與 RSI 掃描\n17:30 BTC 與 ETH 多空觀察策略：必須盯緊的三個條件\n\n📊 本集核心數據：\n{s1}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
+actual_video_duration = cur_t + final_buffer
+def fmt_chapter(sec):
+    sec = max(0, min(int(round(sec)), int(round(actual_video_duration))))
+    minutes, seconds = divmod(sec, 60)
+    return f"{minutes:02d}:{seconds:02d}"
+
+chapter_offsets = (0, 0.12, 0.32, 0.60, 0.82)
+chapter_times = [fmt_chapter(actual_video_duration * ratio) for ratio in chapter_offsets]
+
+v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集節目章節（點擊時間軸快速跳轉）：\n{chapter_times[0]} 反直覺盤勢開場與投資風險提醒\n{chapter_times[1]} 市場體檢：BTC 均線攻防與恐慌貪婪指數溫度計\n{chapter_times[2]} 近兩日三大市場焦點深度解析與理性打折\n{chapter_times[3]} 六大主流幣（BTC/ETH/SOL/XRP/ADA/ZEC）行情與 RSI 掃描\n{chapter_times[4]} BTC 與 ETH 多空觀察策略：必須盯緊的三個條件\n\n📊 本集核心數據：\n{s1}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
