@@ -85,6 +85,7 @@ def call_gemini(prompt_txt):
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
         body = json.dumps({"contents": [{"parts": [{"text": prompt_txt}]}]}).encode("utf-8")
         retried_503 = False
+        retried_timeout = False
         while True:
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             try:
@@ -96,6 +97,14 @@ def call_gemini(prompt_txt):
                 last_err = e
                 if e.code == 503 and not retried_503:
                     retried_503 = True
+                    time.sleep(10)
+                    continue
+                break
+            except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
+                print(f"Gemini network timeout/error for model '{model}': {e}")
+                last_err = e
+                if not retried_timeout:
+                    retried_timeout = True
                     time.sleep(10)
                     continue
                 break
