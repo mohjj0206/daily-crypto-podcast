@@ -198,7 +198,29 @@ with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(synth_one, enumerate(dialogues)))
 results.sort(key=lambda x: x[0])
 
+intro_dur = 0.0
+if os.path.exists("info.mp3"):
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", "info.mp3", "-t", "15",
+            "-af", "afade=t=out:st=13.5:d=1.5",
+            "-ar", "24000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k",
+            "intro_cut.mp3",
+        ],
+        check=True,
+    )
+    intro_dur = float(
+        subprocess.check_output(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", "intro_cut.mp3",
+            ]
+        ).decode().strip()
+    )
+
 with open("audio_list.txt", "w", encoding="utf-8") as f:
+    if intro_dur > 0:
+        f.write("file 'intro_cut.mp3'\n")
     for _, fn, _, _ in results: f.write(f"file '{fn}'\n")
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "audio_list.txt", "-c", "copy", "podcast.mp3"], check=True)
 cc = OpenCC("s2twp")
@@ -210,7 +232,7 @@ def fmt_ass_t(sec):
 ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,22,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,1,0,2,27,27,24,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
 punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
-cur_t, evs = 0.0, []
+cur_t, evs = intro_dur, []
 for _, _, txt, dur in results:
     tw_txt = cc.convert(txt)
 
