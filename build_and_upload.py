@@ -1,4 +1,4 @@
-import os, re, json, time, base64, subprocess, urllib.request
+import os, re, json, time, calendar, base64, subprocess, urllib.request
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import feedparser
@@ -17,14 +17,47 @@ two_days_ago = time.time() - 48 * 3600
 is_test = os.environ.get("TEST_MODE", "").lower() == "true"
 
 def clean_txt(s):
-    s = re.sub(r'〈.*?〉這篇文章最早發佈於.*', '', s or '')
-    return re.sub(r'動區動趨|動區|BlockTempo', '市場消息', s, flags=re.I).strip()
+    s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
+    s = re.sub(r'(?:延伸閱讀|版權所有|copyright|©).*', '', s, flags=re.I)
+    return re.sub(
+        r'動區動趨|動區|BlockTempo|區塊客|blockcast\.it|Blockcast',
+        '市場消息',
+        s,
+        flags=re.I,
+    ).strip()
 
-rss_url = "".join(["https", "://", "www.blocktempo.", "com", "/feed/"])
-feed = feedparser.parse(rss_url)
-entries = [e for e in feed.entries if not hasattr(e, "published_parsed") or time.mktime(e.published_parsed) >= two_days_ago]
-if len(entries) < 3: entries = feed.entries[:6]
-else: entries = entries[:10]
+rss_urls = (
+    "".join(["https", "://", "www.blocktempo.", "com", "/feed/"]),
+    "".join(["https", "://", "blockcast.", "it", "/feed/"]),
+)
+source_entries = []
+for rss_url in rss_urls:
+    try:
+        feed = feedparser.parse(rss_url)
+        if feed.bozo:
+            print(f"RSS feed error for '{rss_url}': {feed.bozo_exception}")
+        source_entries.append(feed.entries)
+    except Exception as e:
+        print(f"Error fetching RSS feed '{rss_url}': {e}")
+        source_entries.append([])
+
+def published_timestamp(entry):
+    published = entry.get("published_parsed")
+    return calendar.timegm(published) if published else 0
+
+recent_entries = [
+    entry
+    for entries_from_source in source_entries
+    for entry in entries_from_source
+    if not entry.get("published_parsed") or published_timestamp(entry) >= two_days_ago
+]
+entries = (
+    [entry for entries_from_source in source_entries for entry in entries_from_source[:4]]
+    if len(recent_entries) < 3
+    else recent_entries
+)
+entries.sort(key=published_timestamp, reverse=True)
+entries = entries[:10]
 
 news_list = "\n\n".join([f"{i+1}. 【{clean_txt(e.get('title'))}】\n摘要：{clean_txt(e.get('summary', '')).replace(chr(10), ' ')[:160]}..." for i, e in enumerate(entries)])
 top3_headlines = "\n".join([f"{i+1}. {clean_txt(e.get('title'))}" for i, e in enumerate(entries[:3])])
