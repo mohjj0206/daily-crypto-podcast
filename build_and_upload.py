@@ -1,9 +1,11 @@
-import os, re, json, time, calendar, base64, html, io, tempfile, subprocess, urllib.request
+import os, re, json, time, calendar, base64, html, io, tempfile, subprocess, urllib.request, math
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from zoneinfo import ZoneInfo
 import feedparser
 from PIL import Image, ImageDraw, ImageFont
 from opencc import OpenCC
+from urllib.parse import quote
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -18,7 +20,7 @@ two_days_ago = time.time() - 48 * 3600
 is_test = os.environ.get("TEST_MODE", "").lower() == "true"
 OUTRO_DURATION = 12.0
 OUTRO_PAUSE = 1.5
-SLIDE_COUNT = 14
+SLIDE_COUNT = 15
 
 def clean_txt(s):
     s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
@@ -105,6 +107,234 @@ ma100d, ma200d = calc_sma(btc_cl, 100), calc_sma(btc_cl, 200)
 ma100w, ma200w = calc_sma(btc_w, 100), calc_sma(btc_w, 200)
 eth_ma100d, eth_ma200d = calc_sma(eth_cl, 100), calc_sma(eth_cl, 200)
 
+def fetch_yahoo_daily_closes(symbol, start_date, end_date):
+    start_ts = calendar.timegm(
+        datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc).timetuple()
+    )
+    end_date_exclusive = end_date + timedelta(days=1)
+    end_ts = calendar.timegm(
+        datetime(
+            end_date_exclusive.year,
+            end_date_exclusive.month,
+            end_date_exclusive.day,
+            tzinfo=timezone.utc,
+        ).timetuple()
+    )
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{quote(symbol, safe='')}?period1={start_ts}&period2={end_ts}&interval=1d"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    response = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+    chart = response.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError(f"Yahoo Finance error for {symbol}: {chart['error']}")
+    results = chart.get("result") or []
+    if not results:
+        raise RuntimeError(f"Yahoo Finance returned no daily prices for {symbol}.")
+    result = results[0]
+    exchange_timezone = ZoneInfo(result.get("meta", {}).get("exchangeTimezoneName", "UTC"))
+    closes = result["indicators"]["quote"][0]["close"]
+    return {
+        datetime.fromtimestamp(timestamp, timezone.utc)
+        .astimezone(exchange_timezone)
+        .date(): float(close)
+        for timestamp, close in zip(result.get("timestamp", []), closes)
+        if close is not None
+    }
+
+
+def latest_close_on_or_before(closes, target_date, max_age_days=7):
+    available_dates = [date for date in closes if date <= target_date]
+    if not available_dates:
+        return None
+    latest_date = max(available_dates)
+    if (target_date - latest_date).days > max_age_days:
+        return None
+    return closes[latest_date]
+
+
+def scheduled_dca_dates(start_date, end_date):
+    dates = []
+    year, month = start_date.year, start_date.month
+    while (year, month) <= (end_date.year, end_date.month):
+        for day in (5, 10, 15, 20, 25):
+            try:
+                scheduled_date = datetime(year, month, day).date()
+            except ValueError:
+                continue
+            if start_date <= scheduled_date <= end_date:
+                dates.append(scheduled_date)
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+    return dates
+
+
+def update_dca_portfolio(current_btc_usd):
+    current_btc_usd = float(current_btc_usd)
+    if not math.isfinite(current_btc_usd) or current_btc_usd <= 0:
+        raise ValueError("current_btc_usd must be a positive finite price.")
+    today = datetime.now(tw_tz).date()
+    start_date = datetime(2025, 10, 5).date()
+    schedule_dates = scheduled_dca_dates(start_date, today)
+    ledger_path = "dca_portfolio.json"
+
+    if os.path.exists(ledger_path):
+        with open(ledger_path, encoding="utf-8") as ledger_file:
+            portfolio = json.load(ledger_file)
+        if not isinstance(portfolio, dict) or not isinstance(portfolio.get("records"), list):
+            raise ValueError(f"{ledger_path} must contain a JSON object with a records list.")
+    else:
+        portfolio = {"records": []}
+
+    records = portfolio["records"]
+    if any(not isinstance(record, dict) or not record.get("date") for record in records):
+        raise ValueError(f"{ledger_path} contains a record without a date.")
+    existing_dates = {record["date"] for record in records}
+    if len(existing_dates) != len(records):
+        raise ValueError(f"{ledger_path} contains duplicate DCA dates.")
+    missing_dates = [date for date in schedule_dates if date.isoformat() not in existing_dates]
+    historical_fx = {}
+    historical_fx_failed = False
+    if missing_dates:
+        first_missing = min(missing_dates)
+        try:
+            historical_fx = fetch_yahoo_daily_closes(
+                "USDTWD=X", first_missing - timedelta(days=7), today
+            )
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+            historical_fx_failed = True
+            print(f"Historical USDTWD rate lookup failed; using 32.5 where unavailable: {error}")
+
+        historical_btc = fetch_yahoo_daily_closes("BTC-USD", min(missing_dates), today)
+        for deposit_date in missing_dates:
+            btc_price = historical_btc.get(deposit_date)
+            if btc_price is None or btc_price <= 0:
+                raise RuntimeError(
+                    f"Missing valid BTC-USD historical close for {deposit_date.isoformat()}."
+                )
+            twd_rate = latest_close_on_or_before(historical_fx, deposit_date)
+            if twd_rate is None or twd_rate <= 0:
+                if not historical_fx_failed:
+                    print(
+                        f"No recent USDTWD close for {deposit_date.isoformat()}; "
+                        "using the fallback rate 32.5."
+                    )
+                twd_rate = 32.5
+            usd_invested = 10000 / twd_rate
+            btc_bought = round(usd_invested / btc_price, 8)
+            records.append({
+                "date": deposit_date.isoformat(),
+                "twd_invested": 10000,
+                "btc_price_usd": round(btc_price, 2),
+                "twd_rate": round(twd_rate, 4),
+                "btc_bought": btc_bought,
+            })
+
+    records.sort(key=lambda record: record["date"])
+    current_fx = {}
+    try:
+        current_fx = fetch_yahoo_daily_closes(
+            "USDTWD=X", today - timedelta(days=7), today
+        )
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        print(f"Current USDTWD rate lookup failed; using 32.5: {error}")
+    current_twd_rate = latest_close_on_or_before(current_fx, today)
+    if current_twd_rate is None or current_twd_rate <= 0:
+        current_twd_rate = 32.5
+
+    monthly_totals = {}
+    total_twd = 0
+    total_usd_invested = 0.0
+    total_btc = 0.0
+    for record in records:
+        record_month = record["date"][:7]
+        month = monthly_totals.setdefault(
+            record_month, {"twd_invested": 0, "btc_bought": 0.0}
+        )
+        twd_invested = float(record["twd_invested"])
+        twd_rate = float(record["twd_rate"])
+        btc_bought = float(record["btc_bought"])
+        month["twd_invested"] += twd_invested
+        month["btc_bought"] += btc_bought
+        total_twd += twd_invested
+        total_usd_invested += twd_invested / twd_rate
+        total_btc += btc_bought
+
+    if total_btc <= 0:
+        raise RuntimeError("The DCA portfolio has no valid accumulated BTC.")
+    current_market_value_usd = total_btc * float(current_btc_usd)
+    current_market_value_twd = current_market_value_usd * current_twd_rate
+    unrealized_pnl_usd = current_market_value_usd - total_usd_invested
+    unrealized_pnl_twd = current_market_value_twd - total_twd
+    monthly_summary = {
+        month: {
+            "twd_invested": totals["twd_invested"],
+            "btc_bought": f"{totals['btc_bought']:.8f}",
+        }
+        for month, totals in sorted(monthly_totals.items())
+    }
+    portfolio.update({
+        "start_date": start_date.isoformat(),
+        "monthly_contribution_twd": 10000,
+        "schedule_days": [5, 10, 15, 20, 25],
+        "records": records,
+        "monthly_summary": monthly_summary,
+        "total_twd": total_twd,
+        "total_btc": f"{total_btc:.8f}",
+        "avg_buy_price_twd": round(total_twd / total_btc, 2),
+        "avg_buy_price_usd": round(total_usd_invested / total_btc, 2),
+        "current_btc_usd": round(float(current_btc_usd), 2),
+        "current_twd_rate": round(current_twd_rate, 4),
+        "current_market_value_usd": round(current_market_value_usd, 2),
+        "current_market_value_twd": round(current_market_value_twd, 2),
+        "unrealized_pnl_usd": round(unrealized_pnl_usd, 2),
+        "unrealized_pnl_twd": round(unrealized_pnl_twd, 2),
+        "total_return_pct": round(
+            (current_market_value_twd / total_twd - 1) * 100, 2
+        ),
+    })
+    with open(ledger_path, "w", encoding="utf-8") as ledger_file:
+        json.dump(portfolio, ledger_file, ensure_ascii=False, indent=2)
+        ledger_file.write("\n")
+    return portfolio
+
+
+dca_portfolio = update_dca_portfolio(btc_cl[-1])
+dca_monthly_lines = [
+    f"{month}: 投入 NT${summary['twd_invested']:,}，買入 {summary['btc_bought']} BTC"
+    for month, summary in dca_portfolio["monthly_summary"].items()
+]
+dca_monthly_slide_lines = []
+for index in range(0, len(dca_monthly_lines), 2):
+    dca_monthly_slide_lines.append(
+        "　｜　".join(dca_monthly_lines[index:index + 2])
+    )
+dca_report = (
+    "【BTC 長期定投（DCA）實戰帳本】\n"
+    "自2025-10-05起，每月5、10、15、20、25日各投入NT$10,000。\n"
+    f"總投入：NT${dca_portfolio['total_twd']:,}；"
+    f"累計持有：{dca_portfolio['total_btc']} BTC。\n"
+    f"平均成本：NT${dca_portfolio['avg_buy_price_twd']:,.2f} / "
+    f"US${dca_portfolio['avg_buy_price_usd']:,.2f} 每BTC。\n"
+    f"目前市值：NT${dca_portfolio['current_market_value_twd']:,.2f} / "
+    f"US${dca_portfolio['current_market_value_usd']:,.2f}；"
+    f"浮盈虧：NT${dca_portfolio['unrealized_pnl_twd']:+,.2f}；"
+    f"總報酬率：{dca_portfolio['total_return_pct']:+.2f}%。\n"
+    "按月摘要：\n" + "\n".join(dca_monthly_lines)
+)
+dca_slide_body = "\n".join(
+    ["按月累積摘要（月份：投入 / 買入BTC）"]
+    + dca_monthly_slide_lines
+    + [
+        f"總投入 NT${dca_portfolio['total_twd']:,}｜累計持有 {dca_portfolio['total_btc']} BTC",
+        f"平均成本 NT${dca_portfolio['avg_buy_price_twd']:,.2f} / US${dca_portfolio['avg_buy_price_usd']:,.2f}",
+        f"現值 NT${dca_portfolio['current_market_value_twd']:,.2f}｜浮盈虧 NT${dca_portfolio['unrealized_pnl_twd']:+,.2f}（{dca_portfolio['total_return_pct']:+.2f}%）",
+    ]
+)
+
 coins_lines = []
 for name, (cl, pct, rsi) in cdata.items():
     sgn = "+" if pct >= 0 else ""
@@ -112,7 +342,7 @@ for name, (cl, pct, rsi) in cdata.items():
     coins_lines.append(f"{name}: ${cl[-1]:,.2f} ({sgn}{pct:.2f}%{r_txt})")
 coins_summary = "\n".join(coins_lines)
 
-full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
+full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n{dca_report}\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
 
 def call_gemini(prompt_txt):
     models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
@@ -157,11 +387,11 @@ def call_gemini(prompt_txt):
         raise last_err
     raise RuntimeError("No Gemini models available.")
 
-target_words = "約200字繁中（精簡測試版，14張圖卡各保留一句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
+target_words = "約200字繁中（精簡測試版，15張圖卡各保留一句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
 p1_length_guidance = (
-    "測試模式仍須為前半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
+    "測試模式仍須為前半段8個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
     if is_test else
-    "正式版本段必須達2,600至2,900字：開場含一則50至65字風險提醒共200至250字；BTC四大均線（100日、200日、100週、200週）與恐慌貪婪指數800至900字；三大市場焦點各500至550字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+    "正式版本段必須達2,600至2,900字：開場含一則50至65字風險提醒約180字；緊接播報DCA實戰帳本進度220至250字；BTC四大均線、恐慌貪婪指數與ETH均線RSI合計700至800字；三大市場焦點各450至500字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
 p2_length_guidance = (
     "測試模式仍須為後半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
@@ -169,24 +399,26 @@ p2_length_guidance = (
     "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC/ETH百日走勢圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
 p1_slide_anchors = (
-    "[SLIDE_1]開場與風險提醒；[SLIDE_2]恐慌與貪婪指數；"
-    "[SLIDE_3]BTC四大均線與RSI；[SLIDE_4]ETH日線均線與RSI；"
-    "[SLIDE_5]第一則市場焦點；[SLIDE_6]第二則市場焦點；[SLIDE_7]第三則市場焦點。"
+    "[SLIDE_1]開場與風險提醒；[SLIDE_2]BTC長期定投（DCA）實戰帳本；"
+    "[SLIDE_3]恐慌與貪婪指數；[SLIDE_4]BTC四大均線與RSI；"
+    "[SLIDE_5]ETH日線均線與RSI；[SLIDE_6]第一則市場焦點；"
+    "[SLIDE_7]第二則市場焦點；[SLIDE_8]第三則市場焦點。"
 )
 p2_slide_anchors = (
-    "[SLIDE_8]六大主流幣報價與指標總表；[SLIDE_9]六大主流幣24H漲跌；"
-    "[SLIDE_10]BTC與ETH百日走勢圖解讀；[SLIDE_11]關鍵價位攻防；"
-    "[SLIDE_12]美股開盤連動；[SLIDE_13]短線清算風險；"
-    "[SLIDE_14]總結行動策略。"
+    "[SLIDE_9]六大主流幣報價與指標總表；[SLIDE_10]六大主流幣24H漲跌；"
+    "[SLIDE_11]BTC與ETH百日走勢圖解讀；[SLIDE_12]關鍵價位攻防；"
+    "[SLIDE_13]美股開盤連動；[SLIDE_14]短線清算風險；"
+    "[SLIDE_15]總結行動策略。"
 )
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 {full_report}
 【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或新聞，自然穿插兩位主持人互相吐槽及幣圈／財經冷笑話，並融入台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；笑點要貼合內容、不生硬、不重複，報數字保持清晰。
+【頻道核心精神】兩位主持人都是堅定的比特幣長期持有者（HODLer）。消息面與技術指標用來理解市場結構，不是鼓勵短線交易；明確反對盲目追高殺低與高槓桿賭博，鼓勵用長期週期看待波動、以紀律DCA逐步累積比特幣。風險提醒後的DCA實戰帳本段落須照帳本數字精準播報，不可自行改寫金額、BTC顆數或平均成本。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，每行濃縮一個焦點的利多與理性折價，不可包含媒體名稱。
-【內容】自然開場後，女聲以太喵在開場白後用一句約50至65字、口語化且精簡有力的提醒，於12至15秒內說明節目僅分享公開資訊、不構成投資建議及加密貨幣高波動、請獨立思考並自負盈虧；不要長篇唸條文。依序分析BTC四大均線與恐慌貪婪指數、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
+【內容】由以太喵簡短開場，並以[SLIDE_1]標記開場對話；風險提醒後必須緊接DCA帳本播報，由比特汪或以太喵以[SLIDE_2]開頭新對話，依序精準說明開始日期、每月定投日期與金額、按月累積進度、總投入台幣、累計BTC（8位小數）、台幣及美元平均買入價格、目前浮盈虧。不可把帳本播報移到風險提醒之前。之後依序分析恐慌貪婪指數、BTC四大均線、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 part1_raw = call_gemini(p1_prompt)
 def extract_slide_notes(raw, prefix, fallback_notes):
     notes = []
@@ -209,11 +441,12 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
 【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或觀察條件，自然穿插互相吐槽、幣圈／財經冷笑話及台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；保持自然、貼合情境、不生硬不重複，只用「男：」「女：」開頭，報數字清晰。
+【頻道核心精神】兩位主持人皆為堅定的比特幣長期持有者（HODLer）；技術分析與未來24小時觀察條件是為理解市場結構與管理風險，明確反對盲目短線追高殺低或高槓桿賭博。結尾自然提醒長期週期、紀律DCA累積比特幣，不得把觀察條件說成短線買賣指令。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。後半段標記對應：{p2_slide_anchors}
 【篇幅配額】{p2_length_guidance}
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
-【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC與ETH百日走勢圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
+【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC與ETH百日走勢圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據，且必須從長期持有與DCA風險管理角度解讀，不可給短線下單指令。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位、長期週期與紀律DCA並道別，不使用分段字眼。"""
 part2_raw = call_gemini(p2_prompt)
 default_24h_conditions = [
     f"均線守位｜BTC ${cur_p}、ETH ${cdata['ETH'][0][-1]:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
@@ -576,6 +809,7 @@ condition_slides = [
 ]
 slides_cfg = [
     ("開場｜盤勢觀察與投資風險提醒", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
+    ("BTC 長期定投（DCA）實戰成績單", "#fbbf24", dca_slide_body, "focus"),
     ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
     ("BTC 動態｜四大均線與 RSI", "#38bdf8", s1, "dual"),
     ("ETH 動態｜日線均線與 RSI", "#a78bfa", eth_slide, "dual"),
@@ -660,6 +894,9 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
         )
 
     content_class = "content with-visual" if chart_markup else "content"
+    frame_class = "frame compact" if slide_data.get("compact") else "frame"
+    if slide_data.get("compact"):
+        content_class += " compact"
     title_markup = highlight_key_numbers(slide_data.get("title", ""))
     label_markup = html.escape(str(slide_data.get("label", "")))
     accent = html.escape(str(slide_data.get("accent", "#fbbf24")))
@@ -742,6 +979,9 @@ li:nth-child(3) {{ animation-delay: 1.55s; }}
 li:nth-child(4) {{ animation-delay: 2.15s; }}
 li:nth-child(5) {{ animation-delay: 2.75s; }}
 li:nth-child(n+6) {{ animation-delay: 3.35s; }}
+.frame.compact h1 {{ font-size: 32px; margin-bottom: 12px; }}
+.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
+.compact li::before {{ width: 7px; height: 7px; }}
 @keyframes fadeInUp {{
   from {{ opacity: 0; transform: translateY(24px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -779,7 +1019,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 </head>
 <body>
 <div class="topline">{label_markup}</div>
-<main class="frame" style="--accent:{accent}">
+<main class="{frame_class}" style="--accent:{accent}">
   <h1>{title_markup}</h1>
   <section class="{content_class}">
     <ul>{list_markup}</ul>
@@ -1017,6 +1257,7 @@ with sync_playwright() as playwright:
                 "chart_type": ctype,
                 "gauge_value": fng_num,
                 "accent": color,
+                "compact": idx == 2,
             }
             render_animated_slide(
                 idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4"
@@ -1100,7 +1341,7 @@ chapter_lines = "\n".join(
     for position, (_, title) in enumerate(chapter_entries)
 )
 
-v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集簡報章節（依14張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
+v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！頻道以長期持有與紀律DCA為核心，不鼓勵盲目短線或高槓桿交易。\n\n⏱️ 本集簡報章節（依15張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 BTC 長期定投（DCA）實戰帳本：\n{dca_report}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢 #DCA #HODL"
 
 topic_icon_path = generate_topic_icon(slide_news[0], "BTC")
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
