@@ -217,7 +217,7 @@ for line in full_script.splitlines():
 tts_host = "".join(["https", "://", "texttospeech.", "googleapis.", "com"])
 tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].strip()}"
 
-def synth_one(item):
+def synth_audio_segment(item, file_prefix):
     idx, (role, txt) = item
     v_name = "cmn-TW-Neural2-B" if role == "男" else "cmn-TW-Neural2-A"
     fallback_voice = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
@@ -257,10 +257,13 @@ def synth_one(item):
         print(f"Google TTS voice '{v_name}' is unavailable; retrying with '{fallback_voice}'.")
         res = request_tts(fallback_voice)
 
-    fn = f"seg_{idx:04d}.mp3"
+    fn = f"{file_prefix}_{idx:04d}.mp3"
     with open(fn, "wb") as f: f.write(base64.b64decode(res["audioContent"]))
     dur = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", fn]).decode().strip())
     return idx, fn, txt, dur
+
+def synth_one(item):
+    return synth_audio_segment(item, "seg")
 
 with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(synth_one, enumerate(dialogues)))
@@ -1085,3 +1088,349 @@ if os.path.exists("avatar.png"):
 t_img.save("thumb.jpg", "JPEG", quality=92)
 youtube.thumbnails().set(videoId=res["id"], media_body=MediaFileUpload("thumb.jpg")).execute()
 print("Custom thumbnail uploaded successfully!")
+
+
+def build_and_upload_short():
+    short_target_chars = 45 if is_test else 230
+    short_duration_limit = 15.0 if is_test else 60.0
+    short_news = (
+        f"頭條：{t3[0]}\n"
+        f"多空打折摘要：{slide_news[0]}\n"
+        f"BTC：${cur_p}，24H {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%，"
+        f"100日均線 ${ma100d}，200日均線 ${ma200d}，RSI {btc_rsi}\n"
+        f"ETH：${eth_cl[-1]:,.2f}，24H {'+' if eth_pct >= 0 else ''}{eth_pct:.2f}%，"
+        f"RSI {eth_rsi}\n"
+        f"恐慌與貪婪指數：{today_fng['value']}（{today_fng['value_classification']}）"
+    )
+    short_prompt = f"""你是【幣看趨勢】短影音編劇，請使用下方當日頭條與市場數據，寫一段約{short_target_chars}字的繁體中文雙人快節奏短影音逐字稿。
+資料：
+{short_news}
+
+規格：
+1. 正式模式總長約230字，適合1.2倍速配音約45至50秒；測試模式總長約45字，控制在15秒內。
+2. 第一位主持人在開頭3秒內用反直覺問題或數據落差當鉤子。
+3. 中間只講資料中的核心新聞、BTC/ETH數據與一個理性風險折價，不可編造資料。
+4. 結尾明確引導觀眾點擊頻道觀看完整15分鐘解析。
+5. 以「男：」與「女：」交替對話，至少各說一次；只輸出逐字稿，不要標題、註解或Markdown。"""
+    raw_short_script = call_gemini(short_prompt)
+    short_dialogues = []
+    for line in raw_short_script.splitlines():
+        match = re.match(r"^(男|女)[：:]\s*(.+)", line.strip())
+        if match:
+            short_dialogues.append(
+                (match.group(1), cc.convert(match.group(2).strip()))
+            )
+    if not short_dialogues or {role for role, _ in short_dialogues} != {"男", "女"}:
+        raise RuntimeError("Gemini did not return valid dialogue for both short-video hosts.")
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        short_segments = list(
+            executor.map(
+                lambda item: synth_audio_segment(item, "short_seg"),
+                enumerate(short_dialogues),
+            )
+        )
+    short_segments.sort(key=lambda segment: segment[0])
+    short_audio_duration = sum(segment[3] for segment in short_segments)
+    if short_audio_duration <= 0 or short_audio_duration > short_duration_limit:
+        raise RuntimeError(
+            f"Short-video speech duration {short_audio_duration:.2f}s exceeds "
+            f"the {short_duration_limit:g}s limit; refusing to cut off speech."
+        )
+
+    with open("short_audio_list.txt", "w", encoding="utf-8") as audio_list:
+        for _, filename, _, _ in short_segments:
+            audio_list.write(f"file '{filename}'\n")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", "short_audio_list.txt", "-c", "copy", "short_audio.mp3",
+        ],
+        check=True,
+    )
+
+    short_ass_header = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Noto Sans CJK TC,52,&H0000D7FF,&H000000FF,&H00101010,"
+        "&HAA000000,1,0,0,0,100,100,0,0,1,3,1,2,28,28,190,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+    )
+    short_subtitle_events = []
+    subtitle_time = 0.0
+    short_punctuation = r"[，。！？、；：…!?;\n]+"
+    for _, _, spoken_text, segment_duration in short_segments:
+        phrases = [
+            phrase.strip()
+            for phrase in re.split(short_punctuation, spoken_text)
+            if phrase.strip()
+        ]
+        subtitle_chunks = []
+        for phrase in phrases:
+            subtitle_chunks.extend(
+                phrase[index:index + 12]
+                for index in range(0, len(phrase), 12)
+            )
+        total_chars = sum(len(chunk) for chunk in subtitle_chunks)
+        segment_time = subtitle_time
+        for index, chunk in enumerate(subtitle_chunks):
+            subtitle_end = (
+                subtitle_time + segment_duration
+                if index == len(subtitle_chunks) - 1
+                else segment_time + segment_duration * len(chunk) / total_chars
+            )
+            clean_chunk = re.sub(r"[{}\\]", "", chunk).strip()
+            highlighted = re.sub(
+                kw_pat,
+                r"{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H0000D7FF&}",
+                clean_chunk,
+            )
+            short_subtitle_events.append(
+                f"Dialogue: 0,{fmt_ass_t(segment_time)},{fmt_ass_t(subtitle_end)},"
+                f"Default,,0,0,0,,{highlighted}"
+            )
+            segment_time = subtitle_end
+        subtitle_time += segment_duration
+    with open("subs_short.ass", "w", encoding="utf-8") as subtitle_file:
+        subtitle_file.write(short_ass_header + "\n".join(short_subtitle_events))
+
+    avatar_markup = (
+        '<div class="avatar-placeholder">喵・汪</div>'
+    )
+    if os.path.exists("avatar.png"):
+        with Image.open("avatar.png") as avatar:
+            avatar_buffer = io.BytesIO()
+            avatar.convert("RGBA").resize(
+                (240, 240), Image.LANCZOS
+            ).save(avatar_buffer, format="PNG")
+        avatar_encoded = base64.b64encode(avatar_buffer.getvalue()).decode("ascii")
+        avatar_markup = (
+            '<img class="avatar" alt="以太喵與比特汪" '
+            f'src="data:image/png;base64,{avatar_encoded}">'
+        )
+
+    def short_highlight_markup(text):
+        escaped_text = html.escape(str(text))
+        return re.sub(
+            r"\$[\d,]+(?:\.\d+)?|(?<![\w])\d+(?:\.\d+)?%?",
+            lambda match: f'<span class="hl">{match.group(0)}</span>',
+            escaped_text,
+        )
+
+    short_highlights = [
+        short_highlight_markup(t3[0][:34]),
+        short_highlight_markup(slide_news[0][:42]),
+        "完整15分鐘市場解析，點擊頻道觀看",
+    ]
+    highlights_markup = "".join(
+        f'<li style="--delay:{index * 0.6:.1f}s">{highlight}</li>'
+        for index, highlight in enumerate(short_highlights)
+    )
+    fear_value = html.escape(str(today_fng["value"]))
+    fear_classification = html.escape(str(today_fng["value_classification"]))
+    short_html = f"""<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=720, initial-scale=1">
+<style>
+* {{ box-sizing: border-box; }}
+html, body {{ width:720px; height:1280px; margin:0; overflow:hidden; }}
+body {{
+  position:relative; color:#f8fafc; background:#090d16;
+  font-family:'Noto Sans CJK TC',sans-serif;
+}}
+body::before {{
+  position:absolute; inset:-8%; content:""; opacity:.5;
+  background:
+    radial-gradient(ellipse at 50% 38%,rgba(56,189,248,.2),transparent 40%),
+    radial-gradient(ellipse at 20% 75%,rgba(167,139,250,.16),transparent 35%),
+    linear-gradient(rgba(56,189,248,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(56,189,248,.05) 1px,transparent 1px);
+  background-size:auto,auto,42px 42px,42px 42px;
+  animation:gridFlow 12s linear infinite;
+}}
+@keyframes gridFlow {{ to {{ transform:translate3d(42px,21px,0); }} }}
+.brand {{
+  position:absolute; top:24px; width:100%; text-align:center;
+  color:#fbbf24; font-size:29px; font-weight:800; letter-spacing:2px;
+}}
+.brand::after {{
+  display:block; width:210px; height:3px; margin:10px auto 0;
+  background:linear-gradient(90deg,transparent,#38bdf8,transparent); content:"";
+}}
+.avatar {{
+  position:absolute; top:78px; left:240px; width:240px; height:240px;
+  object-fit:contain; border:3px solid #fbbf24; border-radius:50%;
+  box-shadow:0 0 34px rgba(251,191,36,.38); animation:avatarIn .8s ease-out both;
+}}
+.avatar-placeholder {{
+  position:absolute; top:78px; left:240px; width:240px; height:240px;
+  display:grid; place-items:center; border:3px solid #fbbf24; border-radius:50%;
+  color:#fbbf24; background:#111827; font-size:52px;
+}}
+@keyframes avatarIn {{
+  from {{ opacity:0; transform:scale(.75); }}
+  to {{ opacity:1; transform:scale(1); }}
+}}
+.panel {{
+  position:absolute; top:348px; left:34px; right:34px; bottom:310px;
+  padding:28px 26px; border:2px solid rgba(251,191,36,.78); border-radius:24px;
+  background:rgba(15,23,42,.9); box-shadow:0 0 35px rgba(56,189,248,.14);
+  overflow:hidden; text-align:center;
+}}
+.eyebrow {{ color:#94a3b8; font-size:22px; letter-spacing:4px; }}
+.symbol {{ margin-top:6px; color:#38bdf8; font-size:32px; font-weight:800; }}
+.price {{
+  margin:2px 0 12px; color:#fbbf24; font-size:68px; font-weight:900;
+  text-shadow:0 0 26px rgba(251,191,36,.38);
+  animation:numberIn .8s cubic-bezier(.2,.8,.2,1) both,numberPulse 3.5s ease-in-out 1s infinite;
+}}
+@keyframes numberIn {{ from {{ opacity:0; transform:translateY(25px) scale(.92); }} to {{ opacity:1; transform:translateY(0) scale(1); }} }}
+@keyframes numberPulse {{ 0%,100% {{ text-shadow:0 0 18px rgba(251,191,36,.25); }} 50% {{ text-shadow:0 0 34px rgba(251,191,36,.62); }} }}
+.stats {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0 20px; }}
+.stat {{
+  padding:12px 6px; border:1px solid rgba(56,189,248,.35); border-radius:14px;
+  background:rgba(8,15,28,.8); animation:fadeInUp .6s ease-out .55s both;
+}}
+.stat strong {{ display:block; color:#fbbf24; font-size:29px; }}
+.stat small {{ color:#94a3b8; font-size:17px; }}
+.points {{ list-style:none; margin:0; padding:0; text-align:left; }}
+.points li {{
+  position:relative; margin:13px 0; padding:0 4px 0 28px;
+  color:#e2e8f0; font-size:22px; line-height:1.35; overflow-wrap:anywhere;
+  animation:fadeInUp .6s ease-out var(--delay) both;
+}}
+.points li::before {{
+  position:absolute; top:.48em; left:2px; width:9px; height:9px;
+  border-radius:50%; background:#38bdf8; box-shadow:0 0 12px #38bdf8; content:"";
+}}
+.hl {{ position:relative; z-index:0; color:#fff2b3; }}
+.hl::after {{
+  position:absolute; z-index:-1; left:0; bottom:-.06em; width:100%; height:.32em;
+  background:linear-gradient(90deg,rgba(251,191,36,.8),rgba(251,191,36,.14));
+  content:""; transform:scaleX(0); transform-origin:left;
+  animation:highlight .65s ease-out .6s forwards;
+}}
+@keyframes highlight {{ to {{ transform:scaleX(1); }} }}
+@keyframes fadeInUp {{ from {{ opacity:0; transform:translateY(20px); }} to {{ opacity:1; transform:translateY(0); }} }}
+</style></head>
+<body>
+<header class="brand">【幣看趨勢】｜每日市場快訊</header>
+{avatar_markup}
+<main class="panel">
+  <div class="eyebrow">BTC 即時價格</div>
+  <div class="symbol">BITCOIN　BTC</div>
+  <div class="price">${cur_p}</div>
+  <section class="stats">
+    <div class="stat"><strong>{btc_pct:+.2f}%</strong><small>BTC 24H</small></div>
+    <div class="stat"><strong>${eth_cl[-1]:,.2f}</strong><small>ETH 現價</small></div>
+    <div class="stat"><strong>{eth_pct:+.2f}%</strong><small>ETH 24H</small></div>
+    <div class="stat"><strong>{fear_value}</strong><small>恐懼貪婪・{fear_classification}</small></div>
+  </section>
+  <ul class="points">{highlights_markup}</ul>
+</main>
+<script>
+window.fitShortLayout = () => {{
+  const panel = document.querySelector(".panel");
+  const points = [...document.querySelectorAll(".points li")];
+  for (let attempt = 0; attempt < 12 && panel.scrollHeight > panel.clientHeight + 1; attempt++) {{
+    for (const point of points) {{
+      const size = parseFloat(getComputedStyle(point).fontSize);
+      if (size > 17) point.style.fontSize = `${{size - 1}}px`;
+    }}
+  }}
+  return document.documentElement.scrollWidth <= 720 &&
+    document.documentElement.scrollHeight <= 1280 &&
+    panel.scrollHeight <= panel.clientHeight + 1;
+}};
+</script>
+</body></html>"""
+
+    render_duration = 15.0 if is_test else short_audio_duration
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            with tempfile.TemporaryDirectory(prefix="short_render_") as video_dir:
+                context = browser.new_context(
+                    viewport={"width": 720, "height": 1280},
+                    device_scale_factor=1,
+                    record_video_dir=video_dir,
+                    record_video_size={"width": 720, "height": 1280},
+                )
+                page = context.new_page()
+                video = page.video
+                try:
+                    page.set_content(short_html, wait_until="load")
+                    page.evaluate("() => document.fonts.ready.then(() => true)")
+                    if not page.evaluate("() => window.fitShortLayout()"):
+                        raise ValueError("Short-video HTML exceeds its safe area.")
+                    page.wait_for_timeout(round(render_duration * 1000))
+                finally:
+                    context.close()
+                recording_path = video.path()
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-i", recording_path,
+                        "-vf", "fps=24,scale=720:1280:flags=lanczos,format=yuv420p",
+                        "-t", f"{render_duration:.6f}", "-an", "-r", "24",
+                        "-c:v", "libx264", "-preset", "ultrafast",
+                        "-pix_fmt", "yuv420p", "short_visual.mp4",
+                    ],
+                    check=True,
+                )
+        finally:
+            browser.close()
+
+    mux_command = [
+        "ffmpeg", "-y", "-i", "short_visual.mp4", "-i", "short_audio.mp3",
+        "-vf", "ass=subs_short.ass",
+    ]
+    if is_test:
+        mux_command.extend(["-af", "apad=whole_dur=15", "-t", "15"])
+    else:
+        mux_command.extend(["-t", f"{short_audio_duration:.6f}"])
+    mux_command.extend(
+        [
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24",
+            "-r", "24", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-shortest", "short.mp4",
+        ]
+    )
+    subprocess.run(mux_command, check=True)
+
+    main_video_url = f"https://www.youtube.com/watch?v={res['id']}"
+    short_title = (
+        f"BTC ${cur_p}｜恐慌指數 {fng_num} 點，這個訊號別忽略！ #Shorts"
+    )
+    short_description = (
+        f"{today_str} 幣圈市場 50 秒快訊。\n\n"
+        f"▶️ 完整 15 分鐘市場解析：{main_video_url}\n\n"
+        "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
+        "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
+    )
+    short_request = youtube.videos().insert(
+        part="snippet,status",
+        body={
+            "snippet": {
+                "title": short_title[:95],
+                "description": short_description,
+                "tags": ["Shorts", "比特幣", "BTC", "以太幣", "ETH", "幣看趨勢"],
+                "categoryId": "27",
+            },
+            "status": {"privacyStatus": "unlisted"},
+        },
+        media_body=MediaFileUpload(
+            "short.mp4", chunksize=1024 * 1024 * 5, resumable=True
+        ),
+    )
+    short_response = None
+    while short_response is None:
+        _, short_response = short_request.next_chunk()
+    print("Uploaded YouTube Short:", short_response["id"])
+
+
+build_and_upload_short()
