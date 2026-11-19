@@ -18,6 +18,7 @@ two_days_ago = time.time() - 48 * 3600
 is_test = os.environ.get("TEST_MODE", "").lower() == "true"
 OUTRO_DURATION = 12.0
 OUTRO_PAUSE = 1.5
+SLIDE_COUNT = 14
 
 def clean_txt(s):
     s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
@@ -156,24 +157,36 @@ def call_gemini(prompt_txt):
         raise last_err
     raise RuntimeError("No Gemini models available.")
 
-target_words = "約200字繁中（精簡測試版，僅保留3至4句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
+target_words = "約200字繁中（精簡測試版，14張圖卡各保留一句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
 p1_length_guidance = (
-    "測試模式只保留3至4句重點對話，不套用正式版各段字數配額。"
+    "測試模式仍須為前半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
     if is_test else
     "正式版本段必須達2,600至2,900字：開場含一則50至65字風險提醒共200至250字；BTC四大均線（100日、200日、100週、200週）與恐慌貪婪指數800至900字；三大市場焦點各500至550字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
 p2_length_guidance = (
-    "測試模式只保留3至4句重點對話，不套用正式版各段字數配額。"
+    "測試模式仍須為後半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
     if is_test else
-    "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析共1,050至1,200字；未來一週三個BTC/ETH觀察條件各450至500字，說明驗證價位、量能或情緒指標與多空含義；銜接與風險結尾200字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+    "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC/ETH百日走勢圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+)
+p1_slide_anchors = (
+    "[SLIDE_1]開場與風險提醒；[SLIDE_2]恐慌與貪婪指數；"
+    "[SLIDE_3]BTC四大均線與RSI；[SLIDE_4]ETH日線均線與RSI；"
+    "[SLIDE_5]第一則市場焦點；[SLIDE_6]第二則市場焦點；[SLIDE_7]第三則市場焦點。"
+)
+p2_slide_anchors = (
+    "[SLIDE_8]六大主流幣報價與指標總表；[SLIDE_9]六大主流幣24H漲跌；"
+    "[SLIDE_10]BTC與ETH百日走勢圖解讀；[SLIDE_11]關鍵價位攻防；"
+    "[SLIDE_12]美股開盤連動；[SLIDE_13]短線清算風險；"
+    "[SLIDE_14]總結行動策略。"
 )
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 {full_report}
 【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或新聞，自然穿插兩位主持人互相吐槽及幣圈／財經冷笑話，並融入台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；笑點要貼合內容、不生硬、不重複，報數字保持清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
+【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，每行濃縮一個焦點的利多與理性折價，不可包含媒體名稱。
-【內容】自然開場後，女聲以太喵在開場白後用一句約50至65字、口語化且精簡有力的提醒，於12至15秒內說明節目僅分享公開資訊、不構成投資建議及加密貨幣高波動、請獨立思考並自負盈虧；不要長篇唸條文。接著分析BTC四大均線與恐慌貪婪指數，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
+【內容】自然開場後，女聲以太喵在開場白後用一句約50至65字、口語化且精簡有力的提醒，於12至15秒內說明節目僅分享公開資訊、不構成投資建議及加密貨幣高波動、請獨立思考並自負盈虧；不要長篇唸條文。依序分析BTC四大均線與恐慌貪婪指數、ETH日線均線與RSI，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 part1_raw = call_gemini(p1_prompt)
 def extract_slide_notes(raw, prefix, fallback_notes):
     notes = []
@@ -197,22 +210,89 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【數據】{full_report}
 【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或觀察條件，自然穿插互相吐槽、幣圈／財經冷笑話及台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；保持自然、貼合情境、不生硬不重複，只用「男：」「女：」開頭，報數字清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
+【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。後半段標記對應：{p2_slide_anchors}
 【篇幅配額】{p2_length_guidance}
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
-【內容】1.點評六大主流幣即時行情、24H漲跌與14日RSI，不重複前段分析；2.提出未來一週三個具體BTC/ETH觀察條件。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，必須與逐字稿中的三個條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
+【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC與ETH百日走勢圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
 part2_raw = call_gemini(p2_prompt)
-default_weekly_conditions = [
+default_24h_conditions = [
     f"均線守位｜BTC ${cur_p}、ETH ${cdata['ETH'][0][-1]:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
-    "量價確認｜突破關鍵價位時成交量是否同步放大，回測時能否守住支撐。",
-    f"情緒風險｜恐慌貪婪指數由 {today_fng['value']} 變化時，是否出現情緒回暖或過熱訊號。",
+    "美股開盤連動｜觀察今日美股開盤後，BTC與ETH是否跟隨納指方向並伴隨成交量變化。",
+    "短線清算風險｜留意急漲急跌時合約清算與資金費率是否擴大，避免槓桿部位遭短線掃損。",
 ]
-slide_week, part2_raw = extract_slide_notes(part2_raw, "SLIDE_WEEK", default_weekly_conditions)
+slide_24h_conditions, part2_raw = extract_slide_notes(
+    part2_raw, "SLIDE_WEEK", default_24h_conditions
+)
+
+def extract_dialogues_and_slide_anchors(script):
+    dialogues = []
+    slide_anchor_dialogue_indexes = {}
+    slide_anchor_pattern = re.compile(r"\[SLIDE_(\d{1,2})\]")
+    for line in script.splitlines():
+        match = re.match(r"^(男|女)[：:]\s*(.+)", line.strip())
+        if not match:
+            continue
+        dialogue_text = match.group(2).strip()
+        markers = slide_anchor_pattern.findall(dialogue_text)
+        if len(markers) > 1:
+            raise ValueError(f"A dialogue line has multiple slide anchors: {markers}")
+        if markers:
+            anchor_match = slide_anchor_pattern.match(dialogue_text)
+            if not anchor_match:
+                raise ValueError(
+                    f"Slide anchor must be the first token in its dialogue line: {dialogue_text}"
+                )
+            slide_number = int(markers[0])
+            if not 1 <= slide_number <= SLIDE_COUNT:
+                raise ValueError(f"Invalid slide anchor [SLIDE_{slide_number}].")
+            if slide_number in slide_anchor_dialogue_indexes.values():
+                raise ValueError(f"Duplicate slide anchor [SLIDE_{slide_number}].")
+            slide_anchor_dialogue_indexes[len(dialogues)] = slide_number
+            dialogue_text = slide_anchor_pattern.sub("", dialogue_text).strip()
+        if not dialogue_text:
+            raise ValueError("A dialogue line contains only a slide anchor.")
+        dialogues.append((match.group(1), dialogue_text))
+
+    anchor_order = [
+        slide_anchor_dialogue_indexes[index]
+        for index in sorted(slide_anchor_dialogue_indexes)
+    ]
+    if anchor_order != list(range(1, SLIDE_COUNT + 1)):
+        raise RuntimeError(
+            "Gemini slide anchors must include [SLIDE_1] through "
+            f"[SLIDE_{SLIDE_COUNT}] exactly once in order; received {anchor_order}."
+        )
+    return dialogues, slide_anchor_dialogue_indexes
+
+
+def calculate_slide_durations(slide_start_times, speech_duration, video_intro_duration):
+    expected_slides = set(range(1, SLIDE_COUNT + 1))
+    if set(slide_start_times) != expected_slides:
+        raise RuntimeError(
+            "Slide timing requires one start time for every slide; received "
+            f"{sorted(slide_start_times)}."
+        )
+
+    durations = []
+    for slide_number in range(1, SLIDE_COUNT + 1):
+        start_time = slide_start_times[slide_number]
+        end_time = (
+            slide_start_times[slide_number + 1]
+            if slide_number < SLIDE_COUNT
+            else video_intro_duration + speech_duration + OUTRO_PAUSE
+        )
+        duration = end_time - start_time
+        if duration <= 0:
+            raise RuntimeError(
+                f"Slide {slide_number} has invalid anchor timing: "
+                f"{start_time:.3f}s to {end_time:.3f}s."
+            )
+        durations.append(duration)
+    return durations
+
 
 full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
-dialogues = []
-for line in full_script.splitlines():
-    m = re.match(r'^(男|女)[：:]\s*(.+)', line.strip())
-    if m: dialogues.append((m.group(1), m.group(2).strip()))
+dialogues, slide_anchor_dialogue_indexes = extract_dialogues_and_slide_anchors(full_script)
 
 tts_host = "".join(["https", "://", "texttospeech.", "googleapis.", "com"])
 tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].strip()}"
@@ -308,6 +388,7 @@ def create_outro_audio():
 
 
 has_intro_video = os.path.exists("info.mp4") and os.path.exists("info.mp3")
+intro_video_duration = 15.0 if has_intro_video else 0.0
 intro_dur = 0.0
 if has_intro_video:
     intro_source_duration = float(
@@ -360,7 +441,12 @@ ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n
 kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
 punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
 cur_t, evs = intro_dur, []
-for _, _, txt, dur in results:
+speech_elapsed = 0.0
+slide_start_times = {}
+for idx, _, txt, dur in results:
+    slide_number = slide_anchor_dialogue_indexes.get(idx)
+    if slide_number is not None:
+        slide_start_times[slide_number] = intro_video_duration + speech_elapsed
     tw_txt = cc.convert(txt)
 
     split_txt = [part.strip() for part in re.split(r'[，。！？、；：…!?;\n]+', tw_txt) if part.strip()]
@@ -374,6 +460,8 @@ for _, _, txt, dur in results:
     sub_segments = [re.sub(r'\s+', ' ', segment).strip() for segment in sub_segments if segment.strip()]
     total_chars = sum(len(segment) for segment in sub_segments)
     if total_chars == 0:
+        cur_t += dur
+        speech_elapsed += dur
         continue
 
     segment_cur = cur_t
@@ -392,6 +480,12 @@ for _, _, txt, dur in results:
         segment_cur = sub_end
 
     cur_t += dur
+    speech_elapsed += dur
+if set(slide_start_times) != set(range(1, SLIDE_COUNT + 1)):
+    raise RuntimeError(
+        "Not all slide anchors were mapped to synthesized dialogue: "
+        f"{sorted(slide_start_times)}."
+    )
 with open("subs.ass", "w", encoding="utf-8") as f:
     f.write(ass_head + "\n".join(evs))
 
@@ -465,7 +559,7 @@ fng_yesterday = int(re.search(r'\d+', str(yest_fng['value'])).group()) if re.sea
 fng_change = fng_num - fng_yesterday
 fng_direction = "升高" if fng_change > 0 else "降低" if fng_change < 0 else "持平"
 sentiment_slide = f"今日：{fng_num}（{today_fng['value_classification']}）\n昨日：{fng_yesterday}，{fng_direction} {abs(fng_change)} 點"
-weekly_conditions = slide_week
+conditions_24h = slide_24h_conditions
 
 news_slides = [
     (
@@ -477,8 +571,8 @@ news_slides = [
     for index in range(3)
 ]
 condition_slides = [
-    (f"未來一週觀察條件 {index + 1}", "#f472b6", condition, "focus")
-    for index, condition in enumerate(weekly_conditions)
+    (f"未來 24 小時（今日至明晨）觀察條件 {index + 1}", "#f472b6", condition, "focus")
+    for index, condition in enumerate(conditions_24h)
 ]
 slides_cfg = [
     ("開場｜盤勢觀察與投資風險提醒", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
@@ -486,11 +580,11 @@ slides_cfg = [
     ("BTC 動態｜四大均線與 RSI", "#38bdf8", s1, "dual"),
     ("ETH 動態｜日線均線與 RSI", "#a78bfa", eth_slide, "dual"),
 ] + news_slides + [
-    ("BTC 與 ETH｜百日走勢對照", "#a78bfa", "價格走勢與20日均線動態比較", "dual"),
     ("六大主流幣｜報價與指標總表", "#34d399", cc.convert(coins_summary), None),
     ("六大主流幣｜24H 漲跌幅", "#34d399", "即時報價、漲跌幅與 RSI 對照", "bars"),
+    ("BTC 與 ETH｜百日走勢對照", "#a78bfa", "價格走勢與20日均線動態比較", "dual"),
 ] + condition_slides + [
-    ("本週策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
+    ("24小時策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
 ]
 
 def wrap_by_width(draw, text, font, max_width):
@@ -512,27 +606,33 @@ def wrap_by_width(draw, text, font, max_width):
 _slide_browser = None
 
 
+def highlight_key_numbers(text):
+    escaped_text = html.escape(str(text))
+    highlight = lambda match: f'<span class="hl">{match.group(0)}</span>'
+    metric_pattern = re.compile(
+        r"(?:RSI|恐慌(?:與貪婪)?指數|市場情緒指數|指標|指數)"
+        r"\s*[:：]?\s*[+-]?\d+(?:\.\d+)?(?:\s*/\s*100)?"
+    )
+    escaped_text = metric_pattern.sub(highlight, escaped_text)
+    important_number_pattern = re.compile(
+        r"[-+]?\$\s?[\d,]+(?:\.\d+)?(?:\s?USD)?"
+        r"|[-+]?\d+(?:,\d{3})*(?:\.\d+)?\s?%"
+        r"|(?<!\d)(?:100|200)(?:日|週)"
+    )
+    return important_number_pattern.sub(highlight, escaped_text)
+
+
 def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
     if _slide_browser is None:
         raise RuntimeError("Playwright Chromium must be started before rendering slides.")
     if dur_sec <= 0:
         raise ValueError(f"Slide {idx} duration must be positive.")
 
-    def highlight_markup(text):
-        escaped_text = html.escape(str(text))
-        numeric_pattern = re.compile(
-            r"\$[\d,]+(?:\.\d+)?(?:\s?USD)?|(?<![\w])\d+(?:,\d{3})*(?:\.\d+)?(?:%|日|週|點|天)?"
-        )
-        return numeric_pattern.sub(
-            lambda match: f'<span class="hl">{match.group(0)}</span>',
-            escaped_text,
-        )
-
     highlights = slide_data.get("highlights", [])
     if isinstance(highlights, str):
         highlights = highlights.splitlines()
     list_markup = "".join(
-        f"<li>{highlight_markup(item)}</li>"
+        f"<li>{highlight_key_numbers(item)}</li>"
         for item in highlights
         if str(item).strip()
     )
@@ -560,7 +660,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
         )
 
     content_class = "content with-visual" if chart_markup else "content"
-    title_markup = highlight_markup(slide_data.get("title", ""))
+    title_markup = highlight_key_numbers(slide_data.get("title", ""))
     label_markup = html.escape(str(slide_data.get("label", "")))
     accent = html.escape(str(slide_data.get("accent", "#fbbf24")))
     record_seconds = min(float(dur_sec), 6.0)
@@ -891,12 +991,14 @@ def create_outro_video():
     )
 
 slide_count = len(slides_cfg)
-slideshow_duration = cur_t - intro_dur if has_intro_video else cur_t
-intro_video_duration = 15.0 if has_intro_video else 0.0
+if slide_count != SLIDE_COUNT:
+    raise RuntimeError(f"Expected {SLIDE_COUNT} slides, found {slide_count}.")
+slideshow_duration = speech_elapsed
 if slideshow_duration <= 0:
     raise RuntimeError("No dialogue audio is available for the animated slides.")
-seg = slideshow_duration / slide_count
-slide_durations = [seg] * (slide_count - 1) + [seg + OUTRO_PAUSE]
+slide_durations = calculate_slide_durations(
+    slide_start_times, slideshow_duration, intro_video_duration
+)
 
 with sync_playwright() as playwright:
     _slide_browser = playwright.chromium.launch()
@@ -977,14 +1079,18 @@ def fmt_chapter(sec):
     minutes, seconds = divmod(sec, 60)
     return f"{minutes:02d}:{seconds:02d}"
 
-chapter_indexes = [0]
+chapter_indexes = [1]
 chapter_entries = [(0.0, "主題動畫片頭")] if has_intro_video else []
-chapter_offset = intro_video_duration
-for index in range(1, slide_count):
-    if round(seg * index) - round(seg * chapter_indexes[-1]) >= 10:
-        chapter_indexes.append(index)
-for index in chapter_indexes:
-    chapter_entries.append((chapter_offset + seg * index, slides_cfg[index][0]))
+for slide_number in range(2, slide_count + 1):
+    if (
+        round(slide_start_times[slide_number])
+        - round(slide_start_times[chapter_indexes[-1]]) >= 10
+    ):
+        chapter_indexes.append(slide_number)
+for slide_number in chapter_indexes:
+    chapter_entries.append(
+        (slide_start_times[slide_number], slides_cfg[slide_number - 1][0])
+    )
 chapter_entries.append(
     (intro_video_duration + slideshow_duration + OUTRO_PAUSE, "片尾互動與推薦影片")
 )
@@ -1214,17 +1320,9 @@ def build_and_upload_short():
             f'src="data:image/png;base64,{avatar_encoded}">'
         )
 
-    def short_highlight_markup(text):
-        escaped_text = html.escape(str(text))
-        return re.sub(
-            r"\$[\d,]+(?:\.\d+)?|(?<![\w])\d+(?:\.\d+)?%?",
-            lambda match: f'<span class="hl">{match.group(0)}</span>',
-            escaped_text,
-        )
-
     short_highlights = [
-        short_highlight_markup(t3[0][:34]),
-        short_highlight_markup(slide_news[0][:42]),
+        highlight_key_numbers(t3[0][:34]),
+        highlight_key_numbers(slide_news[0][:42]),
         "完整15分鐘市場解析，點擊頻道觀看",
     ]
     highlights_markup = "".join(

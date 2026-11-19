@@ -13,4 +13,6 @@ daily-crypto-podcast
 
 `.github/workflows/render.yml` 會安裝 Playwright 與 Chromium。`build_and_upload.py` 使用 1280×720 HTML/CSS 圖卡錄製動態進場，再以 FFmpeg 轉成 24fps 影片；超過 6 秒的圖卡會定格延長。封面主題圖優先由 Gemini 圖像模型產生，失敗時依序改用 CoinGecko 幣種圖示或本機繪製的金屬幣徽。
 
+主影片逐字稿以 `[SLIDE_1]` 至 `[SLIDE_14]` 錨點決定圖卡切換，時間取自每段 TTS 音檔實長；章節時間也沿用相同錨點。簡報僅強調價格、百分比、均線週期與指標數值，不會為句首條列編號加高光。觀察卡聚焦未來 24 小時（今日至明晨）。
+
 日常版完成主影片與縮圖後，會另生成 720×1280 的直式 Shorts：正式模式逐字稿約 230 字，測試模式影片固定為 15 秒；使用 Neural2 語音、52pt 字幕與動態 HTML 畫面，並在 Shorts 說明欄連回當日主影片。上傳隱私設定沿用主影片的「不公開」狀態。
