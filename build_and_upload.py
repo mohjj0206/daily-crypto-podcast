@@ -230,12 +230,29 @@ with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(synth_one, enumerate(dialogues)))
 results.sort(key=lambda x: x[0])
 
+has_intro_video = os.path.exists("info.mp4") and os.path.exists("info.mp3")
 intro_dur = 0.0
 if os.path.exists("info.mp3"):
+    intro_audio_filter = "afade=t=out:st=13.5:d=1.5"
+    if has_intro_video:
+        intro_source_duration = float(
+            subprocess.check_output(
+                [
+                    "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1", "info.mp3",
+                ]
+            ).decode().strip()
+        )
+        fade_duration = min(1.5, intro_source_duration) if intro_source_duration > 0 else 1.5
+        fade_start = max(0.0, min(13.5, intro_source_duration - fade_duration))
+        intro_audio_filter = (
+            f"afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f},"
+            "apad=whole_dur=15"
+        )
     subprocess.run(
         [
             "ffmpeg", "-y", "-i", "info.mp3", "-t", "15",
-            "-af", "afade=t=out:st=13.5:d=1.5",
+            "-af", intro_audio_filter,
             "-ar", "24000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k",
             "intro_cut.mp3",
         ],
@@ -337,6 +354,29 @@ fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 if not os.path.exists(fp): fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 fh, fs, ft, fb, fn = ImageFont.truetype(fp, 40), ImageFont.truetype(fp, 24), ImageFont.truetype(fp, 34), ImageFont.truetype(fp, 28), ImageFont.truetype(fp, 22)
 
+if has_intro_video:
+    intro_frame = Image.new("RGB", (1280, 720), "#090d16")
+    intro_draw = ImageDraw.Draw(intro_frame)
+    intro_draw.rectangle((20, 20, 1260, 700), outline="#fbbf24", width=4)
+    intro_draw.rectangle((404, 49, 876, 521), outline="#fbbf24", width=4)
+    intro_draw.line((40, 40, 180, 40), fill="#38bdf8", width=2)
+    intro_draw.line((1100, 680, 1240, 680), fill="#38bdf8", width=2)
+    intro_draw.text(
+        (640, 558),
+        "幣看趨勢｜比特幣與加密貨幣情報",
+        fill="#f8fafc",
+        font=fh,
+        anchor="mm",
+    )
+    intro_draw.text(
+        (640, 612),
+        f"以太喵 ＆ 比特汪・每日市場深度解析（{today_str}）",
+        fill="#fbbf24",
+        font=ft,
+        anchor="mm",
+    )
+    intro_frame.save("intro_frame.png")
+
 s1 = f"BTC 即時價格：${cur_p} USD\n日線均線：100日 ${ma100d} / 200日 ${ma200d}\n週線均線：100週 ${ma100w} / 200週 ${ma200w}\n14日 RSI：{btc_rsi}"
 eth_slide = f"ETH 即時價格：${eth_cl[-1]:,.2f} USD ({eth_pct:+.2f}% 24H)\n日線均線：100日 ${eth_ma100d} / 200日 ${eth_ma200d}\n14日 RSI：{eth_rsi}"
 t3 = [x.strip() for x in cc.convert(top3_headlines).split("\n") if x.strip()]
@@ -398,13 +438,53 @@ for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
     d.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=fn)
     img = img.resize((1280, 720), Image.LANCZOS)
     img.save(f"slide{idx}.png")
+
+if has_intro_video:
+    frame_count_output = subprocess.check_output(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-count_frames", "-show_entries", "stream=nb_read_frames",
+            "-of", "default=noprint_wrappers=1:nokey=1", "info.mp4",
+        ]
+    ).decode().strip()
+    source_frame_count = int(frame_count_output)
+    if source_frame_count <= 0:
+        raise RuntimeError("info.mp4 does not contain decodable video frames.")
+    boomerang_frames = source_frame_count * 2
+    intro_filter = (
+        "[1:v]setpts=PTS-STARTPTS,"
+        "scale=440:440:force_original_aspect_ratio=decrease,"
+        "pad=440:440:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+        "split=2[forward][backward];"
+        "[backward]reverse,setpts=PTS-STARTPTS[reversed];"
+        f"[forward][reversed]concat=n=2:v=1:a=0,"
+        f"loop=loop=-1:size={boomerang_frames}:start=0,"
+        "fps=24,trim=duration=15,setpts=PTS-STARTPTS[animation];"
+        "[0:v][animation]overlay=420:65:shortest=1,"
+        "fade=t=out:st=14:d=1,format=yuv420p[output]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
+            "-i", "intro_frame.png", "-i", "info.mp4",
+            "-filter_complex", intro_filter, "-map", "[output]", "-an",
+            "-t", "15", "-r", "24", "-c:v", "libx264",
+            "-tune", "stillimage", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", "intro.mp4",
+        ],
+        check=True,
+    )
+
 slide_count = len(slides_cfg)
-seg = cur_t / slide_count
+slideshow_duration = cur_t - intro_dur if has_intro_video else cur_t
+seg = slideshow_duration / slide_count
 final_buffer = 2 if is_test else 30
 with open("list.txt", "w", encoding="utf-8") as f:
+    if has_intro_video:
+        f.write("file 'intro.mp4'\n")
     for i in range(1, slide_count + 1):
         dur = seg if i < slide_count else (seg + final_buffer)
-        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "2", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
+        subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "24", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
         f.write(f"file 'p{i}.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
@@ -417,13 +497,17 @@ def fmt_chapter(sec):
     return f"{minutes:02d}:{seconds:02d}"
 
 chapter_indexes = [0]
+chapter_entries = [(0.0, "主題動畫片頭")] if has_intro_video else []
+chapter_offset = intro_dur if has_intro_video else 0.0
 for index in range(1, slide_count):
     if round(seg * index) - round(seg * chapter_indexes[-1]) >= 10:
         chapter_indexes.append(index)
-chapter_times = [fmt_chapter(seg * index) for index in chapter_indexes]
+for index in chapter_indexes:
+    chapter_entries.append((chapter_offset + seg * index, slides_cfg[index][0]))
+chapter_times = [fmt_chapter(start) for start, _ in chapter_entries]
 chapter_lines = "\n".join(
-    f"{chapter_times[position]} {slides_cfg[index][0]}"
-    for position, index in enumerate(chapter_indexes)
+    f"{chapter_times[position]} {title}"
+    for position, (_, title) in enumerate(chapter_entries)
 )
 
 v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集簡報章節（依14張圖卡時間對齊）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
