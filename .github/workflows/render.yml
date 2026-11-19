@@ -14,6 +14,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,3 +44,14 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python build_and_upload.py
+
+      - name: Commit and push DCA ledger
+        if: ${{ inputs.test_mode != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain dca_portfolio.json)" ]; then
+            git add dca_portfolio.json
+            git commit -m "chore: update BTC DCA portfolio ledger"
+            git push
+          fi
