@@ -350,7 +350,7 @@ for _, _, txt, dur in results:
 with open("subs.ass", "w", encoding="utf-8") as f:
     f.write(ass_head + "\n".join(evs))
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.4, 2.7), dpi=100)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.8, 2.2), dpi=100)
 fig.patch.set_facecolor("#111827")
 for ax, name, col in [(ax1, "BTC", "#38bdf8"), (ax2, "ETH", "#a78bfa")]:
     cl = cdata[name][0][-100:]
@@ -368,7 +368,7 @@ plt.tight_layout()
 plt.savefig("chart_dual.png", facecolor="#111827")
 plt.close()
 
-fig, ax = plt.subplots(figsize=(9.4, 2.7), dpi=100)
+fig, ax = plt.subplots(figsize=(10.8, 2.2), dpi=100)
 fig.patch.set_facecolor("#111827")
 ax.set_facecolor("#0f172a")
 names = list(cdata.keys())
@@ -448,28 +448,79 @@ slides_cfg = [
     ("本週策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
 ]
 
+def wrap_by_width(draw, text, font, max_width):
+    wrapped_lines = []
+    for paragraph in text.split("\n"):
+        line = ""
+        for ch in paragraph:
+            candidate = line + ch
+            bbox = draw.textbbox((0, 0), candidate, font=font)
+            if line and bbox[2] - bbox[0] > max_width:
+                wrapped_lines.append(line)
+                line = ch
+            else:
+                line = candidate
+        wrapped_lines.append(line)
+    return wrapped_lines
+
 for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
-    img = Image.new("RGB", (1920, 1080), "#090d16")
+    img = Image.new("RGB", (1280, 720), "#090d16")
     d = ImageDraw.Draw(img)
-    d.rectangle((0, 0, 1920, 105), fill="#1e293b")
-    d.text((60, 28), f"幣看趨勢｜比特幣與加密貨幣情報  ({today_str})", fill="#ffffff", font=fh)
-    d.rectangle((60, 135, 760, 825), fill="#111827", outline="#38bdf8", width=3)
-    d.text((195, 165), "幣看趨勢・雙人財經播客", fill="#38bdf8", font=ft)
-    if os.path.exists("avatar.png"): img.paste(Image.open("avatar.png").resize((480, 480)), (170, 260))
-    d.rectangle((800, 135, 1860, 825), fill="#111827", outline=color, width=4)
-    d.text((845, 175), title, fill=color, font=ft)
-    d.line(((845, 235), (1815, 235)), fill="#334155", width=2)
+    d.rectangle((0, 0, 1280, 82), fill="#1e293b")
+    d.text((40, 22), f"幣看趨勢｜比特幣與加密貨幣情報  ({today_str})", fill="#ffffff", font=fs)
+    d.rectangle((60, 115, 1220, 610), fill="#111827", outline="#fbbf24", width=4)
+
+    content_bottom = 350 if ctype in ("dual", "bars") else 395 if ctype == "gauge" else 590
+    title_font = ft
+    title_lines = wrap_by_width(d, title, title_font, 1080)
+    title_y = 135
+    while title_y + len(title_lines) * 44 + 10 > content_bottom - 40 and title_font.size > 22:
+        title_font = ImageFont.truetype(fp, title_font.size - 2)
+        title_lines = wrap_by_width(d, title, title_font, 1080)
+    if title_y + len(title_lines) * 44 + 10 > content_bottom - 40:
+        raise ValueError(f"Slide {idx} title does not fit within the slide frame.")
+    for line in title_lines:
+        d.text((100, title_y), line, fill=color, font=title_font)
+        title_y += 44
+
+    body_y = title_y + 10
     body_font = ft if ctype == "focus" else fb
-    d.multiline_text((845, 260), body, fill="#f8fafc", font=body_font, spacing=18)
+    body_lines = []
+    for paragraph in body.split("\n"):
+        body_lines.extend(wrap_by_width(d, paragraph, body_font, 1080))
+    body_line_height = min(40, body_font.size + 12)
+    while body_y + len(body_lines) * body_line_height > content_bottom and body_font.size > 14:
+        body_font = ImageFont.truetype(fp, body_font.size - 2)
+        body_lines = []
+        for paragraph in body.split("\n"):
+            body_lines.extend(wrap_by_width(d, paragraph, body_font, 1080))
+        body_line_height = min(40, body_font.size + 12)
+    if body_y + len(body_lines) * body_line_height > content_bottom:
+        raise ValueError(f"Slide {idx} text does not fit within the slide frame.")
+    for line in body_lines:
+        d.text((100, body_y), line, fill="#f8fafc", font=body_font)
+        body_y += body_line_height
+
     if ctype == "gauge":
-        d.text((845, 580), f"市場恐懼與貪婪指數溫度計：{fng_num} / 100", fill="#fbbf24", font=fb)
-        for gx, gc in enumerate(["#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e"]): d.rectangle((845 + gx * 190, 635, 845 + (gx + 1) * 190 - 4, 675), fill=gc)
-        px = 845 + int(min(100, max(0, fng_num)) * 9.48)
-        d.polygon([(px, 680), (px - 16, 712), (px + 16, 712)], fill="#ffffff")
-    elif ctype == "bars": img.paste(Image.open("chart_bars.png").convert("RGB"), (845, 520))
-    elif ctype == "dual": img.paste(Image.open("chart_dual.png").convert("RGB"), (845, 520))
-    d.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=fn)
-    img = img.resize((1280, 720), Image.LANCZOS)
+        gauge_y = max(body_y + 46, 430)
+        d.text((100, gauge_y - 34), f"市場恐懼與貪婪指數溫度計：{fng_num} / 100", fill="#fbbf24", font=fb)
+        for gx, gc in enumerate(["#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e"]):
+            d.rectangle((100 + gx * 216, gauge_y, 100 + (gx + 1) * 216 - 4, gauge_y + 36), fill=gc)
+        px = 100 + int(min(100, max(0, fng_num)) * 10.4)
+        d.polygon([(px, gauge_y + 41), (px - 12, gauge_y + 65), (px + 12, gauge_y + 65)], fill="#ffffff")
+    elif ctype in ("bars", "dual"):
+        chart_y = max(body_y + 8, 360)
+        if chart_y + 220 > 595:
+            raise ValueError(f"Slide {idx} chart does not fit within the slide frame.")
+        chart_file = "chart_bars.png" if ctype == "bars" else "chart_dual.png"
+        chart = Image.open(chart_file).convert("RGB").resize((1080, 220), Image.LANCZOS)
+        img.paste(chart, (100, chart_y))
+
+    footer = "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。"
+    footer_font = ImageFont.truetype(fp, 14)
+    footer_lines = wrap_by_width(d, footer, footer_font, 1200)
+    for footer_index, line in enumerate(footer_lines):
+        d.text((40, 684 + footer_index * 16), line, fill="#64748b", font=footer_font)
     img.save(f"slide{idx}.png")
 
 if has_intro_video:
