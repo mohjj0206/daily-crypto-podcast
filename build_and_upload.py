@@ -178,9 +178,35 @@ punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)
 cur_t, evs = 0.0, []
 for _, _, txt, dur in results:
     tw_txt = cc.convert(txt)
-    no_p = re.sub(r'\s+', ' ', re.sub(punct_pat, ' ', tw_txt)).strip()
-    hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', no_p)
-    evs.append(f"Dialogue: 0,{fmt_ass_t(cur_t)},{fmt_ass_t(cur_t+dur)},Default,,0,0,0,,{hl}")
+
+    split_txt = [part.strip() for part in re.split(r'[，。！？、；：…!?;\n]+', tw_txt) if part.strip()]
+    sub_segments = []
+    for segment in split_txt:
+        if len(segment) > 24:
+            sub_segments.extend([segment[i:i + 20].strip() for i in range(0, len(segment), 20) if segment[i:i + 20].strip()])
+        else:
+            sub_segments.append(segment)
+
+    sub_segments = [re.sub(r'\s+', ' ', segment).strip() for segment in sub_segments if segment.strip()]
+    total_chars = sum(len(segment) for segment in sub_segments)
+    if total_chars == 0:
+        continue
+
+    segment_cur = cur_t
+    for index, segment in enumerate(sub_segments):
+        sub_txt = re.sub(r'\s+', ' ', re.sub(punct_pat, ' ', segment)).strip()
+        if not sub_txt:
+            continue
+
+        if index == len(sub_segments) - 1:
+            sub_end = cur_t + dur
+        else:
+            sub_end = segment_cur + dur * (len(segment) / total_chars)
+
+        hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', sub_txt)
+        evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,0,0,0,,{hl}")
+        segment_cur = sub_end
+
     cur_t += dur
 with open("subs.ass", "w", encoding="utf-8") as f:
     f.write(ass_head + "\n".join(evs))
