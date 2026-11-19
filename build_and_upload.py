@@ -95,15 +95,17 @@ for s in syms:
 btc_w_raw = fetch_json(f"{vb}?symbol=BTCUSDT&interval=1w&limit=210")
 btc_w = [float(k[4]) for k in btc_w_raw]
 btc_cl, btc_pct, btc_rsi = cdata["BTC"]
+eth_cl, eth_pct, eth_rsi = cdata["ETH"]
 cur_p = f"{btc_cl[-1]:.2f}"
 ma100d, ma200d = calc_sma(btc_cl, 100), calc_sma(btc_cl, 200)
 ma100w, ma200w = calc_sma(btc_w, 100), calc_sma(btc_w, 200)
+eth_ma100d, eth_ma200d = calc_sma(eth_cl, 100), calc_sma(eth_cl, 200)
 
 coins_lines = []
 for name, (cl, pct, rsi) in cdata.items():
     sgn = "+" if pct >= 0 else ""
     r_txt = f" | RSI {rsi}" if rsi else ""
-    coins_lines.append(f"{name}: ${cl[-1]} ({sgn}{pct:.2f}%{r_txt})")
+    coins_lines.append(f"{name}: ${cl[-1]:,.2f} ({sgn}{pct:.2f}%{r_txt})")
 coins_summary = "\n".join(coins_lines)
 
 full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
@@ -151,27 +153,57 @@ def call_gemini(prompt_txt):
         raise last_err
     raise RuntimeError("No Gemini models available.")
 
-target_words = "約200字繁中（精簡測試版，僅保留3至4句重點對話）" if is_test else "約1600字繁中"
-p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，整集兩段合計{"1分鐘內" if is_test else "約16分鐘"}；不要刻意追求過長。
+target_words = "約200字繁中（精簡測試版，僅保留3至4句重點對話）" if is_test else "嚴格要求 2,300 至 2,600 字繁中（兩段合計必須達 4,600 字以上，以確保整集片長達 15 至 20 分鐘）"
+p1_length_guidance = (
+    "測試模式只保留3至4句重點對話，不套用正式版各段字數配額。"
+    if is_test else
+    "正式版本段必須達2,300至2,600字：開場與完整風險提醒300至350字；BTC四大均線（100日、200日、100週、200週）與恐慌貪婪指數700至750字；三大市場焦點各400至450字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接100至150字。兩段合計以4,600至5,000字為目標，禁止灌水或重複。"
+)
+p2_length_guidance = (
+    "測試模式只保留3至4句重點對話，不套用正式版各段字數配額。"
+    if is_test else
+    "正式版本段必須達2,300至2,600字：六大主流幣報價、24H漲跌與14日RSI逐幣分析共950至1,050字；未來一週三個BTC/ETH觀察條件各400至450字，說明驗證價位、量能或情緒指標與多空含義；銜接與風險結尾150至200字。兩段合計以4,600至5,000字為目標，禁止灌水或重複。"
+)
+p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計4,600至5,000字、片長15至20分鐘。"}
 {full_report}
 【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
-【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）第二行起只能用「男：」「女：」開頭。
-【內容】自然開場後，女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負），接著做BTC均線與恐慌指數體檢，以及三大焦點正反理性打折解析。結尾自然銜接到看具體幣價，不說再見、不使用分段結尾。"""
+【篇幅配額】{p1_length_guidance}
+【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，每行濃縮一個焦點的利多與理性折價，不可包含媒體名稱。
+【內容】自然開場後，女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負），接著分析BTC四大均線與恐慌貪婪指數，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 part1_raw = call_gemini(p1_prompt)
+def extract_slide_notes(raw, prefix, fallback_notes):
+    notes = []
+    for index, fallback in enumerate(fallback_notes, 1):
+        match = re.search(rf'^{re.escape(prefix)}{index}:\s*(.+)$', raw, re.M)
+        notes.append(match.group(1).strip() if match else fallback)
+    raw = re.sub(rf'^{re.escape(prefix)}\d+:.*(?:\r?\n|$)', '', raw, flags=re.M)
+    return notes, raw.rstrip()
+
+news_fallbacks = [clean_txt(e.get("title", "今日市場焦點")) for e in entries[:3]]
+while len(news_fallbacks) < 3:
+    news_fallbacks.append("今日市場焦點")
+slide_news, part1_raw = extract_slide_notes(part1_raw, "SLIDE_NEWS", news_fallbacks)
 t_match = re.search(r'^標題[：:]\s*(.+)', part1_raw, re.M)
 ai_title = t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC ${cur_p}｜主流幣均線攻防與恐慌指數全解析"
 video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
-p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半段逐字稿，{target_words}；整集兩段合計{"1分鐘內" if is_test else "約16分鐘"}，不要重複或擴寫前段已講過的內容。
+p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半段逐字稿，{target_words}。
 【前段逐字稿】{part1_raw}
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
 【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。保持一貓一狗性格與諧音梗，只用「男：」「女：」開頭，報數字清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
+【篇幅配額】{p2_length_guidance}
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
-【內容】1.只點評六大主流幣即時行情、24H漲跌與14日RSI掃描，不重複前段已談的BTC或ETH背景；2.只針對BTC與ETH提出未來一週必須盯緊的三個具體觀察條件；條件可拆成驗證價位、量能或情緒指標。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
+【內容】1.點評六大主流幣即時行情、24H漲跌與14日RSI，不重複前段分析；2.提出未來一週三個具體BTC/ETH觀察條件。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，必須與逐字稿中的三個條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位與風險並道別，不使用分段字眼。"""
 part2_raw = call_gemini(p2_prompt)
+default_weekly_conditions = [
+    f"均線守位｜BTC ${cur_p}、ETH ${cdata['ETH'][0][-1]:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
+    "量價確認｜突破關鍵價位時成交量是否同步放大，回測時能否守住支撐。",
+    f"情緒風險｜恐慌貪婪指數由 {today_fng['value']} 變化時，是否出現情緒回暖或過熱訊號。",
+]
+slide_week, part2_raw = extract_slide_notes(part2_raw, "SLIDE_WEEK", default_weekly_conditions)
 
 full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
 dialogues = []
@@ -305,20 +337,42 @@ fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 if not os.path.exists(fp): fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 fh, fs, ft, fb, fn = ImageFont.truetype(fp, 40), ImageFont.truetype(fp, 24), ImageFont.truetype(fp, 34), ImageFont.truetype(fp, 28), ImageFont.truetype(fp, 22)
 
-s1 = f"BTC 即時價格：${cur_p} USD\n恐慌與貪婪指數：{today_fng['value']} ({today_fng['value_classification']})\n短中期均線：100日 ${ma100d} / 200日 ${ma200d}\n長期週線：100週 ${ma100w} / 200週 ${ma200w}\n14日 RSI 動能指標：{btc_rsi}"
+s1 = f"BTC 即時價格：${cur_p} USD\n日線均線：100日 ${ma100d} / 200日 ${ma200d}\n週線均線：100週 ${ma100w} / 200週 ${ma200w}\n14日 RSI：{btc_rsi}"
+eth_slide = f"ETH 即時價格：${eth_cl[-1]:,.2f} USD ({eth_pct:+.2f}% 24H)\n日線均線：100日 ${eth_ma100d} / 200日 ${eth_ma200d}\n14日 RSI：{eth_rsi}"
 t3 = [x.strip() for x in cc.convert(top3_headlines).split("\n") if x.strip()]
+while len(t3) < 3:
+    t3.append(f"市場焦點 {len(t3) + 1}")
 fng_num = int(re.search(r'\d+', str(today_fng['value'])).group()) if re.search(r'\d+', str(today_fng['value'])) else 15
-s4 = "1. 拋壓與槓桿清算動能是否出現枯竭訊號\n2. 關鍵均線與整數心理關卡能否帶量站穩\n3. 市場恐慌情緒與宏觀資金面何時迎來拐點"
+fng_yesterday = int(re.search(r'\d+', str(yest_fng['value'])).group()) if re.search(r'\d+', str(yest_fng['value'])) else fng_num
+fng_change = fng_num - fng_yesterday
+fng_direction = "升高" if fng_change > 0 else "降低" if fng_change < 0 else "持平"
+sentiment_slide = f"今日：{fng_num}（{today_fng['value_classification']}）\n昨日：{fng_yesterday}，{fng_direction} {abs(fng_change)} 點"
+weekly_conditions = slide_week
 
+news_slides = [
+    (
+        f"市場焦點 {index + 1}｜{t3[index]}",
+        "#fbbf24",
+        f"多空打折摘要\n{slide_news[index]}",
+        None,
+    )
+    for index in range(3)
+]
+condition_slides = [
+    (f"未來一週觀察條件 {index + 1}", "#f472b6", condition, "focus")
+    for index, condition in enumerate(weekly_conditions)
+]
 slides_cfg = [
-    ("開場｜盤勢觀察與投資風險提醒", "#fb7185", "・本節目所有內容皆為網路公開資訊與數據整理\n・純屬個人討論交流，絕對不構成任何投資建議\n・加密貨幣波動劇烈，請務必獨立思考風險自負", "gauge"),
-    ("第一段｜BTC 技術體檢與情緒溫度計", "#38bdf8", s1, "gauge"),
-    ("第二段｜市場焦點深度解析（議題一）", "#fbbf24", f"{t3[0] if len(t3)>0 else '焦點一'}\n\n【多頭利多邏輯 vs 冷靜理性打折】\n・檢視資金敘事背後的真實基本面支撐\n・評估宏觀利率與監管環境的潛在風險", None),
-    ("第二段｜市場焦點深度解析（議題二）", "#fbbf24", f"{t3[1] if len(t3)>1 else '焦點二'}\n\n【多頭利多邏輯 vs 冷靜理性打折】\n・區分短期情緒炒作與長期結構性改變\n・留意市場流動性是否足以支撐高估值", None),
-    ("第二段｜市場焦點深度解析（議題三）", "#fbbf24", f"{t3[2] if len(t3)>2 else '焦點三'}\n\n【多頭利多邏輯 vs 冷靜理性打折】\n・追蹤鏈上真實資金流向與籌碼換手訊號\n・避免在消息面利多出盡時盲目追高", None),
-    ("第三段｜六大主流幣 24H 漲跌與 RSI 掃描", "#34d399", cc.convert(coins_summary), "bars"),
-    ("第三段｜BTC 與 ETH 雙龍頭 100日均線對比", "#a78bfa", "・比較 BTC 與 ETH 近期價格與 20日均線乖離\n・觀察龍頭幣種何時出現止跌築底與量能回溫", "dual"),
-    ("第四段｜BTC 與 ETH 必須盯緊的三個條件", "#f472b6", s4, None)
+    ("開場｜盤勢觀察與投資風險提醒", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
+    ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
+    ("BTC 動態｜四大均線與 RSI", "#38bdf8", s1, "dual"),
+    ("ETH 動態｜日線均線與 RSI", "#a78bfa", eth_slide, "dual"),
+] + news_slides + [
+    ("BTC 與 ETH｜百日走勢對照", "#a78bfa", "價格走勢與20日均線動態比較", "dual"),
+    ("六大主流幣｜報價與指標總表", "#34d399", cc.convert(coins_summary), None),
+    ("六大主流幣｜24H 漲跌幅", "#34d399", "即時報價、漲跌幅與 RSI 對照", "bars"),
+] + condition_slides + [
+    ("本週策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
 ]
 
 for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
@@ -332,7 +386,8 @@ for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
     d.rectangle((800, 135, 1860, 825), fill="#111827", outline=color, width=4)
     d.text((845, 175), title, fill=color, font=ft)
     d.line(((845, 235), (1815, 235)), fill="#334155", width=2)
-    d.multiline_text((845, 260), body, fill="#f8fafc", font=fb, spacing=18)
+    body_font = ft if ctype == "focus" else fb
+    d.multiline_text((845, 260), body, fill="#f8fafc", font=body_font, spacing=18)
     if ctype == "gauge":
         d.text((845, 580), f"市場恐懼與貪婪指數溫度計：{fng_num} / 100", fill="#fbbf24", font=fb)
         for gx, gc in enumerate(["#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e"]): d.rectangle((845 + gx * 190, 635, 845 + (gx + 1) * 190 - 4, 675), fill=gc)
@@ -343,11 +398,12 @@ for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
     d.text((60, 1035), "※ 本節目所有內容皆為網路公開資訊與市場數據整理分享，不構成任何投資建議，投資請獨立思考並自負風險。", fill="#64748b", font=fn)
     img = img.resize((1280, 720), Image.LANCZOS)
     img.save(f"slide{idx}.png")
-seg = cur_t / 8.0
+slide_count = len(slides_cfg)
+seg = cur_t / slide_count
 final_buffer = 2 if is_test else 30
 with open("list.txt", "w", encoding="utf-8") as f:
-    for i in range(1, 9):
-        dur = seg if i < 8 else (seg + final_buffer)
+    for i in range(1, slide_count + 1):
+        dur = seg if i < slide_count else (seg + final_buffer)
         subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "2", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
         f.write(f"file 'p{i}.mp4'\n")
 
@@ -360,10 +416,17 @@ def fmt_chapter(sec):
     minutes, seconds = divmod(sec, 60)
     return f"{minutes:02d}:{seconds:02d}"
 
-chapter_offsets = (0, 0.12, 0.32, 0.60, 0.82)
-chapter_times = [fmt_chapter(actual_video_duration * ratio) for ratio in chapter_offsets]
+chapter_indexes = [0]
+for index in range(1, slide_count):
+    if round(seg * index) - round(seg * chapter_indexes[-1]) >= 10:
+        chapter_indexes.append(index)
+chapter_times = [fmt_chapter(seg * index) for index in chapter_indexes]
+chapter_lines = "\n".join(
+    f"{chapter_times[position]} {slides_cfg[index][0]}"
+    for position, index in enumerate(chapter_indexes)
+)
 
-v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集節目章節（點擊時間軸快速跳轉）：\n{chapter_times[0]} 反直覺盤勢開場與投資風險提醒\n{chapter_times[1]} 市場體檢：BTC 均線攻防與恐慌貪婪指數溫度計\n{chapter_times[2]} 近兩日三大市場焦點深度解析與理性打折\n{chapter_times[3]} 六大主流幣（BTC/ETH/SOL/XRP/ADA/ZEC）行情與 RSI 掃描\n{chapter_times[4]} BTC 與 ETH 多空觀察策略：必須盯緊的三個條件\n\n📊 本集核心數據：\n{s1}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
+v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集簡報章節（依14張圖卡時間對齊）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)
