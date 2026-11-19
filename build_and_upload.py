@@ -15,6 +15,8 @@ tw_tz = timezone(timedelta(hours=8))
 today_str = datetime.now(tw_tz).strftime("%Y年%m月%d日")
 two_days_ago = time.time() - 48 * 3600
 is_test = os.environ.get("TEST_MODE", "").lower() == "true"
+OUTRO_DURATION = 12.0
+OUTRO_PAUSE = 1.5
 
 def clean_txt(s):
     s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
@@ -263,6 +265,39 @@ with ThreadPoolExecutor(max_workers=5) as ex:
     results = list(ex.map(synth_one, enumerate(dialogues)))
 results.sort(key=lambda x: x[0])
 
+def create_outro_audio():
+    if os.path.exists("info.mp3"):
+        audio_filter = (
+            f"volume=0.35,afade=t=in:st=0:d=1.5,"
+            f"afade=t=out:st={OUTRO_DURATION - 2.5:g}:d=2.5,apad=whole_dur={OUTRO_DURATION:g}"
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", "info.mp3", "-t", f"{OUTRO_DURATION:g}",
+                "-af", audio_filter, "-ar", "24000", "-ac", "1",
+                "-c:a", "libmp3lame", "-b:a", "64k", "outro_music.mp3",
+            ],
+            check=True,
+        )
+    else:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                "-t", f"{OUTRO_DURATION:g}", "-ar", "24000", "-ac", "1",
+                "-c:a", "libmp3lame", "-b:a", "64k", "outro_music.mp3",
+            ],
+            check=True,
+        )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+            "-t", f"{OUTRO_PAUSE:g}", "-ar", "24000", "-ac", "1",
+            "-c:a", "libmp3lame", "-b:a", "64k", "outro_pause.mp3",
+        ],
+        check=True,
+    )
+
+
 has_intro_video = os.path.exists("info.mp4") and os.path.exists("info.mp3")
 intro_dur = 0.0
 if os.path.exists("info.mp3"):
@@ -300,10 +335,13 @@ if os.path.exists("info.mp3"):
         ).decode().strip()
     )
 
+create_outro_audio()
 with open("audio_list.txt", "w", encoding="utf-8") as f:
     if intro_dur > 0:
         f.write("file 'intro_cut.mp3'\n")
     for _, fn, _, _ in results: f.write(f"file '{fn}'\n")
+    f.write("file 'outro_pause.mp3'\n")
+    f.write("file 'outro_music.mp3'\n")
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "audio_list.txt", "-c", "copy", "podcast.mp3"], check=True)
 cc = OpenCC("s2twp")
 def fmt_ass_t(sec):
@@ -463,6 +501,59 @@ def wrap_by_width(draw, text, font, max_width):
         wrapped_lines.append(line)
     return wrapped_lines
 
+def create_outro_frame():
+    image = Image.new("RGB", (1280, 720), "#090d16")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 20, 1260, 700), outline="#fbbf24", width=4)
+    if os.path.exists("avatar.png"):
+        with Image.open("avatar.png") as avatar:
+            image.paste(avatar.convert("RGB").resize((260, 260), Image.LANCZOS), (510, 30))
+
+    draw = ImageDraw.Draw(image)
+    title = "感謝收聽【幣看趨勢】｜別忘了按讚、訂閱、開啟小鈴鐺！"
+    title_font = ImageFont.truetype(fp, 40)
+    title_lines = wrap_by_width(draw, title, title_font, 1160)
+    for line_index, line in enumerate(title_lines):
+        bounds = draw.textbbox((0, 0), line, font=title_font)
+        draw.text(
+            ((1280 - (bounds[2] - bounds[0])) // 2, 315 + line_index * 50),
+            line,
+            fill="#f8fafc",
+            font=title_font,
+        )
+    subtitle = "留言告訴以太喵與比特汪，下一集你想看哪一顆幣？"
+    subtitle_font = ImageFont.truetype(fp, 28)
+    subtitle_lines = wrap_by_width(draw, subtitle, subtitle_font, 1160)
+    for line_index, line in enumerate(subtitle_lines):
+        bounds = draw.textbbox((0, 0), line, font=subtitle_font)
+        draw.text(
+            ((1280 - (bounds[2] - bounds[0])) // 2, 420 + line_index * 38),
+            line,
+            fill="#fbbf24",
+            font=subtitle_font,
+        )
+
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rectangle((60, 510, 600, 680), fill=(5, 8, 18, 185), outline=(251, 191, 36, 210), width=3)
+    overlay_draw.rectangle((680, 510, 1220, 680), fill=(5, 8, 18, 185), outline=(56, 189, 248, 210), width=3)
+    image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+    image.save("outro_frame.png")
+
+
+def create_outro_video():
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
+            "-i", "outro_frame.png", "-t", f"{OUTRO_DURATION:g}",
+            "-vf", "fade=t=in:st=0:d=1,fade=t=out:st=10:d=2,format=yuv420p",
+            "-an", "-r", "24", "-c:v", "libx264",
+            "-tune", "stillimage", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", "outro.mp4",
+        ],
+        check=True,
+    )
+
 for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
     img = Image.new("RGB", (1280, 720), "#090d16")
     d = ImageDraw.Draw(img)
@@ -523,6 +614,7 @@ for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
         d.text((40, 684 + footer_index * 16), line, fill="#64748b", font=footer_font)
     img.save(f"slide{idx}.png")
 
+create_outro_frame()
 if has_intro_video:
     frame_count_output = subprocess.check_output(
         [
@@ -559,22 +651,24 @@ if has_intro_video:
         check=True,
     )
 
+create_outro_video()
 slide_count = len(slides_cfg)
 slideshow_duration = cur_t - intro_dur if has_intro_video else cur_t
+intro_video_duration = 15.0 if has_intro_video else 0.0
 seg = slideshow_duration / slide_count
-final_buffer = 2 if is_test else 30
 with open("list.txt", "w", encoding="utf-8") as f:
     if has_intro_video:
         f.write("file 'intro.mp4'\n")
     for i in range(1, slide_count + 1):
-        dur = seg if i < slide_count else (seg + final_buffer)
+        dur = seg + (OUTRO_PAUSE if i == slide_count else 0)
         subprocess.run(["ffmpeg", "-y", "-loop", "1", "-framerate", "24", "-t", f"{dur:.2f}", "-i", f"slide{i}.png", "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast", "-pix_fmt", "yuv420p", f"p{i}.mp4"], check=True)
         f.write(f"file 'p{i}.mp4'\n")
+    f.write("file 'outro.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
 subprocess.run(["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3", "-vf", "ass=subs.ass", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
 
-actual_video_duration = cur_t + final_buffer
+actual_video_duration = intro_video_duration + slideshow_duration + OUTRO_PAUSE + OUTRO_DURATION
 def fmt_chapter(sec):
     sec = max(0, min(int(round(sec)), int(round(actual_video_duration))))
     minutes, seconds = divmod(sec, 60)
@@ -582,19 +676,22 @@ def fmt_chapter(sec):
 
 chapter_indexes = [0]
 chapter_entries = [(0.0, "主題動畫片頭")] if has_intro_video else []
-chapter_offset = intro_dur if has_intro_video else 0.0
+chapter_offset = intro_video_duration
 for index in range(1, slide_count):
     if round(seg * index) - round(seg * chapter_indexes[-1]) >= 10:
         chapter_indexes.append(index)
 for index in chapter_indexes:
     chapter_entries.append((chapter_offset + seg * index, slides_cfg[index][0]))
+chapter_entries.append(
+    (intro_video_duration + slideshow_duration + OUTRO_PAUSE, "片尾互動與推薦影片")
+)
 chapter_times = [fmt_chapter(start) for start, _ in chapter_entries]
 chapter_lines = "\n".join(
     f"{chapter_times[position]} {title}"
     for position, (_, title) in enumerate(chapter_entries)
 )
 
-v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集簡報章節（依14張圖卡時間對齊）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
+v_desc = f"歡迎收聽【幣看趨勢｜比特幣與加密貨幣情報】！本集為您彙整 {today_str} 最新市場指標與網路公開重點議題，由「以太喵」與「比特汪」帶你透過多空理性打折視角掌握幣圈脈動！\n\n⏱️ 本集簡報章節（依14張圖卡時間對齊，含12秒動態片尾）：\n{chapter_lines}\n\n📊 BTC 核心數據：\n{s1}\n\n📊 ETH 核心數據：\n{eth_slide}\n\n⚠️ 免責聲明：\n本頻道所有內容均為網路公開資訊與市場數據整理分享，不構成任何形式之投資建議或買賣邀約。加密貨幣市場波動劇烈，投資前請務必自行研究並審慎評估風險。\n\n#比特幣 #加密貨幣 #區塊鏈 #BTC #ETH #SOL #技術分析 #均線 #RSI #恐慌指數 #幣看趨勢"
 
 creds = Credentials(None, refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(), token_uri="".join(["https", "://", "oauth2.", "googleapis.", "com", "/token"]), client_id=os.environ["YT_CLIENT_ID"].strip(), client_secret=os.environ["YT_CLIENT_SECRET"].strip())
 youtube = build("youtube", "v3", credentials=creds)

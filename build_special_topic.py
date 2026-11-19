@@ -75,6 +75,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TW_TZ = timezone(timedelta(hours=8))
 TODAY_STR = datetime.now(TW_TZ).strftime("%Y年%m月%d日")
 IS_TEST = os.environ.get("TEST_MODE", "").strip().lower() == "true"
+OUTRO_DURATION = 12.0
+OUTRO_PAUSE = 1.5
 GEMINI_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.6-flash",
@@ -750,6 +752,92 @@ def make_intro_video(coin_code):
     return intro_duration, True
 
 
+def create_outro_frame():
+    image = Image.new("RGB", (1280, 720), "#0b0b24")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 20, 1260, 700), outline="#d6b66b", width=4)
+    avatar_path = os.path.join(BASE_DIR, "avatar.png")
+    if os.path.exists(avatar_path):
+        with Image.open(avatar_path) as avatar:
+            image.paste(
+                avatar.convert("RGB").resize((260, 260), Image.Resampling.LANCZOS),
+                (510, 30),
+            )
+    draw = ImageDraw.Draw(image)
+    title = "感謝收聽【幣看趨勢】｜別忘了按讚、訂閱、開啟小鈴鐺！"
+    title_font = load_font(40, True)
+    for index, line in enumerate(wrap_by_width(draw, title, title_font, 1160)):
+        bounds = draw.textbbox((0, 0), line, font=title_font)
+        draw.text(
+            ((1280 - (bounds[2] - bounds[0])) // 2, 315 + index * 50),
+            line,
+            fill="#f8fafc",
+            font=title_font,
+        )
+    subtitle = "留言告訴以太喵與比特汪，下一集你想看哪一顆幣？"
+    subtitle_font = load_font(28)
+    for index, line in enumerate(wrap_by_width(draw, subtitle, subtitle_font, 1160)):
+        bounds = draw.textbbox((0, 0), line, font=subtitle_font)
+        draw.text(
+            ((1280 - (bounds[2] - bounds[0])) // 2, 420 + index * 38),
+            line,
+            fill="#d6b66b",
+            font=subtitle_font,
+        )
+
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rectangle((60, 510, 600, 680), fill=(5, 6, 24, 185), outline=(214, 182, 107, 210), width=3)
+    overlay_draw.rectangle((680, 510, 1220, 680), fill=(5, 6, 24, 185), outline=(56, 217, 230, 210), width=3)
+    image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+    image.save("outro_frame.png")
+
+
+def make_outro_assets():
+    create_outro_frame()
+    if os.path.exists("info.mp3"):
+        audio_filter = (
+            f"volume=0.35,afade=t=in:st=0:d=1.5,"
+            f"afade=t=out:st={OUTRO_DURATION - 2.5:g}:d=2.5,apad=whole_dur={OUTRO_DURATION:g}"
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", "info.mp3", "-t", f"{OUTRO_DURATION:g}",
+                "-af", audio_filter, "-ar", "24000", "-ac", "1",
+                "-c:a", "libmp3lame", "-b:a", "64k", "outro_music.mp3",
+            ],
+            check=True,
+        )
+    else:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                "-t", f"{OUTRO_DURATION:g}", "-ar", "24000", "-ac", "1",
+                "-c:a", "libmp3lame", "-b:a", "64k", "outro_music.mp3",
+            ],
+            check=True,
+        )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+            "-t", f"{OUTRO_PAUSE:g}", "-ar", "24000", "-ac", "1",
+            "-c:a", "libmp3lame", "-b:a", "64k", "outro_pause.mp3",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
+            "-i", "outro_frame.png", "-t", f"{OUTRO_DURATION:g}",
+            "-vf", "fade=t=in:st=0:d=1,fade=t=out:st=10:d=2,format=yuv420p",
+            "-an", "-r", "24", "-c:v", "libx264",
+            "-tune", "stillimage", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", "outro.mp4",
+        ],
+        check=True,
+    )
+
+
 def fmt_ass_time(seconds):
     hours, remainder = divmod(seconds, 3600)
     minutes, remaining_seconds = divmod(remainder, 60)
@@ -762,6 +850,8 @@ def write_audio_and_subtitles(results, intro_duration):
             file.write("file 'intro_cut.mp3'\n")
         for _, filename, _, _ in results:
             file.write(f"file '{filename}'\n")
+        file.write("file 'outro_pause.mp3'\n")
+        file.write("file 'outro_music.mp3'\n")
     subprocess.run(
         [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -1061,10 +1151,12 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
     for index, (slide_title, _, _) in enumerate(slides):
         seconds = int(offset + slide_duration * index)
         chapters.append(f"{seconds // 60:02d}:{seconds % 60:02d} {slide_title}")
+    outro_start = int(offset + slide_duration * len(slides) + OUTRO_PAUSE)
+    chapters.append(f"{outro_start // 60:02d}:{outro_start % 60:02d} 片尾互動與推薦影片")
     description = (
         f"本集【幣看深潛】聚焦 {SUPPORTED_COINS[coin_code]['name']}（{coin_code}），"
         f"整理公開報導、技術脈絡、生態動態與即時行情。\n\n"
-        f"⏱️ 專題章節\n{chr(10).join(chapters)}\n\n"
+        f"⏱️ 專題章節（含 12 秒動態片尾）\n{chr(10).join(chapters)}\n\n"
         f"即時價格：${market['price']:,.6f} USDT\n"
         f"24 小時漲跌：{market['change_24h']:+.2f}%\n"
         "本節目僅作公開資訊與市場數據整理，不構成投資建議。加密資產波動劇烈，請自行研究並承擔風險。\n\n"
@@ -1133,17 +1225,17 @@ def main():
     title = f"【幣看深潛】{metadata['name']}｜{title_text}（{TODAY_STR}）"
     results = synthesize_dialogues(dialogues)
     intro_duration, has_intro = make_intro_video(coin_code)
+    make_outro_assets()
     dialogue_end = write_audio_and_subtitles(results, intro_duration)
 
     make_topic_chart(coin_code, market)
     slides = create_slides(coin_code, market, trigger, articles, conditions)
     slide_duration = max(0.1, (dialogue_end - intro_duration) / len(slides))
-    final_buffer = 2 if IS_TEST else 30
     with open("topic_list.txt", "w", encoding="utf-8") as video_list:
         if has_intro:
             video_list.write("file 'intro.mp4'\n")
         for index in range(1, len(slides) + 1):
-            duration = slide_duration + (final_buffer if index == len(slides) else 0)
+            duration = slide_duration + (OUTRO_PAUSE if index == len(slides) else 0)
             subprocess.run(
                 [
                     "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
@@ -1154,6 +1246,7 @@ def main():
                 check=True,
             )
             video_list.write(f"file 'topic_p{index}.mp4'\n")
+        video_list.write("file 'outro.mp4'\n")
     subprocess.run(
         [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
