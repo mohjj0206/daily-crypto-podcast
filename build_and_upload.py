@@ -153,24 +153,24 @@ def call_gemini(prompt_txt):
         raise last_err
     raise RuntimeError("No Gemini models available.")
 
-target_words = "約200字繁中（精簡測試版，僅保留3至4句重點對話）" if is_test else "嚴格要求 2,300 至 2,600 字繁中（兩段合計必須達 4,600 字以上，以確保整集片長達 15 至 20 分鐘）"
+target_words = "約200字繁中（精簡測試版，僅保留3至4句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
 p1_length_guidance = (
     "測試模式只保留3至4句重點對話，不套用正式版各段字數配額。"
     if is_test else
-    "正式版本段必須達2,300至2,600字：開場與完整風險提醒300至350字；BTC四大均線（100日、200日、100週、200週）與恐慌貪婪指數700至750字；三大市場焦點各400至450字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接100至150字。兩段合計以4,600至5,000字為目標，禁止灌水或重複。"
+    "正式版本段必須達2,600至2,900字：開場含一則50至65字風險提醒共200至250字；BTC四大均線（100日、200日、100週、200週）與恐慌貪婪指數800至900字；三大市場焦點各500至550字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
 p2_length_guidance = (
     "測試模式只保留3至4句重點對話，不套用正式版各段字數配額。"
     if is_test else
-    "正式版本段必須達2,300至2,600字：六大主流幣報價、24H漲跌與14日RSI逐幣分析共950至1,050字；未來一週三個BTC/ETH觀察條件各400至450字，說明驗證價位、量能或情緒指標與多空含義；銜接與風險結尾150至200字。兩段合計以4,600至5,000字為目標，禁止灌水或重複。"
+    "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析共1,050至1,200字；未來一週三個BTC/ETH觀察條件各450至500字，說明驗證價位、量能或情緒指標與多空含義；銜接與風險結尾200字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
-p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計4,600至5,000字、片長15至20分鐘。"}
+p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 {full_report}
-【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。互動自然融入台灣貓語狗語諧音梗（如他喵的、喵頭不對、本喵、汪嗚、本汪、別汪想），報數字保持清晰。
+【角色】男聲為「比特汪」，熱情直率的柴犬主持人，自稱「本汪」；女聲為「以太喵」，冷靜傲嬌的橘貓主持人，自稱「本喵」。對話中必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或新聞，自然穿插兩位主持人互相吐槽及幣圈／財經冷笑話，並融入台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；笑點要貼合內容、不生硬、不重複，報數字保持清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【篇幅配額】{p1_length_guidance}
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，額外輸出恰好三行簡短圖卡摘要，每行分別使用「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，每行濃縮一個焦點的利多與理性折價，不可包含媒體名稱。
-【內容】自然開場後，女聲宣讀完整風險提醒（非投資建議、波動劇烈請獨立思考風險自負），接著分析BTC四大均線與恐慌貪婪指數，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
+【內容】自然開場後，女聲以太喵在開場白後用一句約50至65字、口語化且精簡有力的提醒，於12至15秒內說明節目僅分享公開資訊、不構成投資建議及加密貨幣高波動、請獨立思考並自負盈虧；不要長篇唸條文。接著分析BTC四大均線與恐慌貪婪指數，再逐一深入解析近兩日三大市場焦點。結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 part1_raw = call_gemini(p1_prompt)
 def extract_slide_notes(raw, prefix, fallback_notes):
     notes = []
@@ -192,7 +192,7 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【前段逐字稿】{part1_raw}
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
-【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。保持一貓一狗性格與諧音梗，只用「男：」「女：」開頭，報數字清晰。
+【角色】男聲為「比特汪」，自稱「本汪」；女聲為「以太喵」，自稱「本喵」。兩人對話必須互相稱呼對方名字「以太喵」與「比特汪」，禁止直接叫對方「狗狗」或「貓貓」。每談完一個數據或觀察條件，自然穿插互相吐槽、幣圈／財經冷笑話及台灣網路梗，例如「這波操作真是謝囉」「歸剛欸」「我太難了」「這不是演習」「涼涼」；保持自然、貼合情境、不生硬不重複，只用「男：」「女：」開頭，報數字清晰。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
 【篇幅配額】{p2_length_guidance}
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
@@ -216,11 +216,44 @@ tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].stri
 
 def synth_one(item):
     idx, (role, txt) = item
-    v_name = "cmn-TW-Standard-B" if role == "男" else "cmn-TW-Wavenet-A"
+    v_name = "cmn-TW-Neural2-B" if role == "男" else "cmn-TW-Neural2-A"
+    fallback_voice = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
+    pitch = -1.5 if role == "男" else 1.5
     clean_say = re.sub(r'[*#\[\]()]', '', txt)
-    payload_tts = json.dumps({"input": {"text": clean_say}, "voice": {"languageCode": "cmn-TW", "name": v_name}, "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.05}}).encode("utf-8")
-    req = urllib.request.Request(tts_url, data=payload_tts, headers={"Content-Type": "application/json"}, method="POST")
-    res = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+
+    def request_tts(voice_name):
+        payload_tts = json.dumps({
+            "input": {"text": clean_say},
+            "voice": {"languageCode": "cmn-TW", "name": voice_name},
+            "audioConfig": {"audioEncoding": "MP3", "pitch": pitch, "speakingRate": 1.2},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            tts_url,
+            data=payload_tts,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        return json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+
+    try:
+        res = request_tts(v_name)
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        try:
+            error_message = json.loads(error_body).get("error", {}).get("message", error_body)
+        except json.JSONDecodeError:
+            error_message = error_body
+        error_text = str(error_message).lower()
+        unsupported_voice = e.code in (400, 404) and "voice" in error_text and any(
+            phrase in error_text
+            for phrase in ("not supported", "unsupported", "not available", "unavailable", "does not exist", "not valid", "invalid")
+        )
+        if not unsupported_voice:
+            print(f"Google TTS API error ({e.code}) for voice '{v_name}': {error_message}")
+            raise
+        print(f"Google TTS voice '{v_name}' is unavailable; retrying with '{fallback_voice}'.")
+        res = request_tts(fallback_voice)
+
     fn = f"seg_{idx:04d}.mp3"
     with open(fn, "wb") as f: f.write(base64.b64decode(res["audioContent"]))
     dur = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", fn]).decode().strip())
@@ -278,7 +311,7 @@ def fmt_ass_t(sec):
     m, s = divmod(r, 60)
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
-ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,22,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,1,0,2,27,27,24,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,44,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,3,0,2,27,27,42,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
 punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
 cur_t, evs = intro_dur, []
