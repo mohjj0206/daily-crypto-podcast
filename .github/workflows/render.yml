@@ -3,6 +3,13 @@ name: Render and Upload Podcast
 on:
   repository_dispatch:
     types: [render-podcast]
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: '測試模式（縮短字數與片長以快速驗證）'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -33,6 +40,7 @@ jobs:
 
       - name: Run render and upload script
         env:
+          TEST_MODE: ${{ inputs.test_mode || 'false' }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
