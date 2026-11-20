@@ -13,7 +13,7 @@ daily-crypto-podcast
 
 `.github/workflows/render.yml` 會安裝 Playwright 與 Chromium。`build_and_upload.py` 以 1280×720 HTML/CSS 版型繪製圖卡，再以 1.5 倍畫布錄製並輸出 1920×1080、24fps Full HD 影片；片頭、簡報、片尾及縮圖皆使用 Full HD，超過 6 秒的圖卡會定格延長。簡報固定顯示 BTC、ETH、恐慌貪婪指數與 DCA 報酬狀態列，內容依頁面使用圖表、利多／風險對照或重點字卡版型。封面主題圖優先由 Gemini 圖像模型產生，失敗時依序改用 CoinGecko 幣種圖示或本機繪製的金屬幣徽。
 
-每日 RSS 只採用發布時間可解析、且在台灣時間計算 36 小時內的文章；不足三篇即停止產製，不以舊聞補足。RSS 與行情 API 請求會帶 no-cache 標頭及時間戳參數。Binance 行情異常時改查 Yahoo Finance，恐慌貪婪指數則優先查 Alternative.me、再以 CoinMarketCap 備援；要啟用後者，請設定 `COINMARKETCAP_API_KEY` GitHub Secret。任何來源缺少新鮮且可驗證資料時，該次產製會中止或略過指數，不會沿用昨日數據或固定值。
+每日 RSS 只採用發布時間可解析、且在台灣時間計算 36 小時內的文章；不足三篇即停止產製，不以舊聞補足。RSS 與行情 API 請求會帶 no-cache 標頭及時間戳參數（Binance K 線使用有效的動態 `endTime`）。即時報價優先查 CoinGecko、備援 Yahoo Finance；均線與 RSI 序列優先查 Binance、備援 Yahoo Finance。恐慌貪婪指數優先查 Alternative.me、再以 CoinMarketCap 備援；要啟用後者，請設定 `COINMARKETCAP_API_KEY` GitHub Secret。任何來源缺少新鮮且可驗證資料時，該次產製會中止或略過指數，不會沿用昨日數據或固定值。
 
 正片聆聽頭像優先取自 `cat_single.png`／`dog_single.png`，缺少時再使用 VTuber 影片首幀或 `avatar.png`。若有 `cat_vtober.mp4`／`dor_vtober.mp4`，對應角色說話時會播放循環張嘴動畫、圓形裁切與霓虹外框；否則使用靜態發話頭像。Full HD 畫面中的聆聽與發話頭像分別為 225×225 與 252×252，角色只在正片對話時間顯示。主片字幕使用 66pt 字體與 315px 左右安全邊距。
 

@@ -25,12 +25,14 @@ OUTRO_PAUSE = 1.5
 SLIDE_COUNT = 15 if show_dca else 14
 
 
-def cache_busted_url(url):
+def cache_busted_url(url, parameter="_t"):
+    if parameter is None:
+        return url
     separator = "&" if "?" in url else "?"
-    return f"{url}{separator}_t={int(time.time() * 1000)}"
+    return f"{url}{separator}{parameter}={int(time.time() * 1000)}"
 
 
-def fetch_bytes(url, timeout=15, headers=None):
+def fetch_bytes(url, timeout=15, headers=None, cache_bust_param="_t"):
     request_headers = {
         "User-Agent": "Mozilla/5.0",
         "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -38,13 +40,18 @@ def fetch_bytes(url, timeout=15, headers=None):
     }
     if headers:
         request_headers.update(headers)
-    request = urllib.request.Request(cache_busted_url(url), headers=request_headers)
+    request = urllib.request.Request(
+        cache_busted_url(url, cache_bust_param),
+        headers=request_headers,
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
 
 
-def fetch_json(url, timeout=15, headers=None):
-    return json.loads(fetch_bytes(url, timeout, headers).decode("utf-8"))
+def fetch_json(url, timeout=15, headers=None, cache_bust_param="_t"):
+    return json.loads(
+        fetch_bytes(url, timeout, headers, cache_bust_param).decode("utf-8")
+    )
 
 
 def clean_txt(s):
@@ -85,24 +92,30 @@ def published_datetime(entry):
         return None
 
 
-news_now = datetime.now(timezone.utc)
-news_cutoff = news_now - timedelta(hours=36)
-valid_entries = []
-discarded_news = {"invalid": 0, "future": 0, "stale": 0}
-for source in source_entries:
-    for entry in source:
-        published_at = published_datetime(entry)
-        if published_at is None:
-            discarded_news["invalid"] += 1
-            continue
-        published_utc = published_at.astimezone(timezone.utc)
-        if published_utc > news_now:
-            discarded_news["future"] += 1
-            continue
-        if published_utc < news_cutoff:
-            discarded_news["stale"] += 1
-            continue
-        valid_entries.append((published_at, entry))
+def filter_recent_entries(source_entries, now_utc):
+    cutoff = now_utc - timedelta(hours=36)
+    valid_entries = []
+    discarded = {"invalid": 0, "future": 0, "stale": 0}
+    for source in source_entries:
+        for entry in source:
+            published_at = published_datetime(entry)
+            if published_at is None:
+                discarded["invalid"] += 1
+                continue
+            published_utc = published_at.astimezone(timezone.utc)
+            if published_utc > now_utc:
+                discarded["future"] += 1
+                continue
+            if published_utc < cutoff:
+                discarded["stale"] += 1
+                continue
+            valid_entries.append((published_at, entry))
+    return valid_entries, discarded
+
+
+valid_entries, discarded_news = filter_recent_entries(
+    source_entries, datetime.now(timezone.utc)
+)
 valid_entries.sort(key=lambda item: item[0], reverse=True)
 entries = valid_entries[:10]
 print(
@@ -208,6 +221,14 @@ YAHOO_SYMBOLS = {
     "ADAUSDT": "ADA-USD",
     "ZECUSDT": "ZEC-USD",
 }
+COINGECKO_IDS = {
+    "BTCUSDT": "bitcoin",
+    "ETHUSDT": "ethereum",
+    "SOLUSDT": "solana",
+    "XRPUSDT": "ripple",
+    "ADAUSDT": "cardano",
+    "ZECUSDT": "zcash",
+}
 
 
 def validate_market_series(candles, interval, minimum_count, source_name):
@@ -263,8 +284,11 @@ def fetch_yahoo_market_series(symbol, interval):
 def fetch_market_series(symbol, interval, limit):
     minimum_count = min(limit, 200) if limit >= 200 else 2
     try:
+        end_time = int(time.time() * 1000)
         candles = fetch_json(
             f"{vb}?symbol={symbol}&interval={interval}&limit={limit}"
+            f"&endTime={end_time}",
+            cache_bust_param=None,
         )
         return validate_market_series(candles, interval, minimum_count, "Binance")
     except Exception as primary_error:
@@ -328,29 +352,37 @@ def fetch_yahoo_quote(symbol):
     )
 
 
-def fetch_market_quote(symbol):
+def fetch_coingecko_quotes():
+    ids = ",".join(COINGECKO_IDS.values())
+    url = (
+        "https://api.coingecko.com/api/v3/simple/price"
+        f"?ids={ids}&vs_currencies=usd&include_24hr_change=true"
+        "&include_last_updated_at=true"
+    )
+    return fetch_json(url, timeout=30)
+
+
+def fetch_market_quote(symbol, primary_quotes):
     try:
-        quote_data = fetch_json(
-            f"{binance_api}/ticker/24hr?symbol={symbol}"
-        )
-        price = float(quote_data["lastPrice"])
-        change_pct = float(quote_data["priceChangePercent"])
+        quote_data = primary_quotes[COINGECKO_IDS[symbol]]
+        price = float(quote_data["usd"])
+        change_pct = float(quote_data["usd_24h_change"])
         observed_at = datetime.fromtimestamp(
-            float(quote_data["closeTime"]) / 1000, timezone.utc
+            float(quote_data["last_updated_at"]), timezone.utc
         )
         return validate_market_quote(
-            price, change_pct, observed_at, symbol, "Binance"
+            price, change_pct, observed_at, symbol, "CoinGecko"
         )
     except Exception as primary_error:
         print(
-            f"Binance {symbol} quote failed validation; querying Yahoo Finance "
+            f"CoinGecko {symbol} quote failed validation; querying Yahoo Finance "
             f"in real time: {primary_error}"
         )
         try:
             return fetch_yahoo_quote(symbol)
         except Exception as backup_error:
             raise RuntimeError(
-                f"No fresh valid quote for {symbol}; Binance error: {primary_error}; "
+                f"No fresh valid quote for {symbol}; CoinGecko error: {primary_error}; "
                 f"Yahoo Finance error: {backup_error}"
             ) from backup_error
 
@@ -369,10 +401,15 @@ def calc_rsi(arr, p=14):
 syms = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "ZECUSDT"]
 cdata = {}
 spot_prices = {}
+try:
+    primary_quotes = fetch_coingecko_quotes()
+except Exception as error:
+    print(f"CoinGecko batch quotes unavailable; each coin will use the backup API: {error}")
+    primary_quotes = {}
 for s in syms:
     lim = 210 if s in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"] else 5
     cl = fetch_market_series(s, "1d", lim)
-    spot_prices[s.replace("USDT", "")], pct = fetch_market_quote(s)
+    spot_prices[s.replace("USDT", "")], pct = fetch_market_quote(s, primary_quotes)
     cdata[s.replace("USDT", "")] = (cl, pct, calc_rsi(cl, 14) if lim == 210 else "")
 
 btc_w = fetch_market_series("BTCUSDT", "1w", 210)
@@ -541,10 +578,16 @@ def update_dca_portfolio(current_btc_usd):
             "USDTWD=X", today - timedelta(days=7), today
         )
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
-        print(f"Current USDTWD rate lookup failed; using 32.5: {error}")
-    current_twd_rate = latest_close_on_or_before(current_fx, today)
+        raise RuntimeError(
+            f"Unable to obtain a fresh USDTWD rate for current DCA valuation: {error}"
+        ) from error
+    current_twd_rate = latest_close_on_or_before(
+        current_fx, today, max_age_days=4
+    )
     if current_twd_rate is None or current_twd_rate <= 0:
-        current_twd_rate = 32.5
+        raise RuntimeError(
+            "No USDTWD close from the last 4 days; refusing stale DCA valuation."
+        )
 
     monthly_totals = {}
     total_twd = 0
