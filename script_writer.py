@@ -76,7 +76,7 @@ def split_news_summary(summary):
 # ── Gemini API 調用 ──────────────────────────────────────────
 
 def call_gemini(prompt_txt):
-    models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+    models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
