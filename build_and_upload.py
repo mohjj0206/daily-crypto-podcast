@@ -15,15 +15,37 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from playwright.sync_api import sync_playwright
 
-tw_tz = timezone(timedelta(hours=8))
+tw_tz = ZoneInfo("Asia/Taipei")
 now_tw = datetime.now(tw_tz)
 today_str = now_tw.strftime("%Y年%m月%d日")
-two_days_ago = time.time() - 48 * 3600
 is_test = os.environ.get("TEST_MODE", "").lower() == "true"
 show_dca = (now_tw.weekday() == 4) or (now_tw.day == 26)
 OUTRO_DURATION = 12.0
 OUTRO_PAUSE = 1.5
 SLIDE_COUNT = 15 if show_dca else 14
+
+
+def cache_busted_url(url):
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}_t={int(time.time() * 1000)}"
+
+
+def fetch_bytes(url, timeout=15, headers=None):
+    request_headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+    }
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(cache_busted_url(url), headers=request_headers)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def fetch_json(url, timeout=15, headers=None):
+    return json.loads(fetch_bytes(url, timeout, headers).decode("utf-8"))
+
 
 def clean_txt(s):
     s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
@@ -42,7 +64,7 @@ rss_urls = (
 source_entries = []
 for rss_url in rss_urls:
     try:
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_bytes(rss_url, timeout=20))
         if feed.bozo:
             print(f"RSS feed error for '{rss_url}': {feed.bozo_exception}")
         source_entries.append(feed.entries)
@@ -50,37 +72,289 @@ for rss_url in rss_urls:
         print(f"Error fetching RSS feed '{rss_url}': {e}")
         source_entries.append([])
 
-def published_timestamp(entry):
+def published_datetime(entry):
     published = entry.get("published_parsed")
-    return calendar.timegm(published) if published else 0
+    if not published:
+        return None
+    try:
+        timestamp = calendar.timegm(published)
+        if timestamp <= 0:
+            return None
+        return datetime.fromtimestamp(timestamp, timezone.utc).astimezone(tw_tz)
+    except (OverflowError, TypeError, ValueError):
+        return None
 
-recent_entries = [
-    entry
-    for entries_from_source in source_entries
-    for entry in entries_from_source
-    if not entry.get("published_parsed") or published_timestamp(entry) >= two_days_ago
-]
-entries = (
-    [entry for entries_from_source in source_entries for entry in entries_from_source[:4]]
-    if len(recent_entries) < 3
-    else recent_entries
+
+news_now = datetime.now(timezone.utc)
+news_cutoff = news_now - timedelta(hours=36)
+valid_entries = []
+discarded_news = {"invalid": 0, "future": 0, "stale": 0}
+for source in source_entries:
+    for entry in source:
+        published_at = published_datetime(entry)
+        if published_at is None:
+            discarded_news["invalid"] += 1
+            continue
+        published_utc = published_at.astimezone(timezone.utc)
+        if published_utc > news_now:
+            discarded_news["future"] += 1
+            continue
+        if published_utc < news_cutoff:
+            discarded_news["stale"] += 1
+            continue
+        valid_entries.append((published_at, entry))
+valid_entries.sort(key=lambda item: item[0], reverse=True)
+entries = valid_entries[:10]
+print(
+    "RSS freshness filter: "
+    f"{len(entries)} accepted; discarded {discarded_news['invalid']} invalid, "
+    f"{discarded_news['future']} future, {discarded_news['stale']} older than 36h."
 )
-entries.sort(key=published_timestamp, reverse=True)
-entries = entries[:10]
+if len(entries) < 3:
+    raise RuntimeError(
+        "Fewer than 3 RSS articles passed the 36-hour Taiwan-time freshness filter; "
+        "refusing to build an episode from stale or unverifiable news."
+    )
 
-news_list = "\n\n".join([f"{i+1}. 【{clean_txt(e.get('title'))}】\n摘要：{clean_txt(e.get('summary', '')).replace(chr(10), ' ')[:160]}..." for i, e in enumerate(entries)])
-top3_headlines = "\n".join([f"{i+1}. {clean_txt(e.get('title'))}" for i, e in enumerate(entries[:3])])
+news_list = "\n\n".join(
+    f"{index + 1}. [發布時間: {published_at.strftime('%Y-%m-%d %H:%M')} CST] "
+    f"【{clean_txt(entry.get('title'))}】\n"
+    f"摘要：{clean_txt(entry.get('summary', '')).replace(chr(10), ' ')[:160]}..."
+    for index, (published_at, entry) in enumerate(entries)
+)
+top3_headlines = "\n".join(
+    f"{index + 1}. [發布時間: {published_at.strftime('%Y-%m-%d %H:%M')} CST] "
+    f"{clean_txt(entry.get('title'))}"
+    for index, (published_at, entry) in enumerate(entries[:3])
+)
 
-def fetch_json(u):
-    req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-    return json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
+def parse_source_datetime(value):
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, timezone.utc)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return datetime.fromtimestamp(int(stripped), timezone.utc)
+        parsed = datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    raise ValueError("Missing or invalid source timestamp.")
 
-fng_res = fetch_json("".join(["https", "://", "api.alternative.", "me", "/fng/?limit=2"]))
-fng_list = fng_res.get("data", [])
-today_fng = fng_list[0] if len(fng_list) > 0 else {"value": "13", "value_classification": "Extreme Fear"}
-yest_fng = fng_list[1] if len(fng_list) > 1 else today_fng
 
-vb = "".join(["https", "://", "data-api.binance.", "vision", "/api/v3/klines"])
+def normalize_fng_response(response, source_name):
+    items = response.get("data")
+    if not isinstance(items, list) or not items:
+        raise ValueError(f"{source_name} returned no fear-and-greed data.")
+    normalized = []
+    now_utc = datetime.now(timezone.utc)
+    for item in items:
+        try:
+            value = int(item["value"])
+            classification = str(item["value_classification"]).strip()
+            timestamp = parse_source_datetime(item["timestamp"])
+            age = now_utc - timestamp
+            if not 0 <= value <= 100 or not classification:
+                raise ValueError("Invalid fear-and-greed value or classification.")
+            if age < timedelta(0) or age > timedelta(hours=36):
+                raise ValueError("Fear-and-greed data is future-dated or older than 36h.")
+            normalized.append({
+                "value": str(value),
+                "value_classification": classification,
+                "timestamp": timestamp,
+            })
+        except (KeyError, OSError, TypeError, ValueError, OverflowError) as error:
+            print(f"Discarding invalid {source_name} fear-and-greed record: {error}")
+    if not normalized:
+        raise ValueError(f"{source_name} returned no fresh valid fear-and-greed records.")
+    normalized.sort(key=lambda item: item["timestamp"], reverse=True)
+    return normalized[0], normalized[1] if len(normalized) > 1 else None
+
+
+def fetch_fear_and_greed():
+    alternative_url = "".join(["https", "://", "api.alternative.", "me", "/fng/?limit=2"])
+    try:
+        return normalize_fng_response(fetch_json(alternative_url), "Alternative.me")
+    except Exception as error:
+        print(f"Primary fear-and-greed API failed validation: {error}")
+
+    cmc_api_key = os.environ.get("COINMARKETCAP_API_KEY", "").strip()
+    if not cmc_api_key:
+        print(
+            "Fear-and-greed backup unavailable: COINMARKETCAP_API_KEY is not configured; "
+            "the indicator will be omitted rather than replaced with a stale value."
+        )
+        return None, None
+    cmc_url = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical?start=1&limit=2"
+    try:
+        return normalize_fng_response(
+            fetch_json(
+                cmc_url,
+                headers={"X-CMC_PRO_API_KEY": cmc_api_key},
+            ),
+            "CoinMarketCap",
+        )
+    except Exception as error:
+        print(f"Backup fear-and-greed API failed validation: {error}")
+        return None, None
+
+
+today_fng, yest_fng = fetch_fear_and_greed()
+binance_api = "".join(["https", "://", "data-api.binance.", "vision", "/api/v3"])
+vb = f"{binance_api}/klines"
+YAHOO_SYMBOLS = {
+    "BTCUSDT": "BTC-USD",
+    "ETHUSDT": "ETH-USD",
+    "SOLUSDT": "SOL-USD",
+    "XRPUSDT": "XRP-USD",
+    "ADAUSDT": "ADA-USD",
+    "ZECUSDT": "ZEC-USD",
+}
+
+
+def validate_market_series(candles, interval, minimum_count, source_name):
+    if not isinstance(candles, list) or len(candles) < minimum_count:
+        raise ValueError(
+            f"{source_name} returned fewer than {minimum_count} {interval} candles."
+        )
+    closes = []
+    for candle in candles:
+        try:
+            close = float(candle[4])
+        except (IndexError, TypeError, ValueError) as error:
+            raise ValueError(f"{source_name} returned a malformed candle.") from error
+        if not math.isfinite(close) or close <= 0:
+            raise ValueError(f"{source_name} returned a non-positive or invalid close.")
+        closes.append(close)
+    try:
+        last_open_time = datetime.fromtimestamp(float(candles[-1][0]) / 1000, timezone.utc)
+    except (IndexError, TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f"{source_name} returned an invalid candle timestamp.") from error
+    max_age = timedelta(days=9 if interval == "1w" else 2)
+    candle_age = datetime.now(timezone.utc) - last_open_time
+    if candle_age < timedelta(minutes=-5) or candle_age > max_age:
+        raise ValueError(f"{source_name} returned stale or future-dated {interval} candles.")
+    return closes
+
+
+def fetch_yahoo_market_series(symbol, interval):
+    period = "5y" if interval in ("1w", "1wk") else "2y"
+    yahoo_interval = "1wk" if interval == "1w" else interval
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{quote(symbol, safe='')}?range={period}&interval={yahoo_interval}"
+    )
+    response = fetch_json(url, timeout=30)
+    chart = response.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError(f"Yahoo Finance error for {symbol}: {chart['error']}")
+    results = chart.get("result") or []
+    if not results:
+        raise RuntimeError(f"Yahoo Finance returned no {interval} prices for {symbol}.")
+    result = results[0]
+    timestamps = result.get("timestamp", [])
+    closes = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+    candles = [
+        [timestamp * 1000, None, None, None, close]
+        for timestamp, close in zip(timestamps, closes)
+        if close is not None
+    ]
+    return candles
+
+
+def fetch_market_series(symbol, interval, limit):
+    minimum_count = min(limit, 200) if limit >= 200 else 2
+    try:
+        candles = fetch_json(
+            f"{vb}?symbol={symbol}&interval={interval}&limit={limit}"
+        )
+        return validate_market_series(candles, interval, minimum_count, "Binance")
+    except Exception as primary_error:
+        print(
+            f"Binance {symbol} {interval} data failed validation; "
+            f"querying Yahoo Finance in real time: {primary_error}"
+        )
+        try:
+            candles = fetch_yahoo_market_series(YAHOO_SYMBOLS[symbol], interval)
+            return validate_market_series(
+                candles, interval, minimum_count, "Yahoo Finance"
+            )
+        except Exception as backup_error:
+            raise RuntimeError(
+                f"No fresh valid {interval} market series for {symbol}; "
+                f"Binance error: {primary_error}; Yahoo Finance error: {backup_error}"
+            ) from backup_error
+
+
+def validate_market_quote(price, change_pct, observed_at, symbol, source_name):
+    if not math.isfinite(price) or price <= 0:
+        raise ValueError(f"{source_name} returned an invalid {symbol} price.")
+    if not math.isfinite(change_pct) or abs(change_pct) > 80:
+        raise ValueError(f"{source_name} returned an implausible {symbol} 24h change.")
+    age = datetime.now(timezone.utc) - observed_at
+    if age < timedelta(minutes=-5) or age > timedelta(minutes=20):
+        raise ValueError(f"{source_name} returned a stale or future-dated {symbol} quote.")
+    return price, change_pct
+
+
+def fetch_yahoo_quote(symbol):
+    yahoo_symbol = YAHOO_SYMBOLS[symbol]
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{quote(yahoo_symbol, safe='')}?range=2d&interval=1m"
+    )
+    response = fetch_json(url, timeout=30)
+    chart = response.get("chart", {})
+    if chart.get("error") or not chart.get("result"):
+        raise RuntimeError(f"Yahoo Finance returned no quote for {yahoo_symbol}.")
+    result = chart["result"][0]
+    meta = result.get("meta", {})
+    quote_data = result.get("indicators", {}).get("quote", [{}])[0]
+    timestamps = result.get("timestamp", [])
+    closes = quote_data.get("close", [])
+    valid_quotes = [
+        (int(timestamp), float(close))
+        for timestamp, close in zip(timestamps, closes)
+        if close is not None and math.isfinite(float(close)) and float(close) > 0
+    ]
+    if not valid_quotes:
+        raise ValueError(f"Yahoo Finance returned no valid {yahoo_symbol} prices.")
+    latest_timestamp, price = valid_quotes[-1]
+    previous_close = float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0)
+    if previous_close <= 0 or not math.isfinite(previous_close):
+        raise ValueError(f"Yahoo Finance returned no valid prior close for {yahoo_symbol}.")
+    change_pct = (price / previous_close - 1) * 100
+    observed_at = datetime.fromtimestamp(latest_timestamp, timezone.utc)
+    return validate_market_quote(
+        price, change_pct, observed_at, symbol, "Yahoo Finance"
+    )
+
+
+def fetch_market_quote(symbol):
+    try:
+        quote_data = fetch_json(
+            f"{binance_api}/ticker/24hr?symbol={symbol}"
+        )
+        price = float(quote_data["lastPrice"])
+        change_pct = float(quote_data["priceChangePercent"])
+        observed_at = datetime.fromtimestamp(
+            float(quote_data["closeTime"]) / 1000, timezone.utc
+        )
+        return validate_market_quote(
+            price, change_pct, observed_at, symbol, "Binance"
+        )
+    except Exception as primary_error:
+        print(
+            f"Binance {symbol} quote failed validation; querying Yahoo Finance "
+            f"in real time: {primary_error}"
+        )
+        try:
+            return fetch_yahoo_quote(symbol)
+        except Exception as backup_error:
+            raise RuntimeError(
+                f"No fresh valid quote for {symbol}; Binance error: {primary_error}; "
+                f"Yahoo Finance error: {backup_error}"
+            ) from backup_error
+
+
 def calc_sma(arr, p):
     sl = arr[-p:]
     return f"{sum(sl)/len(sl):.2f}" if sl else "0.00"
@@ -94,18 +368,18 @@ def calc_rsi(arr, p=14):
     return f"{100 - (100/(1+rs)):.2f}"
 syms = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "ZECUSDT"]
 cdata = {}
+spot_prices = {}
 for s in syms:
     lim = 210 if s in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"] else 5
-    raw = fetch_json(f"{vb}?symbol={s}&interval=1d&limit={lim}")
-    cl = [float(k[4]) for k in raw]
-    pct = ((cl[-1] - cl[-2]) / cl[-2]) * 100 if len(cl) >= 2 else 0.0
+    cl = fetch_market_series(s, "1d", lim)
+    spot_prices[s.replace("USDT", "")], pct = fetch_market_quote(s)
     cdata[s.replace("USDT", "")] = (cl, pct, calc_rsi(cl, 14) if lim == 210 else "")
 
-btc_w_raw = fetch_json(f"{vb}?symbol=BTCUSDT&interval=1w&limit=210")
-btc_w = [float(k[4]) for k in btc_w_raw]
+btc_w = fetch_market_series("BTCUSDT", "1w", 210)
 btc_cl, btc_pct, btc_rsi = cdata["BTC"]
 eth_cl, eth_pct, eth_rsi = cdata["ETH"]
-cur_p = f"{btc_cl[-1]:.2f}"
+cur_p = f"{spot_prices['BTC']:.2f}"
+data_fetched_at = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M 台灣時間")
 ma100d, ma200d = calc_sma(btc_cl, 100), calc_sma(btc_cl, 200)
 ma100w, ma200w = calc_sma(btc_w, 100), calc_sma(btc_w, 200)
 eth_ma100d, eth_ma200d = calc_sma(eth_cl, 100), calc_sma(eth_cl, 200)
@@ -127,8 +401,7 @@ def fetch_yahoo_daily_closes(symbol, start_date, end_date):
         "https://query1.finance.yahoo.com/v8/finance/chart/"
         f"{quote(symbol, safe='')}?period1={start_ts}&period2={end_ts}&interval=1d"
     )
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    response = json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
+    response = fetch_json(url, timeout=30)
     chart = response.get("chart", {})
     if chart.get("error"):
         raise RuntimeError(f"Yahoo Finance error for {symbol}: {chart['error']}")
@@ -330,7 +603,7 @@ def update_dca_portfolio(current_btc_usd):
     return portfolio
 
 
-dca_portfolio = update_dca_portfolio(btc_cl[-1])
+dca_portfolio = update_dca_portfolio(spot_prices["BTC"])
 dca_today = now_tw.date()
 dca_latest_record = dca_portfolio["records"][-1]
 dca_latest_month = dca_latest_record["date"][:7]
@@ -525,10 +798,29 @@ coins_lines = []
 for name, (cl, pct, rsi) in cdata.items():
     sgn = "+" if pct >= 0 else ""
     r_txt = f" | RSI {rsi}" if rsi else ""
-    coins_lines.append(f"{name}: ${cl[-1]:,.2f} ({sgn}{pct:.2f}%{r_txt})")
+    coins_lines.append(
+        f"{name}: ${spot_prices[name]:,.2f} ({sgn}{pct:.2f}%{r_txt})"
+    )
 coins_summary = "\n".join(coins_lines)
 
-full_report = f"【今日日期】：{today_str}\n【比特幣核心技術指標】\n- BTC 即時價格：${cur_p} USD (24H: {'+' if btc_pct>=0 else ''}{btc_pct:.2f}%)\n- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n- 市場恐慌與貪婪指數：今日 {today_fng['value']} ({today_fng['value_classification']}) / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})\n\n{dca_report}\n\n【主流幣行情與RSI掃描】\n{coins_summary}\n\n【近兩日網路公開重點議題】\n{news_list}"
+fear_report = (
+    f"今日 {today_fng['value']} ({today_fng['value_classification']})"
+    + (
+        f" / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})"
+        if yest_fng else ""
+    )
+    if today_fng else "本次未取得通過新鮮度驗證的指數資料，請略過此項，不得推測數值"
+)
+full_report = (
+    f"【今日日期】：{today_str}\n【數據抓取時間】：{data_fetched_at}\n"
+    "【比特幣核心技術指標】\n"
+    f"- BTC 即時報價：${cur_p} USD (24H: {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%)\n"
+    f"- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n"
+    f"- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n"
+    f"- 市場恐慌與貪婪指數：{fear_report}\n\n"
+    f"{dca_report}\n\n【主流幣即時報價與RSI掃描】\n{coins_summary}\n\n"
+    f"【近36小時通過時效驗證的新聞】\n{news_list}"
+)
 
 def call_gemini(prompt_txt):
     models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
@@ -653,6 +945,7 @@ host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「�
 男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；他是BTC長期持有者，深信比特幣未來數十年必將成為全球公認的數位黃金（這是角色信念，不是價格或結果保證），並自2025年10月25日起每月25日定額NT$10,000累積BTC。這是節目角色設定中的模擬帳戶，不是真實成交紀錄；另長線配置少量ETH、SOL、XRP、ADA。即使長期看好BTC，也必須客觀看待回檔、過熱與技術風險，不盲目吹捧，反對頻繁短線進出。
 兩人分別代表「數位黃金派」與「世界計算機生態派」，互相尊重、立場互補，自然吐槽、穿插幣圈冷笑話與台灣網路梗；以太喵以數據幫比特汪踩煞車。口播禁止使用HODL、HODLer等縮寫，一律自然說「長期持有」或「長期持有者」。若今日不是DCA播報日，勿主動插入帳本環節；只有在指定DCA環節才可報帳本數字。"""
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
+【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
 {full_report}
 【雙人角色與互動】{host_persona_guidance}
 【頻道核心精神】兩位主持人分別代表BTC數位黃金與ETH世界計算機生態兩種長期視角。分析以數據與可驗證事實為準，反對盲目短線追高殺低與高槓桿賭博；長期看好不代表忽視短線回檔、過熱與生態風險。
@@ -676,7 +969,10 @@ def extract_slide_notes(raw, prefix, fallback_notes):
     raw = re.sub(rf'^{re.escape(prefix)}\d+:.*(?:\r?\n|$)', '', raw, flags=re.M)
     return notes, raw.rstrip()
 
-news_fallbacks = [clean_txt(e.get("title", "今日市場焦點")) for e in entries[:3]]
+news_fallbacks = [
+    clean_txt(entry.get("title", "今日市場焦點"))
+    for _, entry in entries[:3]
+]
 while len(news_fallbacks) < 3:
     news_fallbacks.append("今日市場焦點")
 slide_news, part1_raw = extract_slide_notes(part1_raw, "SLIDE_NEWS", news_fallbacks)
@@ -685,6 +981,7 @@ ai_title = t_match.group(1).strip().replace('「', '').replace('」', '') if t_m
 video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
 p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半段逐字稿，{target_words}。
+【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
 【前段逐字稿】{part1_raw}
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
@@ -697,7 +994,7 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC與ETH百日走勢圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據，且必須從長期持有與DCA風險管理角度解讀，不可給短線下單指令。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位、長期週期與紀律DCA並道別，不使用分段字眼。"""
 part2_raw = normalize_long_term_terms(call_gemini(p2_prompt))
 default_24h_conditions = [
-    f"均線守位｜BTC ${cur_p}、ETH ${cdata['ETH'][0][-1]:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
+    f"均線守位｜BTC ${cur_p}、ETH ${spot_prices['ETH']:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
     "美股開盤連動｜觀察今日美股開盤後，BTC與ETH是否跟隨納指方向並伴隨成交量變化。",
     "短線清算風險｜留意急漲急跌時合約清算與資金費率是否擴大，避免槓桿部位遭短線掃損。",
 ]
@@ -1266,15 +1563,28 @@ if has_intro_video:
     intro_frame.save("intro_frame.png")
 
 s1 = f"BTC 即時價格：${cur_p} USD\n日線均線：100日 ${ma100d} / 200日 ${ma200d}\n週線均線：100週 ${ma100w} / 200週 ${ma200w}\n14日 RSI：{btc_rsi}"
-eth_slide = f"ETH 即時價格：${eth_cl[-1]:,.2f} USD ({eth_pct:+.2f}% 24H)\n日線均線：100日 ${eth_ma100d} / 200日 ${eth_ma200d}\n14日 RSI：{eth_rsi}"
+eth_slide = f"ETH 即時價格：${spot_prices['ETH']:,.2f} USD ({eth_pct:+.2f}% 24H)\n日線均線：100日 ${eth_ma100d} / 200日 ${eth_ma200d}\n14日 RSI：{eth_rsi}"
 t3 = [x.strip() for x in cc.convert(top3_headlines).split("\n") if x.strip()]
 while len(t3) < 3:
     t3.append(f"市場焦點 {len(t3) + 1}")
-fng_num = int(re.search(r'\d+', str(today_fng['value'])).group()) if re.search(r'\d+', str(today_fng['value'])) else 15
-fng_yesterday = int(re.search(r'\d+', str(yest_fng['value'])).group()) if re.search(r'\d+', str(yest_fng['value'])) else fng_num
-fng_change = fng_num - fng_yesterday
-fng_direction = "升高" if fng_change > 0 else "降低" if fng_change < 0 else "持平"
-sentiment_slide = f"今日：{fng_num}（{today_fng['value_classification']}）\n昨日：{fng_yesterday}，{fng_direction} {abs(fng_change)} 點"
+if today_fng:
+    fng_num = int(today_fng["value"])
+    if yest_fng:
+        fng_yesterday = int(yest_fng["value"])
+        fng_change = fng_num - fng_yesterday
+        fng_direction = "升高" if fng_change > 0 else "降低" if fng_change < 0 else "持平"
+        sentiment_slide = (
+            f"今日：{fng_num}（{today_fng['value_classification']}）\n"
+            f"昨日：{fng_yesterday}，{fng_direction} {abs(fng_change)} 點"
+        )
+    else:
+        sentiment_slide = (
+            f"今日：{fng_num}（{today_fng['value_classification']}）\n"
+            "昨日資料未取得，略過日變化比較。"
+        )
+else:
+    fng_num = None
+    sentiment_slide = "本次未取得通過新鮮度驗證的指數資料，略過數值與方向判讀。"
 conditions_24h = slide_24h_conditions
 
 
@@ -1394,18 +1704,27 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
             f'src="data:image/png;base64,{chart_data}"></div>'
         )
     elif slide_data.get("chart_type") == "gauge":
-        gauge_value = min(100, max(0, int(slide_data.get("gauge_value", 0))))
-        chart_markup = (
-            '<div class="visual gauge">'
-            '<div class="gauge-title">市場情緒指數</div>'
-            '<div class="gauge-track">'
-            '<span class="fear"></span><span class="caution"></span>'
-            '<span class="neutral"></span><span class="greed"></span>'
-            '<span class="extreme-greed"></span></div>'
-            f'<div class="gauge-marker" style="left:{gauge_value}%"></div>'
-            f'<div class="gauge-value">{gauge_value}<small> / 100</small></div>'
-            '</div>'
-        )
+        raw_gauge_value = slide_data.get("gauge_value")
+        if raw_gauge_value is None:
+            chart_markup = (
+                '<div class="visual gauge">'
+                '<div class="gauge-title">市場情緒指數</div>'
+                '<div class="gauge-value">本次未取得通過時效驗證的資料</div>'
+                '</div>'
+            )
+        else:
+            gauge_value = min(100, max(0, int(raw_gauge_value)))
+            chart_markup = (
+                '<div class="visual gauge">'
+                '<div class="gauge-title">市場情緒指數</div>'
+                '<div class="gauge-track">'
+                '<span class="fear"></span><span class="caution"></span>'
+                '<span class="neutral"></span><span class="greed"></span>'
+                '<span class="extreme-greed"></span></div>'
+                f'<div class="gauge-marker" style="left:{gauge_value}%"></div>'
+                f'<div class="gauge-value">{gauge_value}<small> / 100</small></div>'
+                '</div>'
+            )
 
     layout = slide_data.get("layout")
     if layout not in {"chart", "compare", "hero"}:
@@ -2062,7 +2381,9 @@ slide_durations = calculate_slide_durations(
     slide_start_times, slideshow_duration, intro_video_duration
 )
 dca_return_pct = float(dca_portfolio.get("total_return_pct", 0.0))
-fng_tone = "negative" if fng_num <= 40 else "positive" if fng_num >= 60 else "neutral"
+fng_tone = (
+    "negative" if fng_num <= 40 else "positive" if fng_num >= 60 else "neutral"
+) if fng_num is not None else "neutral"
 ticker_items = [
     {
         "label": "BTC",
@@ -2072,14 +2393,17 @@ ticker_items = [
     },
     {
         "label": "ETH",
-        "value": f"${float(eth_cl[-1]):,.2f}",
+        "value": f"${spot_prices['ETH']:,.2f}",
         "detail": f"{eth_pct:+.2f}% 24H",
         "tone": "positive" if eth_pct >= 0 else "negative",
     },
     {
         "label": "恐慌貪婪指數",
-        "value": str(fng_num),
-        "detail": str(today_fng["value_classification"]),
+        "value": str(fng_num) if fng_num is not None else "未取得",
+        "detail": (
+            str(today_fng["value_classification"])
+            if today_fng else "資料未通過時效驗證"
+        ),
         "tone": fng_tone,
     },
     {
@@ -2434,7 +2758,13 @@ td.ellipse((87, 680, 438, 1031), outline="#fbbf24", width=6)
 metric_font = ImageFont.truetype(fp, round(27 * MAIN_OUTPUT_SCALE))
 td.text((480, 711), f"BTC 即時價格　${cur_p}", fill="#fbbf24", font=metric_font)
 td.text((480, 798), f"24H 漲跌　{'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%", fill="#38bdf8", font=metric_font)
-td.text((480, 885), f"恐慌貪婪指數　{fng_num} / 100", fill="#cbd5e1", font=metric_font)
+td.text(
+    (480, 885),
+    f"恐慌貪婪指數　{fng_num if fng_num is not None else '未取得'}"
+    f"{' / 100' if fng_num is not None else ''}",
+    fill="#cbd5e1",
+    font=metric_font,
+)
 if os.path.exists("avatar.png"):
     with Image.open("avatar.png") as avatar:
         avatar = avatar.convert("RGBA").resize((645, 645), Image.LANCZOS)
@@ -2455,15 +2785,20 @@ def build_and_upload_short():
     short_target_chars = 45 if is_test else 230
     short_duration_limit = 15.0 if is_test else 60.0
     short_news = (
+        f"資料抓取時間：{data_fetched_at}\n"
         f"頭條：{t3[0]}\n"
         f"多空打折摘要：{slide_news[0]}\n"
         f"BTC：${cur_p}，24H {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%，"
         f"100日均線 ${ma100d}，200日均線 ${ma200d}，RSI {btc_rsi}\n"
-        f"ETH：${eth_cl[-1]:,.2f}，24H {'+' if eth_pct >= 0 else ''}{eth_pct:.2f}%，"
+        f"ETH：${spot_prices['ETH']:,.2f}，24H {'+' if eth_pct >= 0 else ''}{eth_pct:.2f}%，"
         f"RSI {eth_rsi}\n"
-        f"恐慌與貪婪指數：{today_fng['value']}（{today_fng['value_classification']}）"
+        + (
+            f"恐慌與貪婪指數：{today_fng['value']}（{today_fng['value_classification']}）"
+            if today_fng else ""
+        )
     )
     short_prompt = f"""你是【幣看趨勢】短影音編劇，請使用下方當日頭條與市場數據，寫一段約{short_target_chars}字的繁體中文雙人快節奏短影音逐字稿。
+【資料依循最高優先級】只能依據下列本次資料及抓取時間，不可使用預訓練記憶補入價格、事件日期或新聞；缺少的指標直接略過，不猜測或編造。
 資料：
 {short_news}
 
@@ -2583,8 +2918,11 @@ def build_and_upload_short():
         f'<li style="--delay:{index * 0.6:.1f}s">{highlight}</li>'
         for index, highlight in enumerate(short_highlights)
     )
-    fear_value = html.escape(str(today_fng["value"]))
-    fear_classification = html.escape(str(today_fng["value_classification"]))
+    fear_value = html.escape(str(today_fng["value"])) if today_fng else "未取得"
+    fear_classification = (
+        html.escape(str(today_fng["value_classification"]))
+        if today_fng else "資料未通過時效驗證"
+    )
     short_html = f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width={SHORT_VIDEO_WIDTH}, initial-scale=1">
@@ -2686,7 +3024,7 @@ body {{
   <div class="price">${cur_p}</div>
   <section class="stats">
     <div class="stat"><strong>{btc_pct:+.2f}%</strong><small>BTC 24H</small></div>
-    <div class="stat"><strong>${eth_cl[-1]:,.2f}</strong><small>ETH 現價</small></div>
+    <div class="stat"><strong>${spot_prices['ETH']:,.2f}</strong><small>ETH 現價</small></div>
     <div class="stat"><strong>{eth_pct:+.2f}%</strong><small>ETH 24H</small></div>
     <div class="stat"><strong>{fear_value}</strong><small>恐懼貪婪・{fear_classification}</small></div>
   </section>
@@ -2771,6 +3109,8 @@ window.fitShortLayout = () => {{
     main_video_url = f"https://www.youtube.com/watch?v={res['id']}"
     short_title = (
         f"BTC ${cur_p}｜恐慌指數 {fng_num} 點，這個訊號別忽略！ #Shorts"
+        if fng_num is not None else
+        f"BTC ${cur_p}｜幣圈最新市場焦點與風險解析 #Shorts"
     )
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
