@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       test_mode:
-        description: '測試模式（縮短字數與片長以快速驗證）'
+        description: '測試模式（完整跑完影片與資料生成，但跳過 YouTube 上傳改存下載預覽）'
         required: false
         default: false
         type: boolean
@@ -45,6 +45,21 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python build_and_upload.py
+
+      - name: Upload test preview artifacts
+        if: ${{ inputs.test_mode == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: podcast-test-preview-${{ github.run_number }}
+          path: |
+            *.mp4
+            *.jpg
+            *.png
+            !avatar.png
+            !info.mp4
+            !cat_vtober.mp4
+            !dor_vtober.mp4
+          retention-days: 3
 
       - name: Commit and push DCA ledger
         if: ${{ inputs.test_mode != true }}
