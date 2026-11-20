@@ -1,4 +1,5 @@
-  <script>
+<!DOCTYPE html>
+<script>
     async function loadDashboard() {
       try {
         const ledgerRes = await fetch('./dca_portfolio.json?t=' + Date.now());
@@ -6,20 +7,12 @@
 
         let liveUsd = Number(ledger.current_btc_usd || 0);
         let liveTwdRate = Number(ledger.current_twd_rate || 32.5);
-        try {
-          const priceRes = await fetch('https://coingecko.com');
-          const priceData = await priceRes.json();
-          if (priceData && priceData.bitcoin && priceData.bitcoin.usd) {
-            liveUsd = priceData.bitcoin.usd;
-            liveTwdRate = priceData.bitcoin.twd / priceData.bitcoin.usd;
-          }
-        } catch (_) {}
 
         const records = ledger.records || [];
         let sumTwd = 0, sumBtc = 0;
         const labels = [], costSeries = [], valSeries = [];
         const tbody = document.getElementById('ledger-body');
-        tbody.innerHTML = '';
+        if (tbody) tbody.innerHTML = '';
 
         records.forEach(item => {
           const date = item.date || '-';
@@ -34,7 +27,9 @@
           costSeries.push(sumTwd);
           valSeries.push(Math.round(sumBtc * twdPrice));
 
-          tbody.innerHTML += `<tr><td>${date}</td><td>NT$ ${twd.toLocaleString()}</td><td>$${usdPrice.toLocaleString()}</td><td>${btc.toFixed(8)} BTC</td></tr>`;
+          if (tbody) {
+            tbody.innerHTML += `<tr><td>${date}</td><td>NT$ ${twd.toLocaleString()}</td><td>$${usdPrice.toLocaleString()}</td><td>${btc.toFixed(8)} BTC</td></tr>`;
+          }
         });
 
         const totalTwd = Number(ledger.total_twd || sumTwd);
@@ -48,13 +43,19 @@
         costSeries.push(totalTwd);
         valSeries.push(currentValTwd);
 
-        document.getElementById('total-twd').innerText = `NT$ ${totalTwd.toLocaleString()}`;
-        document.getElementById('total-btc').innerText = `${totalBtc.toFixed(8)} BTC`;
-        document.getElementById('avg-usd').innerText = `$${avgUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const totalTwdEl = document.getElementById('total-twd');
+        if (totalTwdEl) totalTwdEl.innerText = `NT$ ${totalTwd.toLocaleString()}`;
+        const totalBtcEl = document.getElementById('total-btc');
+        if (totalBtcEl) totalBtcEl.innerText = `${totalBtc.toFixed(8)} BTC`;
+        const avgUsdEl = document.getElementById('avg-usd');
+        if (avgUsdEl) avgUsdEl.innerText = `$${avgUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         const pnlEl = document.getElementById('pnl-twd');
-        pnlEl.innerHTML = `NT$ ${currentValTwd.toLocaleString()}<br><span style="font-size:1rem" class="${pnlTwd >= 0 ? 'pos' : 'neg'}">${pnlTwd >= 0 ? '+' : ''}NT$ ${pnlTwd.toLocaleString()} (${pnlPct}%)</span>`;
+        if (pnlEl) {
+          pnlEl.innerHTML = `NT$ ${currentValTwd.toLocaleString()}<br><span style="font-size:1rem" class="${pnlTwd >= 0 ? 'pos' : 'neg'}">${pnlTwd >= 0 ? '+' : ''}NT$ ${pnlTwd.toLocaleString()} (${pnlPct}%)</span>`;
+        }
 
-        new Chart(document.getElementById('dcaChart'), {
+        const chartEl = document.getElementById('dcaChart');
+        if (chartEl && typeof Chart !== 'undefined') new Chart(chartEl, {
           type: 'line',
           data: {
             labels,
@@ -73,7 +74,8 @@
           }
         });
       } catch (e) {
-        document.getElementById('total-twd').innerText = '資料載入異常：' + e.message;
+        const totalTwdEl = document.getElementById('total-twd');
+        if (totalTwdEl) totalTwdEl.innerText = '資料載入異常：' + e.message;
       }
     }
     loadDashboard();
