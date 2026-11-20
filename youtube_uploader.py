@@ -1,8 +1,23 @@
 import os
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
+
+
+def _write_metadata(section, title, description, mode):
+    with open("youtube_metadata.txt", mode, encoding="utf-8") as metadata_file:
+        metadata_file.write(f"{section}標題：\n{title}\n\n")
+        metadata_file.write(f"{section}說明欄與章節時間軸：\n{description}\n\n")
+
+
+def _record_upload_failure(asset, error):
+    with open("UPLOAD_FAILED.flag", "a", encoding="utf-8") as flag_file:
+        flag_file.write(f"{asset}：{type(error).__name__}: {error}\n")
+
+    if "uploadLimitExceeded" in str(error):
+        print(f"警告：YouTube 每日上傳數量已達上限，{asset}上傳未完成；成片與中繼資料已保留供下載補發。")
+    else:
+        print(f"警告：{asset}上傳失敗（{type(error).__name__}: {error}）；成片與中繼資料已保留供下載補發。")
 
 
 def build_youtube_client():
@@ -60,6 +75,12 @@ def _resolve_playlist_id(youtube):
 
 
 def upload_main_video(youtube, video_path, thumb_path, title, description, tags, show_dca, cur_p, btc_pct, fng_num, is_test):
+    try:
+        os.remove("UPLOAD_FAILED.flag")
+    except FileNotFoundError:
+        pass
+    _write_metadata("主片", title, description, "w")
+
     if is_test or youtube is None:
         print("\n" + "=" * 50)
         print(f"[TEST_MODE] 主片已成功渲染完成：{video_path}")
@@ -89,11 +110,11 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
             _, res = req.next_chunk()
         video_id = res["id"]
         print("Uploaded Video ID:", video_id)
-    except HttpError as err:
+    except Exception as err:
+        _record_upload_failure("主片", err)
         if "uploadLimitExceeded" in str(err):
-            print("⚠️ YouTube 每日上傳數量已達上限（uploadLimitExceeded），跳過主片上傳（已保留本機成片）。")
             return "UPLOAD_LIMIT_EXCEEDED"
-        raise
+        return "UPLOAD_FAILED_MAIN_VIDEO"
 
     # 上傳封面圖
     if thumb_path and os.path.exists(thumb_path):
@@ -164,13 +185,23 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
     )
 
-    if os.environ.get("TEST_MODE", "").lower() == "true" or youtube is None or main_video_id in ("TEST_MAIN_VIDEO_ID", "UPLOAD_LIMIT_EXCEEDED"):
+    _write_metadata("Shorts", short_title, short_description, "a")
+
+    if (
+        os.environ.get("TEST_MODE", "").lower() == "true"
+        or youtube is None
+        or main_video_id == "TEST_MAIN_VIDEO_ID"
+    ):
         print("\n" + "=" * 50)
         print(f"[TEST_MODE] Shorts 短片已成功渲染完成：{short_path}")
         print(f"[TEST_MODE] 預計 Shorts 標題：{short_title[:95]}")
         print(f"[TEST_MODE] 預計 Shorts 說明欄：\n{short_description}")
         print("=" * 50 + "\n")
         return "TEST_SHORT_VIDEO_ID"
+
+    if main_video_id in ("UPLOAD_LIMIT_EXCEEDED", "UPLOAD_FAILED_MAIN_VIDEO"):
+        print(f"警告：主片未成功上傳，略過 Shorts 上傳；Shorts 成片與中繼資料已保留：{short_path}")
+        return "UPLOAD_SKIPPED_MAIN_VIDEO_FAILED"
 
     try:
         short_request = youtube.videos().insert(
@@ -194,8 +225,8 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         short_id = short_response["id"]
         print("Uploaded YouTube Short:", short_id)
         return short_id
-    except HttpError as err:
+    except Exception as err:
+        _record_upload_failure("Shorts", err)
         if "uploadLimitExceeded" in str(err):
-            print("⚠️ YouTube 每日上傳數量已達上限（uploadLimitExceeded），跳過 Shorts 上傳（已保留本機成片）。")
             return "UPLOAD_LIMIT_EXCEEDED"
-        raise
+        return "UPLOAD_FAILED_SHORT_VIDEO"

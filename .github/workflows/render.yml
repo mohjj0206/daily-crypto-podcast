@@ -47,19 +47,20 @@ jobs:
         run: python build_and_upload.py
 
       - name: Upload test preview artifacts
-        if: ${{ inputs.test_mode == true }}
+        if: ${{ inputs.test_mode == true || hashFiles('UPLOAD_FAILED.flag') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: podcast-test-preview-${{ github.run_number }}
+          name: podcast-preview-${{ github.run_number }}
           path: |
             *.mp4
             *.jpg
             *.png
+            youtube_metadata.txt
             !avatar.png
             !info.mp4
             !cat_vtober.mp4
             !dor_vtober.mp4
-          retention-days: 3
+          retention-days: 5
 
       - name: Commit and push DCA ledger
         if: ${{ inputs.test_mode != true }}
