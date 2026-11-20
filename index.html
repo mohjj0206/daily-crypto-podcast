@@ -1,131 +1,58 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>幣看趨勢｜比特汪 BTC 定期定額實戰公開帳本</title>
-  <script src="https://jsdelivr.net"></script>
-  <style>
-    :root {
-      --bg: #0b0f19;
-      --card: #131a2a;
-      --border: #1f293d;
-      --gold: #f59e0b;
-      --cyan: #38bdf8;
-      --green: #10b981;
-      --red: #ef4444;
-      --text: #f1f5f9;
-      --muted: #94a3b8;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif; }
-    body { background: var(--bg); color: var(--text); line-height: 1.6; padding: 24px 16px; }
-    .container { max-width: 960px; margin: 0 auto; }
-    header { display: flex; align-items: center; gap: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 24px; flex-wrap: wrap; }
-    header img { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold); }
-    .title-area h1 { font-size: 1.6rem; color: var(--gold); margin-bottom: 6px; }
-    .title-area p { color: var(--muted); font-size: 0.95rem; }
-    .yt-btn { display: inline-block; margin-top: 12px; background: #dc2626; color: #fff; text-decoration: none; padding: 8px 18px; border-radius: 8px; font-weight: bold; font-size: 0.9rem; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
-    .stat-label { color: var(--muted); font-size: 0.85rem; margin-bottom: 6px; }
-    .stat-val { font-size: 1.5rem; font-weight: 800; color: var(--text); }
-    .pos { color: var(--green); }
-    .neg { color: var(--red); }
-    .chart-box, .table-box { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 24px; }
-    h2 { font-size: 1.2rem; margin-bottom: 16px; color: var(--cyan); }
-    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 600; }
-    .note { text-align: center; color: var(--muted); font-size: 0.82rem; margin-top: 24px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <img src="./avatar.png" alt="以太喵與比特汪" />
-      <div class="title-area">
-        <h1>幣看趨勢｜比特汪 BTC 定期定額公開帳本</h1>
-        <p>自 2025-10-25 起，每月 25 號紀律模擬投入 NT$10,000 買進比特幣（BTC）｜不追高、不開槓桿、用時間對抗波動</p>
-        <a class="yt-btn" href="https://youtube.com" target="_blank">▶ 前往 YouTube 頻道收聽每日播客</a>
-      </div>
-    </header>
-
-    <div class="grid">
-      <div class="stat-card"><div class="stat-label">累計總投入（TWD）</div><div class="stat-val" id="total-twd">載入中...</div></div>
-      <div class="stat-card"><div class="stat-label">累計持有比特幣（BTC）</div><div class="stat-val" id="total-btc" style="color:var(--gold)">載入中...</div></div>
-      <div class="stat-card"><div class="stat-label">平均買進成本（USD）</div><div class="stat-val" id="avg-usd">載入中...</div></div>
-      <div class="stat-card"><div class="stat-label">目前估算總市值＆未實現損益</div><div class="stat-val" id="pnl-twd">載入中...</div></div>
-    </div>
-
-    <div class="chart-box">
-      <h2>📈 累計投入本金 vs 資產總市值走勢（TWD）</h2>
-      <canvas id="dcaChart" height="110"></canvas>
-    </div>
-
-    <div class="table-box">
-      <h2>📋 每月 25 號定期定額歷史明細</h2>
-      <div style="overflow-x:auto;">
-        <table>
-          <thead>
-            <tr><th>扣款日期</th><th>投入金額 (TWD)</th><th>買進價格 (USD)</th><th>購得數量 (BTC)</th></tr>
-          </thead>
-          <tbody id="ledger-body"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <p class="note">⚠️ 本頁面為【幣看趨勢】節目長期紀律定投示範帳本，所有數據自動同步自 GitHub 倉庫，僅供學習交流，不構成任何投資建議。</p>
-  </div>
-
   <script>
     async function loadDashboard() {
       try {
-        const [ledgerRes, priceRes] = await Promise.all([
-          fetch('./dca_portfolio.json?t=' + Date.now()),
-          fetch('https://coingecko.com')
-        ]);
+        const ledgerRes = await fetch('./dca_portfolio.json?t=' + Date.now());
         const ledger = await ledgerRes.json();
-        const priceData = await priceRes.json();
-        const liveUsd = priceData.bitcoin.usd;
-        const liveTwd = priceData.bitcoin.twd;
 
-        const records = ledger.purchases || ledger.records || ledger.history || (Array.isArray(ledger) ? ledger : []);
-        let sumTwd = 0, sumBtc = 0, sumUsdCost = 0;
+        let liveUsd = Number(ledger.current_btc_usd || 0);
+        let liveTwdRate = Number(ledger.current_twd_rate || 32.5);
+        try {
+          const priceRes = await fetch('https://coingecko.com');
+          const priceData = await priceRes.json();
+          if (priceData && priceData.bitcoin && priceData.bitcoin.usd) {
+            liveUsd = priceData.bitcoin.usd;
+            liveTwdRate = priceData.bitcoin.twd / priceData.bitcoin.usd;
+          }
+        } catch (_) {}
+
+        const records = ledger.records || [];
+        let sumTwd = 0, sumBtc = 0;
         const labels = [], costSeries = [], valSeries = [];
         const tbody = document.getElementById('ledger-body');
+        tbody.innerHTML = '';
 
         records.forEach(item => {
-          const date = item.date || item.buy_date || '-';
-          const twd = Number(item.twd || item.amount_twd || 10000);
-          const usdPrice = Number(item.btc_price_usd || item.price_usd || 0);
-          const btc = Number(item.btc_bought || item.btc || 0);
+          const date = item.date || '-';
+          const twd = Number(item.twd_invested || 10000);
+          const usdPrice = Number(item.btc_price_usd || 0);
+          const twdPrice = Number(item.btc_price_twd || 0);
+          const btc = Number(item.btc_bought || 0);
           sumTwd += twd;
           sumBtc += btc;
-          sumUsdCost += btc * usdPrice;
 
           labels.push(date);
           costSeries.push(sumTwd);
-          const histTwdRate = usdPrice > 0 && btc > 0 ? (twd / btc) : liveTwd;
-          valSeries.push(Math.round(sumBtc * histTwdRate));
+          valSeries.push(Math.round(sumBtc * twdPrice));
 
           tbody.innerHTML += `<tr><td>${date}</td><td>NT$ ${twd.toLocaleString()}</td><td>$${usdPrice.toLocaleString()}</td><td>${btc.toFixed(8)} BTC</td></tr>`;
         });
 
-        // 加上今日即時市值點
-        const currentValTwd = Math.round(sumBtc * liveTwd);
-        const pnlTwd = currentValTwd - sumTwd;
-        const pnlPct = sumTwd > 0 ? ((pnlTwd / sumTwd) * 100).toFixed(2) : '0.00';
-        const avgUsd = sumBtc > 0 ? (sumUsdCost / sumBtc) : 0;
+        const totalTwd = Number(ledger.total_twd || sumTwd);
+        const totalBtc = Number(ledger.total_btc || sumBtc);
+        const avgUsd = Number(ledger.avg_buy_price_usd || 0);
+        const currentValTwd = Math.round(totalBtc * liveUsd * liveTwdRate);
+        const pnlTwd = currentValTwd - totalTwd;
+        const pnlPct = totalTwd > 0 ? ((pnlTwd / totalTwd) * 100).toFixed(2) : '0.00';
 
         labels.push('今日即時');
-        costSeries.push(sumTwd);
+        costSeries.push(totalTwd);
         valSeries.push(currentValTwd);
 
-        document.getElementById('total-twd').innerText = `NT$ ${sumTwd.toLocaleString()}`;
-        document.getElementById('total-btc').innerText = `${sumBtc.toFixed(8)} BTC`;
-        document.getElementById('avg-usd').innerText = `$${Math.round(avgUsd).toLocaleString()}`;
+        document.getElementById('total-twd').innerText = `NT$ ${totalTwd.toLocaleString()}`;
+        document.getElementById('total-btc').innerText = `${totalBtc.toFixed(8)} BTC`;
+        document.getElementById('avg-usd').innerText = `$${avgUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         const pnlEl = document.getElementById('pnl-twd');
-        pnlEl.innerHTML = `NT$ ${currentValTwd.toLocaleString()}<br><span style="font-size:1rem" class="${pnlTwd >= 0 ? 'pos' : 'neg'}">${pnlTwd >= 0 ? '+' : ''}${pnlTwd.toLocaleString()} (${pnlPct}%)</span>`;
+        pnlEl.innerHTML = `NT$ ${currentValTwd.toLocaleString()}<br><span style="font-size:1rem" class="${pnlTwd >= 0 ? 'pos' : 'neg'}">${pnlTwd >= 0 ? '+' : ''}NT$ ${pnlTwd.toLocaleString()} (${pnlPct}%)</span>`;
 
         new Chart(document.getElementById('dcaChart'), {
           type: 'line',
@@ -136,13 +63,18 @@
               { label: '累計投入本金 (TWD)', data: costSeries, borderColor: '#38bdf8', borderDash:, fill: false, tension: 0.1 }
             ]
           },
-          options: { responsive: true, plugins: { legend: { labels: { color: '#f1f5f9' } } }, scales: { x: { ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' } } } }
+          options: {
+            responsive: true,
+            plugins: { legend: { labels: { color: '#f1f5f9' } } },
+            scales: {
+              x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+              y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } }
+            }
+          }
         });
       } catch (e) {
-        document.getElementById('total-twd').innerText = '請確認 dca_portfolio.json 格式';
+        document.getElementById('total-twd').innerText = '資料載入異常：' + e.message;
       }
     }
     loadDashboard();
   </script>
-</body>
-</html>
