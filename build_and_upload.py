@@ -634,6 +634,340 @@ def find_rsi_oversold_events(history, rsi_series, as_of_date, threshold=30):
     ]
 
 
+def fetch_okx_ratio(endpoint, params, label):
+    try:
+        query = "&".join(f"{key}={quote(str(value), safe='')}" for key, value in params.items())
+        response = fetch_json(
+            f"https://www.okx.com/api/v5/rubik/stat/contracts/{endpoint}?{query}",
+            timeout=10,
+        )
+        if not isinstance(response, dict) or response.get("code") != "0":
+            raise ValueError(f"OKX returned an unsuccessful {label} response.")
+        records = response.get("data")
+        if not isinstance(records, list) or not records:
+            raise ValueError(f"OKX returned no {label} records.")
+        valid_records = []
+        for record in records:
+            try:
+                values = record.get("value") if isinstance(record, dict) else record
+                timestamp_ms, ratio = values
+                timestamp = datetime.fromtimestamp(
+                    float(timestamp_ms) / 1000, timezone.utc
+                )
+                ratio = float(ratio)
+                age = datetime.now(timezone.utc) - timestamp
+                if (
+                    not math.isfinite(ratio)
+                    or ratio <= 0
+                    or age < timedelta(minutes=-5)
+                    or age > timedelta(hours=36)
+                ):
+                    continue
+                valid_records.append((timestamp, ratio))
+            except (KeyError, TypeError, ValueError, OverflowError, OSError):
+                continue
+        if not valid_records:
+            raise ValueError(f"OKX returned no fresh valid {label} records.")
+        timestamp, ratio = max(valid_records, key=lambda record: record[0])
+        return {"source": "OKX", "label": label, "timestamp": timestamp, "ratio": ratio}
+    except Exception as error:
+        print(f"OKX {label} unavailable; omitting this ratio: {error}")
+        return None
+
+
+def fetch_bybit_account_ratio():
+    try:
+        response = fetch_json(
+            "https://api.bybit.com/v5/market/account-ratio"
+            "?category=linear&symbol=BTCUSDT&period=1d&limit=1",
+            timeout=10,
+        )
+        if not isinstance(response, dict) or response.get("retCode") != 0:
+            raise ValueError("Bybit returned an unsuccessful account-ratio response.")
+        records = response.get("result", {}).get("list", [])
+        if not records:
+            raise ValueError("Bybit returned no account-ratio records.")
+        record = records[0]
+        timestamp = datetime.fromtimestamp(
+            float(record["timestamp"]) / 1000, timezone.utc
+        )
+        buy_ratio = float(record["buyRatio"])
+        sell_ratio = float(record["sellRatio"])
+        age = datetime.now(timezone.utc) - timestamp
+        if (
+            not math.isfinite(buy_ratio)
+            or not math.isfinite(sell_ratio)
+            or buy_ratio <= 0
+            or sell_ratio <= 0
+            or age < timedelta(minutes=-5)
+            or age > timedelta(hours=36)
+        ):
+            raise ValueError("Bybit account-ratio data is invalid or stale.")
+        return {
+            "source": "Bybit",
+            "label": "全體帳戶多空比",
+            "timestamp": timestamp,
+            "ratio": buy_ratio / sell_ratio,
+        }
+    except Exception as error:
+        print(f"Bybit account ratio unavailable; omitting it: {error}")
+        return None
+
+
+def fetch_trader_position_metrics():
+    all_accounts = fetch_okx_ratio(
+        "long-short-account-ratio",
+        {"ccy": "BTC", "period": "1D"},
+        "全體帳戶多空人數比",
+    )
+    top_accounts = fetch_okx_ratio(
+        "long-short-account-ratio-contract-top-trader",
+        {"instId": "BTC-USDT-SWAP", "period": "1D"},
+        "前列交易者帳戶多空比",
+    )
+    top_positions = fetch_okx_ratio(
+        "long-short-position-ratio-contract-top-trader",
+        {"instId": "BTC-USDT-SWAP", "period": "1D"},
+        "前列交易者持倉多空比",
+    )
+    if all_accounts is None:
+        all_accounts = fetch_bybit_account_ratio()
+    return {
+        "all_accounts": all_accounts,
+        "top_accounts": top_accounts,
+        "top_positions": top_positions,
+    }
+
+
+def fetch_okx_spot_volume_metrics():
+    try:
+        response = fetch_json(
+            "https://www.okx.com/api/v5/market/candles"
+            "?instId=BTC-USDT&bar=1D&limit=100",
+            timeout=10,
+        )
+        if not isinstance(response, dict) or response.get("code") != "0":
+            raise ValueError("OKX returned an unsuccessful BTC spot-candle response.")
+        candles = response.get("data")
+        if not isinstance(candles, list):
+            raise ValueError("OKX returned malformed BTC spot candles.")
+        daily = []
+        for candle in candles:
+            try:
+                timestamp = datetime.fromtimestamp(
+                    float(candle[0]) / 1000, timezone.utc
+                )
+                close = float(candle[4])
+                quote_volume = float(candle[7])
+                age = datetime.now(timezone.utc) - timestamp
+                if (
+                    str(candle[8]) != "1"
+                    or not math.isfinite(close)
+                    or close <= 0
+                    or not math.isfinite(quote_volume)
+                    or quote_volume <= 0
+                    or age < timedelta(0)
+                    or age > timedelta(days=65)
+                ):
+                    continue
+                daily.append({
+                    "date": timestamp.date(),
+                    "close": close,
+                    "quote_volume": quote_volume,
+                })
+            except (IndexError, TypeError, ValueError, OverflowError, OSError):
+                continue
+        daily.sort(key=lambda candle: candle["date"])
+        if len(daily) < 60 or len({candle["date"] for candle in daily}) != len(daily):
+            raise ValueError("OKX returned fewer than 60 valid completed daily candles.")
+        if (datetime.now(timezone.utc).date() - daily[-1]["date"]).days > 2:
+            raise ValueError("OKX BTC spot-candle history is stale.")
+
+        recent = daily[-30:]
+        previous = daily[-60:-30]
+        recent_volume = sum(candle["quote_volume"] for candle in recent)
+        previous_volume = sum(candle["quote_volume"] for candle in previous)
+        if previous_volume <= 0:
+            raise ValueError("OKX BTC spot volume baseline is non-positive.")
+        return {
+            "source": "OKX BTC-USDT 現貨",
+            "start_date": recent[0]["date"],
+            "end_date": recent[-1]["date"],
+            "recent_volume_quote": recent_volume,
+            "previous_volume_quote": previous_volume,
+            "volume_change_pct": (recent_volume / previous_volume - 1) * 100,
+            "price_change_pct": (recent[-1]["close"] / recent[0]["close"] - 1) * 100,
+        }
+    except Exception as error:
+        print(f"OKX BTC spot-volume data unavailable; omitting it: {error}")
+        return None
+
+
+def fetch_blockchain_chart_metrics(chart_name, label):
+    try:
+        response = fetch_json(
+            f"https://api.blockchain.info/charts/{chart_name}"
+            "?timespan=70days&format=json",
+            timeout=10,
+        )
+        if not isinstance(response, dict) or not isinstance(response.get("values"), list):
+            raise ValueError(f"Blockchain.com returned malformed {label} history.")
+        daily = {}
+        for item in response["values"]:
+            try:
+                timestamp = datetime.fromtimestamp(
+                    float(item["x"]), timezone.utc
+                )
+                value = float(item["y"])
+                if not math.isfinite(value) or value < 0:
+                    continue
+                daily[timestamp.date()] = value
+            except (KeyError, TypeError, ValueError, OverflowError, OSError):
+                continue
+        if len(daily) < 40:
+            raise ValueError(f"Blockchain.com returned insufficient {label} history.")
+        latest_date = max(daily)
+        age = datetime.now(timezone.utc) - datetime.combine(
+            latest_date, datetime.min.time(), timezone.utc
+        )
+        if age < timedelta(0) or age > timedelta(days=3):
+            raise ValueError(f"Blockchain.com {label} history is stale.")
+        recent_start = latest_date - timedelta(days=29)
+        baseline_start = latest_date - timedelta(days=59)
+        recent = [value for day, value in daily.items() if recent_start <= day <= latest_date]
+        previous = [
+            value for day, value in daily.items()
+            if baseline_start <= day < recent_start
+        ]
+        if len(recent) < 20 or len(previous) < 20:
+            raise ValueError(f"Blockchain.com returned incomplete 30-day {label} windows.")
+        recent_average = sum(recent) / len(recent)
+        previous_average = sum(previous) / len(previous)
+        if previous_average <= 0:
+            raise ValueError(f"Blockchain.com {label} baseline is non-positive.")
+        return {
+            "source": "Blockchain.com",
+            "label": label,
+            "start_date": recent_start,
+            "end_date": latest_date,
+            "recent_average": recent_average,
+            "previous_average": previous_average,
+            "change_pct": (recent_average / previous_average - 1) * 100,
+        }
+    except Exception as error:
+        print(f"Blockchain.com {label} unavailable; omitting it: {error}")
+        return None
+
+
+def fetch_onchain_activity_metrics():
+    return {
+        "estimated_transfer_volume": fetch_blockchain_chart_metrics(
+            "estimated-transaction-volume-usd", "估算鏈上交易量"
+        ),
+        "transaction_count": fetch_blockchain_chart_metrics(
+            "n-transactions", "鏈上交易筆數"
+        ),
+    }
+
+
+def describe_long_short_ratio(metric):
+    if metric is None:
+        return "未取得通過時效驗證的公開多空比資料，略過，不推測"
+    ratio = metric["ratio"]
+    direction = "偏多" if ratio > 1 else "偏空" if ratio < 1 else "中性"
+    return (
+        f"{metric['source']} {metric['label']} {ratio:.3f}:1（{direction}，"
+        f"截至 {metric['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}）"
+    )
+
+
+def format_trader_position_report(metrics):
+    if not metrics:
+        return "未取得通過時效驗證的多空比資料，略過，不推測。"
+    reports = [
+        describe_long_short_ratio(metrics.get("all_accounts")),
+        describe_long_short_ratio(metrics.get("top_accounts")),
+        describe_long_short_ratio(metrics.get("top_positions")),
+    ]
+    return (
+        "；".join(reports)
+        + "。前列交易者是交易所排名代理，不等同所有鏈上巨鯨；"
+        "全體帳戶也不是散戶專屬樣本，多空比不代表現貨買入或吸籌。"
+    )
+
+
+def format_spot_volume_report(metrics):
+    if metrics is None:
+        return "未取得足夠且新鮮的 OKX BTC 現貨成交量資料，略過，不推測。"
+    activity = (
+        "放量下跌"
+        if metrics["price_change_pct"] < 0 and metrics["volume_change_pct"] >= 20
+        else "縮量下跌"
+        if metrics["price_change_pct"] < 0 and metrics["volume_change_pct"] <= -20
+        else "價格與成交量訊號不一致"
+    )
+    return (
+        f"{metrics['source']}近30日報價成交額 USDT {metrics['recent_volume_quote']:,.0f}，"
+        f"較前30日 {metrics['volume_change_pct']:+.2f}%；"
+        f"近30日價格變化 {metrics['price_change_pct']:+.2f}%，訊號為「{activity}」。"
+    )
+
+
+def format_onchain_activity_report(metrics):
+    reports = []
+    for key in ("estimated_transfer_volume", "transaction_count"):
+        metric = metrics.get(key) if metrics else None
+        if metric is None:
+            reports.append("未取得足夠的新鮮鏈上歷史資料，略過，不推測")
+            continue
+        if key == "estimated_transfer_volume":
+            value_text = f"估算鏈上交易量日均 US${metric['recent_average']:,.0f}"
+        else:
+            value_text = f"鏈上交易筆數日均 {metric['recent_average']:,.0f} 筆"
+        reports.append(
+            f"{value_text}，較前30日 {metric['change_pct']:+.2f}%"
+            f"（截至 {metric['end_date']}）"
+        )
+    return (
+        "；".join(reports)
+        + "。這些是全網活動代理，無法識別地址身分或判定交易所淨流入／流出。"
+    )
+
+
+def format_chip_sentiment_report(fng_value, market_structure, spot_volume):
+    if fng_value is None:
+        return "恐慌貪婪指數未取得，無法做情緒交叉判讀。"
+    if market_structure is None:
+        return "近期回撤資料未取得，無法做情緒交叉判讀。"
+    drawdown_pct = market_structure["current_drawdown_pct"]
+    if spot_volume is None:
+        return (
+            f"恐慌貪婪指數 {fng_value}；目前相對90日高點回撤 {drawdown_pct:.2f}%；"
+            "現貨成交量資料不足，無法區分放量恐慌或縮量沉澱。"
+        )
+    volume_change_pct = spot_volume["volume_change_pct"]
+    if fng_value <= 24 and drawdown_pct <= -10 and volume_change_pct >= 20:
+        interpretation = (
+            "符合「極度恐慌＋回撤至少10%＋成交額放大至少20%」的恐慌換手特徵；"
+            "不能據此斷定是散戶割肉或巨鯨吸籌。"
+        )
+    elif fng_value <= 24 and drawdown_pct < 0 and volume_change_pct <= -20:
+        interpretation = (
+            "符合「極度恐慌＋回撤＋成交額萎縮至少20%」的縮量沉澱特徵；"
+            "不能據此證明長期持有者惜售或巨鯨吸籌。"
+        )
+    else:
+        interpretation = (
+            "未同時符合上述放量投降或縮量沉澱門檻，籌碼方向訊號混合，"
+            "不能判定散戶割肉或巨鯨吸籌。"
+        )
+    return (
+        f"恐慌貪婪指數 {fng_value}；目前相對90日高點回撤 {drawdown_pct:.2f}%；"
+        f"OKX現貨近30日成交額變化 {volume_change_pct:+.2f}%。"
+        f"{interpretation}"
+    )
+
+
 def fetch_stablecoin_market_cap_changes():
     url = "https://stablecoins.llama.fi/stablecoincharts/all?stablecoin=1"
     try:
@@ -951,6 +1285,17 @@ btc_oversold_report = format_oversold_report(
     btc_oversold_events, btc_metrics["rsi_series"]
 )
 stablecoin_report = format_stablecoin_market_cap_report(stablecoin_changes)
+trader_position_metrics = fetch_trader_position_metrics()
+okx_spot_volume_metrics = fetch_okx_spot_volume_metrics()
+onchain_activity_metrics = fetch_onchain_activity_metrics()
+trader_position_report = format_trader_position_report(trader_position_metrics)
+spot_volume_report = format_spot_volume_report(okx_spot_volume_metrics)
+onchain_activity_report = format_onchain_activity_report(onchain_activity_metrics)
+chip_sentiment_report = format_chip_sentiment_report(
+    int(today_fng["value"]) if today_fng else None,
+    btc_metrics,
+    okx_spot_volume_metrics,
+)
 
 def fetch_yahoo_daily_closes(symbol, start_date, end_date):
     start_ts = calendar.timegm(
@@ -1395,6 +1740,10 @@ full_report = (
     f"- ETH 波段結構：{eth_technical_report}\n"
     f"- BTC RSI 歷史：{btc_oversold_report}\n"
     f"- 全網穩定幣總市值變化：{stablecoin_report}\n"
+    f"- 大戶與全體帳戶持倉代理：{trader_position_report}\n"
+    f"- 近30日現貨成交量：{spot_volume_report}\n"
+    f"- 鏈上轉帳活躍度代理：{onchain_activity_report}\n"
+    f"- 恐慌、回撤與成交量交叉判讀：{chip_sentiment_report}\n"
     f"- 市場恐慌與貪婪指數：{fear_report}\n\n"
     f"{dca_report}\n\n【主流幣即時報價與RSI掃描】\n{coins_summary}\n\n"
     f"【近36小時通過時效驗證的新聞】\n{news_list}"
@@ -1520,12 +1869,12 @@ p2_length_guidance = (
     if is_test else
     "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC近90日價格結構與支撐壓力圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
-host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；熟悉以太坊技術升級、Layer 2、DeFi與RWA。她負責精準拆解價格結構圖與RSI圖，報出回撤天數與幅度、30日支撐壓力、相對100日及200日線乖離、歷史超賣區段，以及穩定幣總市值變化；客觀描述短線賣壓與情緒，分別說明站穩壓力或跌破支撐後可驗證的市場劇本，不把指標當成必然預測，並替激動的比特汪踩煞車。
-男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；重視BTC長期週期與紀律定投。接住以太喵的數據，以不猜最低點、不追短線、不碰高槓桿為原則，說明分批定投只能按個人預算與風險承受能力評估；不得保證獲利、回本或週期必然翻正。節目角色設定中的每月定投帳本是模擬紀錄，並非真實成交。
+host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；熟悉以太坊技術升級、Layer 2、DeFi與RWA。她負責精準拆解價格結構圖與RSI圖，報出回撤天數與幅度、30日支撐壓力、相對100日及200日線乖離、歷史超賣區段，以及穩定幣總市值變化；籌碼面則客觀對照 OKX 全體帳戶、前列交易者帳戶與持倉多空比、OKX 近30日現貨成交額、Blockchain.com 估算鏈上交易量及筆數。說明多空比是平台倉位代理、鏈上統計不能辨識地址身分或交易所淨流向；只依本次數據判讀短線成交量與情緒，不將「散戶割肉」或「巨鯨吸籌」說成已證實事實。市場劇本須分別說明站穩壓力或跌破支撐後可驗證的條件，不把指標當成必然預測，並替激動的比特汪踩煞車。
+男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；重視BTC長期週期與紀律定投。接住以太喵的數據，用白話說明短線交易者可能退場、長期參與者可能較不活躍，但不得宣稱巨鯨必然吸籌或敦促觀眾把便宜籌碼交給特定族群。以不猜最低點、不追短線、不碰高槓桿為原則，提醒按個人預算與風險承受能力維持或調整分批計畫；不得保證獲利、回本或週期必然翻正。節目角色設定中的每月定投帳本是模擬紀錄，並非真實成交。
 兩人分別代表「數位黃金派」與「世界計算機生態派」，互相尊重、立場互補，自然吐槽、穿插幣圈冷笑話與台灣網路梗；以太喵以數據幫比特汪踩煞車。口播禁止使用HODL、HODLer等縮寫，一律自然說「長期持有」或「長期持有者」。若今日不是DCA播報日，勿主動插入帳本環節；只有在指定DCA環節才可報帳本數字。"""
-strategy_script_guidance = """【分析順序與雙人分工】全節目以「數據拆解 → 條件式策略劇本 → 長期定投心法」推進。以太喵先依本次報告讀出BTC與ETH結構數據，並說明RSI超賣區段只是歷史動能訊號；穩定幣市值增加或減少不等於資金已買入或賣出BTC。接著以太喵提出兩種條件式劇本：若價格站穩30日壓力並有後續價格確認，描述可能改善的結構；若跌破30日支撐，說明回撤風險仍在及需觀察的後續訊號。不可捏造支撐、壓力或確認條件。比特汪接續從長期週期談紀律、分批配置與不猜最低點，但必須明說超賣不保證反彈，歷史表現不保證未來；只可將定期定額描述為一種須符合預算、期限與風險承受度的做法，不可催促觀眾買進。"""
+strategy_script_guidance = """【分析順序與雙人分工】全節目以「數據拆解 → 條件式策略劇本 → 長期定投心法」推進。以太喵先依本次報告讀出BTC與ETH結構數據，並說明RSI超賣區段只是歷史動能訊號；穩定幣市值增加或減少不等於資金已買入或賣出BTC。籌碼面須報出可用的全體帳戶與前列交易者多空比、近30日現貨成交量變化及鏈上活躍度變化；分清「放量下跌」與「縮量下跌」，並依恐慌貪婪值、90日回撤及成交額變化交叉描述恐慌換手或縮量沉澱。若某項未取得便明說略過，不補值。這些指標都是代理資料，不能據此確定散戶正在割肉、巨鯨正在吸籌，或長期持有者惜售。接著以太喵提出兩種條件式劇本：若價格站穩30日壓力並有後續價格確認，描述可能改善的結構；若跌破30日支撐，說明回撤風險仍在及需觀察的後續訊號。不可捏造支撐、壓力或確認條件。比特汪以白話總結短線交易者可能退場、長期參與者可能較少換手，但必須標明這不是對巨鯨吸籌的證明；提醒觀眾勿在恐慌中衝動改變計畫，從長期週期談紀律定投、不猜最低點。超賣不保證反彈，歷史表現不保證未來；定期定額須符合個人預算與風險承受度，不可催促觀眾買進。"""
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
-【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
+【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、多空比、現貨成交量、鏈上活躍度、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
 {full_report}
 【雙人角色與互動】{host_persona_guidance}
 {strategy_script_guidance}
@@ -1562,7 +1911,7 @@ ai_title = t_match.group(1).strip().replace('「', '').replace('」', '') if t_m
 video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
 p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半段逐字稿，{target_words}。
-【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
+【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、多空比、現貨成交量、鏈上活躍度、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
 【前段逐字稿】{part1_raw}
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
