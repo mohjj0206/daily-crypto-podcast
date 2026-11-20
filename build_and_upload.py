@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
 import feedparser
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 from opencc import OpenCC
 from urllib.parse import quote
 import matplotlib
@@ -931,13 +931,29 @@ def fmt_ass_t(sec):
     m, s = divmod(r, 60)
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
-ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,44,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,3,0,2,27,27,42,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,44,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,3,0,2,210,210,42,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
 punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
 cur_t, evs = intro_dur, []
 speech_elapsed = 0.0
 slide_start_times = {}
+speaker_intervals = {"F": [], "M": []}
 for idx, _, txt, dur in results:
+    role = dialogues[idx][0]
+    if role in ("女", "F"):
+        speaker = "F"
+    elif role in ("男", "M"):
+        speaker = "M"
+    else:
+        raise RuntimeError(f"Unknown dialogue speaker at index {idx}: {role!r}")
+    speaker_start = cur_t
+    speaker_end = speaker_start + dur
+    intervals = speaker_intervals[speaker]
+    if intervals and abs(intervals[-1][1] - speaker_start) < 1e-6:
+        intervals[-1] = (intervals[-1][0], speaker_end)
+    else:
+        intervals.append((speaker_start, speaker_end))
+
     for slide_number, anchor_position in slide_anchor_positions.items():
         anchor_dialogue_index = int(anchor_position)
         if idx == anchor_dialogue_index:
@@ -974,11 +990,12 @@ for idx, _, txt, dur in results:
             sub_end = segment_cur + dur * (len(segment) / total_chars)
 
         hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', sub_txt)
-        evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,0,0,0,,{hl}")
+        evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,210,210,0,,{hl}")
         segment_cur = sub_end
 
     cur_t += dur
     speech_elapsed += dur
+speech_end_t = cur_t
 if set(slide_start_times) != set(range(1, SLIDE_COUNT + 1)):
     raise RuntimeError(
         "Not all slide anchors were mapped to synthesized dialogue: "
@@ -1663,6 +1680,57 @@ def create_outro_frame():
     image.save("outro_frame.png")
 
 
+def create_speaker_avatars():
+    if not os.path.exists("avatar.png"):
+        raise FileNotFoundError("avatar.png is required to create the speaker avatars.")
+
+    portraits = {}
+    with Image.open("avatar.png") as source:
+        avatar = source.convert("RGB")
+        width, height = avatar.size
+        midpoint = width // 2
+        for speaker, bounds in (
+            ("cat", (0, 0, midpoint, height)),
+            ("dog", (midpoint, 0, width, height)),
+        ):
+            half = avatar.crop(bounds)
+            crop_size = min(half.size)
+            left = (half.width - crop_size) // 2
+            top = int((half.height - crop_size) * 0.25)
+            portraits[speaker] = half.crop(
+                (left, top, left + crop_size, top + crop_size)
+            ).resize((150, 150), Image.LANCZOS)
+
+    assets = {}
+    for speaker, color in (("cat", (129, 140, 248)), ("dog", (251, 191, 36))):
+        portrait = portraits[speaker]
+        mask_large = Image.new("L", (600, 600), 0)
+        ImageDraw.Draw(mask_large).ellipse((2, 2, 598, 598), fill=255)
+        mask = mask_large.resize((150, 150), Image.LANCZOS)
+
+        listening_face = ImageEnhance.Brightness(portrait).enhance(0.72).convert("RGBA")
+        listening = Image.new("RGBA", (150, 150), (0, 0, 0, 0))
+        listening.paste(listening_face, (0, 0), mask)
+        listening_path = f"{speaker}_avatar.png"
+        listening.save(listening_path)
+        assets[speaker] = listening_path
+
+        speaking_face = ImageEnhance.Brightness(portrait).enhance(1.18).convert("RGBA")
+        speaking = Image.new("RGBA", (168, 168), (0, 0, 0, 0))
+        glow = Image.new("RGBA", speaking.size, (0, 0, 0, 0))
+        ImageDraw.Draw(glow).ellipse((4, 4, 164, 164), fill=(*color, 190))
+        speaking.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
+        speaking.paste(speaking_face, (9, 9), mask)
+        draw = ImageDraw.Draw(speaking)
+        draw.ellipse((4, 4, 164, 164), outline=(*color, 255), width=6)
+        draw.ellipse((10, 10, 158, 158), outline=(255, 255, 255, 180), width=1)
+        speaking_path = f"{speaker}_avatar_speaking.png"
+        speaking.save(speaking_path)
+        assets[f"{speaker}_speaking"] = speaking_path
+
+    return assets
+
+
 def create_outro_video():
     subprocess.run(
         [
@@ -1802,7 +1870,45 @@ with open("list.txt", "w", encoding="utf-8") as f:
     f.write("file 'outro.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
-subprocess.run(["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3", "-vf", "ass=subs.ass", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-shortest", "output.mp4"], check=True)
+speaker_avatar_paths = create_speaker_avatars()
+cat_speaking = "+".join(
+    f"between(t,{start:.6f},{end:.6f})"
+    for start, end in speaker_intervals["F"]
+) or "0"
+dog_speaking = "+".join(
+    f"between(t,{start:.6f},{end:.6f})"
+    for start, end in speaker_intervals["M"]
+) or "0"
+speech_window = f"between(t,{intro_dur:.6f},{speech_end_t:.6f})"
+avatar_filter = (
+    "[0:v]ass=subs.ass[v_sub];"
+    f"[v_sub][2:v]overlay=x=28:y=545:"
+    f"enable='{speech_window}*not({cat_speaking})'[v_cat_idle];"
+    f"[v_cat_idle][3:v]overlay=x=28:y='536+4*sin(t*14)':eval=frame:"
+    f"enable='{cat_speaking}'[v_cat_speaking];"
+    f"[v_cat_speaking][4:v]overlay=x=1102:y=545:"
+    f"enable='{speech_window}*not({dog_speaking})'[v_dog_idle];"
+    f"[v_dog_idle][5:v]overlay=x=1102:y='536+4*sin(t*16)':eval=frame:"
+    f"enable='{dog_speaking}'[v_out]"
+)
+mux_command = ["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3"]
+for avatar_path in (
+    speaker_avatar_paths["cat"],
+    speaker_avatar_paths["cat_speaking"],
+    speaker_avatar_paths["dog"],
+    speaker_avatar_paths["dog_speaking"],
+):
+    mux_command.extend(["-loop", "1", "-framerate", "24", "-i", avatar_path])
+mux_command.extend(
+    [
+        "-filter_complex", avatar_filter,
+        "-map", "[v_out]", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+        "-r", "24", "-c:a", "aac", "-b:a", "128k",
+        "-shortest", "output.mp4",
+    ]
+)
+subprocess.run(mux_command, check=True)
 
 actual_video_duration = intro_video_duration + slideshow_duration + OUTRO_PAUSE + OUTRO_DURATION
 def fmt_chapter(sec):
