@@ -1,10 +1,14 @@
 import os
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 
 def build_youtube_client():
+    if os.environ.get("TEST_MODE", "").lower() == "true":
+        print("[TEST_MODE] 測試模式已啟用：跳過 YouTube OAuth 連線與影片上傳（保留每日上傳配額）。")
+        return None
     creds = Credentials(
         None,
         refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(),
@@ -56,24 +60,40 @@ def _resolve_playlist_id(youtube):
 
 
 def upload_main_video(youtube, video_path, thumb_path, title, description, tags, show_dca, cur_p, btc_pct, fng_num, is_test):
-    req = youtube.videos().insert(
-        part="snippet,status",
-        body={
-            "snippet": {
-                "title": title[:95],
-                "description": description,
-                "tags": tags or ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
-                "categoryId": "27",
+    if is_test or youtube is None:
+        print("\n" + "=" * 50)
+        print(f"[TEST_MODE] 主片已成功渲染完成：{video_path}")
+        print(f"[TEST_MODE] 封面縮圖已就緒：{thumb_path}")
+        print(f"[TEST_MODE] 預計主片標題：{title[:95]}")
+        print(f"[TEST_MODE] 預計說明欄與章節：\n{description}")
+        print(f"[TEST_MODE] 互動留言預覽：\n{_build_engagement_comment(cur_p, btc_pct, fng_num, show_dca)}")
+        print("=" * 50 + "\n")
+        return "TEST_MAIN_VIDEO_ID"
+
+    try:
+        req = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": title[:95],
+                    "description": description,
+                    "tags": tags or ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
+                    "categoryId": "27",
+                },
+                "status": {"privacyStatus": "unlisted"},
             },
-            "status": {"privacyStatus": "unlisted"},
-        },
-        media_body=MediaFileUpload(video_path, chunksize=1024*1024*5, resumable=True),
-    )
-    res = None
-    while res is None:
-        _, res = req.next_chunk()
-    video_id = res["id"]
-    print("Uploaded Video ID:", video_id)
+            media_body=MediaFileUpload(video_path, chunksize=1024*1024*5, resumable=True),
+        )
+        res = None
+        while res is None:
+            _, res = req.next_chunk()
+        video_id = res["id"]
+        print("Uploaded Video ID:", video_id)
+    except HttpError as err:
+        if "uploadLimitExceeded" in str(err):
+            print("⚠️ YouTube 每日上傳數量已達上限（uploadLimitExceeded），跳過主片上傳（已保留本機成片）。")
+            return "UPLOAD_LIMIT_EXCEEDED"
+        raise
 
     # 上傳封面圖
     if thumb_path and os.path.exists(thumb_path):
@@ -84,29 +104,26 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
             print(f"Failed to upload custom thumbnail: {e}")
 
     # 自動發布互動留言
-    if not is_test:
-        try:
-            comment_body = _build_engagement_comment(cur_p, btc_pct, fng_num, show_dca)
-            youtube.commentThreads().insert(
-                part="snippet",
-                body={
-                    "snippet": {
-                        "videoId": video_id,
-                        "topLevelComment": {
-                            "snippet": {"textOriginal": comment_body}
-                        },
-                    }
-                },
-            ).execute()
-            print(
-                "互動留言已發佈成功！\n"
-                "💡 提示：YouTube Data API v3 不支援程式自動置頂留言，"
-                "請至 YouTube Studio 後台手動點選「置頂」。"
-            )
-        except Exception as _comment_err:
-            print(f"互動留言發佈失敗（不影響主程式）：{_comment_err}")
-    else:
-        print(f"[TEST_MODE] 互動留言預覽（未實際發佈）：\n{_build_engagement_comment(cur_p, btc_pct, fng_num, show_dca)}")
+    try:
+        comment_body = _build_engagement_comment(cur_p, btc_pct, fng_num, show_dca)
+        youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {"textOriginal": comment_body}
+                    },
+                }
+            },
+        ).execute()
+        print(
+            "互動留言已發佈成功！\n"
+            "💡 提示：YouTube Data API v3 不支援程式自動置頂留言，"
+            "請至 YouTube Studio 後台手動點選「置頂」。"
+        )
+    except Exception as _comment_err:
+        print(f"互動留言發佈失敗（不影響主程式）：{_comment_err}")
 
     # 自動加入播放清單
     try:
@@ -146,24 +163,39 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
         "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
     )
-    short_request = youtube.videos().insert(
-        part="snippet,status",
-        body={
-            "snippet": {
-                "title": short_title[:95],
-                "description": short_description,
-                "tags": ["Shorts", "比特幣", "BTC", "以太幣", "ETH", "幣看趨勢"],
-                "categoryId": "27",
+
+    if os.environ.get("TEST_MODE", "").lower() == "true" or youtube is None or main_video_id in ("TEST_MAIN_VIDEO_ID", "UPLOAD_LIMIT_EXCEEDED"):
+        print("\n" + "=" * 50)
+        print(f"[TEST_MODE] Shorts 短片已成功渲染完成：{short_path}")
+        print(f"[TEST_MODE] 預計 Shorts 標題：{short_title[:95]}")
+        print(f"[TEST_MODE] 預計 Shorts 說明欄：\n{short_description}")
+        print("=" * 50 + "\n")
+        return "TEST_SHORT_VIDEO_ID"
+
+    try:
+        short_request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": short_title[:95],
+                    "description": short_description,
+                    "tags": ["Shorts", "比特幣", "BTC", "以太幣", "ETH", "幣看趨勢"],
+                    "categoryId": "27",
+                },
+                "status": {"privacyStatus": "unlisted"},
             },
-            "status": {"privacyStatus": "unlisted"},
-        },
-        media_body=MediaFileUpload(
-            short_path, chunksize=1024 * 1024 * 5, resumable=True
-        ),
-    )
-    short_response = None
-    while short_response is None:
-        _, short_response = short_request.next_chunk()
-    short_id = short_response["id"]
-    print("Uploaded YouTube Short:", short_id)
-    return short_id
+            media_body=MediaFileUpload(
+                short_path, chunksize=1024 * 1024 * 5, resumable=True
+            ),
+        )
+        short_response = None
+        while short_response is None:
+            _, short_response = short_request.next_chunk()
+        short_id = short_response["id"]
+        print("Uploaded YouTube Short:", short_id)
+        return short_id
+    except HttpError as err:
+        if "uploadLimitExceeded" in str(err):
+            print("⚠️ YouTube 每日上傳數量已達上限（uploadLimitExceeded），跳過 Shorts 上傳（已保留本機成片）。")
+            return "UPLOAD_LIMIT_EXCEEDED"
+        raise
