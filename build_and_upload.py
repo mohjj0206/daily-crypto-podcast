@@ -364,13 +364,11 @@ dca_slide_body = "\n".join(
         f"總投入 NT${dca_portfolio['total_twd']:,}｜累計 {dca_portfolio['total_btc']} BTC",
         f"平均成本 TWD {dca_portfolio['avg_buy_price_twd']:,.0f} / USD {dca_portfolio['avg_buy_price_usd']:,.0f}",
         f"總市值 NT${dca_portfolio['current_market_value_twd']:,.0f}｜損益 NT${dca_portfolio['unrealized_pnl_twd']:+,.0f}（{dca_portfolio['total_return_pct']:+.2f}%）",
-        "每月25日買進價位（BTC USD / TWD）",
-        *[
-            f"{record['date']}  ${record['btc_price_usd']:,.0f} / NT${record['btc_price_twd']:,.0f}"
+        "近三次買進：" + "；".join(
+            f"{record['date']} ${record['btc_price_usd']:,.0f}/NT${record['btc_price_twd']:,.0f}"
             for record in recent_dca_records
-        ],
-        f"歷史低價 {lowest_dca_record['date']}｜${lowest_dca_record['btc_price_usd']:,.0f} / NT${lowest_dca_record['btc_price_twd']:,.0f}",
-        f"歷史高價 {highest_dca_record['date']}｜${highest_dca_record['btc_price_usd']:,.0f} / NT${highest_dca_record['btc_price_twd']:,.0f}",
+        ),
+        f"歷史低／高：${lowest_dca_record['btc_price_usd']:,.0f}（{lowest_dca_record['date']}）／${highest_dca_record['btc_price_usd']:,.0f}（{highest_dca_record['date']}）",
     ]
 )
 
@@ -381,15 +379,22 @@ def generate_dca_chart(portfolio):
     chart_font_path = next(
         (
             path for path in (
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "C:\\Windows\\Fonts\\msyhbd.ttc",
                 "C:\\Windows\\Fonts\\msyh.ttc",
             )
             if os.path.exists(path)
         ),
         None,
     )
-    chart_font = FontProperties(fname=chart_font_path) if chart_font_path else None
+    chart_font = (
+        FontProperties(fname=chart_font_path, size=14, weight="bold")
+        if chart_font_path
+        else FontProperties(size=14, weight="bold")
+    )
     btc_history = fetch_yahoo_daily_closes("BTC-USD", start_date, today)
     try:
         fx_history = fetch_yahoo_daily_closes(
@@ -439,14 +444,8 @@ def generate_dca_chart(portfolio):
         invested_values.append(invested)
         market_values.append(accumulated_btc * btc_price * twd_rate)
 
-    current_month = today.strftime("%Y-%m")
-    months = [
-        f"{month}*" if month == current_month else month
-        for month, _ in month_ends
-    ]
-    pnl = float(portfolio["unrealized_pnl_twd"])
-    pnl_color = "#f87171" if pnl >= 0 else "#4ade80"
-    fig, axis = plt.subplots(figsize=(11, 4.5), dpi=160)
+    months = [month for month, _ in month_ends]
+    fig, axis = plt.subplots(figsize=(7.2, 5.2), dpi=160)
     fig.patch.set_facecolor("#111827")
     axis.set_facecolor("#0f172a")
     bar_colors = [
@@ -458,9 +457,19 @@ def generate_dca_chart(portfolio):
         months, invested_values, color="#fbbf24", marker="o",
         linewidth=2.2, markersize=4, label="累計投入台幣成本",
     )
-    axis.set_ylabel("TWD", color="#cbd5e1")
-    axis.tick_params(axis="x", colors="#cbd5e1", labelrotation=45, labelsize=8)
-    axis.tick_params(axis="y", colors="#cbd5e1", labelsize=8)
+    axis.set_title(
+        "每月投入成本與資產市值",
+        color="white", fontsize=18, fontweight="bold",
+        fontproperties=chart_font, pad=12,
+    )
+    axis.set_ylabel(
+        "TWD", color="#cbd5e1", fontsize=14, fontweight="bold",
+        fontproperties=chart_font,
+    )
+    axis.tick_params(axis="x", colors="#cbd5e1", labelrotation=45, labelsize=14, pad=6)
+    axis.tick_params(axis="y", colors="#cbd5e1", labelsize=14)
+    for tick_label in axis.get_xticklabels() + axis.get_yticklabels():
+        tick_label.set_fontproperties(chart_font)
     axis.grid(axis="y", color="#334155", linewidth=0.6, alpha=0.8)
     for spine in ("top", "right"):
         axis.spines[spine].set_visible(False)
@@ -468,25 +477,9 @@ def generate_dca_chart(portfolio):
         axis.spines[spine].set_color("#475569")
     axis.legend(
         loc="upper left", facecolor="#1e293b", edgecolor="none",
-        labelcolor="white", fontsize=9, ncol=2, prop=chart_font,
+        labelcolor="white", ncol=2, prop=chart_font,
     )
-    fig.text(
-        0.06, 0.975,
-        f"累計投入 TWD {portfolio['total_twd']:,.0f}｜持有 {portfolio['total_btc']} BTC｜"
-        f"均價 TWD {portfolio['avg_buy_price_twd']:,.0f} / USD {portfolio['avg_buy_price_usd']:,.0f}",
-        color="#f8fafc", fontsize=10, va="top", fontproperties=chart_font,
-    )
-    fig.text(
-        0.06, 0.925,
-        f"目前總價值 TWD {portfolio['current_market_value_twd']:,.0f}｜"
-        f"帳面賺賠 TWD {pnl:+,.0f}（{portfolio['total_return_pct']:+.2f}%）",
-        color=pnl_color, fontsize=10, va="top", fontproperties=chart_font,
-    )
-    fig.text(
-        0.99, 0.02, "* 當月截至今日估值",
-        color="#94a3b8", fontsize=8, ha="right", fontproperties=chart_font,
-    )
-    fig.tight_layout(rect=(0.03, 0.08, 0.99, 0.86))
+    fig.tight_layout()
     fig.savefig("chart_dca.png", facecolor="#111827")
     plt.close(fig)
     return "chart_dca.png"
@@ -1004,7 +997,8 @@ if set(slide_start_times) != set(range(1, SLIDE_COUNT + 1)):
 with open("subs.ass", "w", encoding="utf-8") as f:
     f.write(ass_head + "\n".join(evs))
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 3.2), dpi=120)
+plot_tick_font = FontProperties(size=14, weight="bold")
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 5.0), dpi=160)
 fig.patch.set_facecolor("#111827")
 for ax, name, col in [(ax1, "BTC", "#38bdf8"), (ax2, "ETH", "#a78bfa")]:
     cl = cdata[name][0][-100:]
@@ -1012,25 +1006,56 @@ for ax, name, col in [(ax1, "BTC", "#38bdf8"), (ax2, "ETH", "#a78bfa")]:
     ax.set_facecolor("#0f172a")
     ax.plot(cl, color=col, linewidth=2.2, label=f"{name} Close")
     ax.plot(ma, color="#fbbf24", linewidth=1.4, linestyle="--", label="20D MA")
-    ax.set_title(f"{name} 100D Trend", color="white", fontsize=10)
-    ax.tick_params(colors="#94a3b8", labelsize=8)
+    ax.set_title(
+        f"{name} 100D Trend", color="white", fontsize=18,
+        fontweight="bold",
+    )
+    ax.tick_params(colors="#94a3b8", labelsize=14)
+    for tick_label in ax.get_xticklabels() + ax.get_yticklabels():
+        tick_label.set_fontproperties(plot_tick_font)
     ax.grid(color="#1e293b", linewidth=0.6)
-    ax.legend(facecolor="#1e293b", edgecolor="none", labelcolor="white", fontsize=8)
+    ax.legend(
+        facecolor="#1e293b", edgecolor="none", labelcolor="white",
+        prop=plot_tick_font,
+    )
     for sp in ["top", "right"]: ax.spines[sp].set_visible(False)
     for sp in ["bottom", "left"]: ax.spines[sp].set_color("#334155")
 plt.tight_layout()
 plt.savefig("chart_dual.png", facecolor="#111827")
 plt.close()
 
-fig, ax = plt.subplots(figsize=(8.4, 3.2), dpi=120)
+fig, ax = plt.subplots(figsize=(8.4, 5.0), dpi=160)
 fig.patch.set_facecolor("#111827")
 ax.set_facecolor("#0f172a")
 names = list(cdata.keys())
 pcts = [cdata[n][1] for n in names]
-ax.barh(names[::-1], pcts[::-1], color=["#34d399" if p >= 0 else "#f43f5e" for p in pcts][::-1], height=0.55)
+bars = ax.barh(
+    names[::-1], pcts[::-1],
+    color=["#34d399" if p >= 0 else "#f43f5e" for p in pcts][::-1],
+    height=0.55,
+)
+for bar, pct in zip(bars, pcts[::-1]):
+    ax.annotate(
+        f"{pct:+.2f}%",
+        xy=(bar.get_width(), bar.get_y() + bar.get_height() / 2),
+        xytext=(6 if pct >= 0 else -6, 0),
+        textcoords="offset points",
+        ha="left" if pct >= 0 else "right",
+        va="center",
+        color="white",
+        fontsize=14,
+        fontweight="bold",
+    )
+spread = max(max(pcts) - min(pcts), 1)
+ax.set_xlim(min(0, min(pcts)) - spread * 0.2, max(0, max(pcts)) + spread * 0.2)
 ax.axvline(0, color="#64748b", linewidth=1)
-ax.set_title("24H Price Change (%)", color="white", fontsize=10)
-ax.tick_params(colors="white", labelsize=9)
+ax.set_title(
+    "24H Price Change (%)", color="white", fontsize=18,
+    fontweight="bold",
+)
+ax.tick_params(colors="white", labelsize=14)
+for tick_label in ax.get_xticklabels() + ax.get_yticklabels():
+    tick_label.set_fontproperties(plot_tick_font)
 ax.grid(axis="x", color="#1e293b", linewidth=0.6)
 for sp in ["top", "right"]: ax.spines[sp].set_visible(False)
 for sp in ["bottom", "left"]: ax.spines[sp].set_color("#334155")
@@ -1183,13 +1208,6 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
         highlights = highlights.splitlines()
     highlight_state = {"remaining": 3}
     title_markup = highlight_key_numbers(slide_data.get("title", ""), highlight_state)
-    list_markup = ""
-    if slide_data.get("layout") != "compare":
-        list_markup = "".join(
-            f"<li>{highlight_key_numbers(item, highlight_state)}</li>"
-            for item in highlights
-            if str(item).strip()
-        )
     chart_markup = ""
     chart_path = slide_data.get("chart_path")
     if chart_path:
@@ -1218,6 +1236,16 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
         layout = "chart" if chart_markup else "hero"
     if layout == "chart" and not chart_markup:
         layout = "hero"
+    if layout == "chart":
+        highlights = highlights[:5]
+
+    list_markup = ""
+    if layout != "compare":
+        list_markup = "".join(
+            f"<li>{highlight_key_numbers(item, highlight_state)}</li>"
+            for item in highlights
+            if str(item).strip()
+        )
 
     if layout == "compare":
         positive_markup = highlight_key_numbers(
@@ -1337,7 +1365,7 @@ h1 {{
   min-height: 0; flex: 1 1 auto; display: grid;
   grid-template-columns: minmax(0, 1fr); align-items: center;
 }}
-.chart-layout {{ grid-template-columns: minmax(0, 62fr) minmax(0, 38fr); gap: 24px; }}
+.chart-layout {{ grid-template-columns: minmax(0, 54fr) minmax(0, 46fr); gap: 18px; }}
 .compare-layout {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }}
 ul {{ list-style: none; margin: 0; padding: 0; min-width: 0; }}
 li {{
@@ -1359,6 +1387,13 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame.compact h1 {{ font-size: 32px; margin-bottom: 12px; }}
 .frame.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
 .frame.compact li::before {{ width: 7px; height: 7px; }}
+.chart-layout > ul {{
+  display: grid; grid-template-columns: 1fr; align-content: center;
+  gap: 12px; text-align: left;
+}}
+.frame .chart-layout > ul li {{
+  margin: 0; font-size: 23px; line-height: 1.45;
+}}
 .content.dense-grid ul {{
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start; gap: 8px 12px; text-align: left;
@@ -1407,15 +1442,15 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 }}
 @keyframes breathe {{ 0%, 100% {{ filter: drop-shadow(0 0 8px rgba(56,189,248,.16)); }} 50% {{ filter: drop-shadow(0 0 18px rgba(56,189,248,.34)); }} }}
 .gauge {{ flex-direction: column; gap: 22px; }}
-.gauge-title {{ color: #cbd5e1; font-size: 24px; }}
+.gauge-title {{ color: #cbd5e1; font-size: 30px; font-weight: 700; }}
 .gauge-track {{ width: 100%; height: 28px; display: flex; overflow: hidden; border-radius: 16px; }}
 .gauge-track span {{ flex: 1; }}
 .fear {{ background: #ef4444; }} .caution {{ background: #f97316; }}
 .neutral {{ background: #eab308; }} .greed {{ background: #84cc16; }}
 .extreme-greed {{ background: #22c55e; }}
 .gauge-marker {{ position: absolute; top: 43%; width: 5px; height: 42px; background: white; box-shadow: 0 0 12px white; }}
-.gauge-value {{ color: #fbbf24; font-size: 52px; font-weight: 800; }}
-.gauge-value small {{ color: #94a3b8; font-size: 21px; }}
+.gauge-value {{ color: #fbbf24; font-size: 64px; font-weight: 800; }}
+.gauge-value small {{ color: #94a3b8; font-size: 24px; font-weight: 700; }}
 .compare-panel {{
   min-width: 0; padding: 22px 24px; border: 2px solid; border-radius: 16px;
   background: rgba(8, 15, 28, .72); overflow: hidden;
@@ -1465,7 +1500,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
         title.getBoundingClientRect().bottom > contentBox.top - 8 ||
         frame.scrollHeight > frame.clientHeight + 1;
     }};
-    if (items.length >= 6) {{
+    if (items.length >= 6 && !content.classList.contains("chart-layout")) {{
       content.classList.add("dense-grid");
     }}
     for (let attempt = 0; attempt < 12 && overflows(); attempt++) {{
@@ -1474,9 +1509,12 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
       if (attempt === 6) frame.classList.add("fit-min");
       const titleSize = parseFloat(getComputedStyle(title).fontSize);
       if (titleSize > 20) title.style.fontSize = `${{Math.max(20, titleSize - 2)}}px`;
+      const minBodySize = content.classList.contains("chart-layout") ? 22 : 18;
       for (const item of items) {{
         const bodySize = parseFloat(getComputedStyle(item).fontSize);
-        if (bodySize > 18) item.style.fontSize = `${{Math.max(18, bodySize - 2)}}px`;
+        if (bodySize > minBodySize) {{
+          item.style.fontSize = `${{Math.max(minBodySize, bodySize - 2)}}px`;
+        }}
       }}
     }}
     if (!overflows()) return true;
