@@ -66,6 +66,64 @@ def clean_txt(s):
     ).strip()
 
 
+AI_PURE_TITLE_KEYWORDS = re.compile(
+    r"ChatGPT|OpenAI|Claude|Anthropic|DeepSeek|Sora|Midjourney|Copilot|"
+    r"Perplexity|Grok|xAI|Mistral|黃仁勳|英偉達|輝達|Nvidia|"
+    r"(?:Google\s+)?Gemini(?!\s*[）\)]?\s*(?:交易所|Trust|Earn|雙子星))|"
+    r"大語言模型|大模型|生成式\s*AI|人工智慧|人工智能",
+    re.IGNORECASE,
+)
+
+AI_CONTENT_KEYWORDS = re.compile(
+    r"ChatGPT|OpenAI|Claude|Anthropic|DeepSeek|Sora|Midjourney|Copilot|"
+    r"Perplexity|Grok|xAI|Mistral|LLM|大語言模型|大模型|生成式\s*AI|"
+    r"人工智慧|人工智能|機器學習|算力|GPU|黃仁勳|英偉達|輝達|Nvidia|"
+    r"(?:Google\s+)?Gemini(?!\s*[）\)]?\s*(?:交易所|Trust|Earn|雙子星))",
+    re.IGNORECASE,
+)
+
+CRYPTO_SPECIFIC_KEYWORDS = re.compile(
+    r"比特幣|比特币|以太坊|以太幣|以太币|加密貨幣|加密货币|加密資產|加密市場|加密市场|"
+    r"幣圈|币圈|虛擬貨幣|虚拟货币|區塊鏈|区块链|Web3|DeFi|NFT|DAO|鏈上|链上|"
+    r"跨鏈|跨链|公鏈|公链|去中心化|智能合約|智能合约|錢包|钱包|私鑰|助記詞|"
+    r"質押|质押|挖礦|挖矿|空投|airdrop|銘文|符文|迷因幣|MEME幣|山寨幣|穩定幣|稳定币|"
+    r"交易所|CEX|DEX|"
+    r"(?<![A-Za-z0-9])(?:BTC|ETH|USDT|USDC|USDE|SOL|XRP|ADA|DOGE|WLD|FET|RENDER|RNDR|TAO)(?![A-Za-z0-9])|"
+    r"幣安|Binance|OKX|Coinbase|Bybit|火幣|HTX|Bitget|Kraken|Uniswap|Vitalik|V神|"
+    r"Worldcoin|Bittensor|合約清算|爆倉",
+    re.IGNORECASE,
+)
+
+LLM_TOKEN_PATTERN = re.compile(
+    r"(?:\d+\s*[萬kKmM]?\s*(?:個)?代[幣币]|每(?:百萬|千)?代[幣币]|代[幣币](?:費用|價格|消耗|成本|上限)|"
+    r"上下文(?:長度)?.*?代[幣币]|token\s*代[幣币]|輸入代[幣币]|輸出代[幣币])",
+    re.IGNORECASE,
+)
+
+
+def is_pure_ai_news(entry):
+    title = str(entry.get("title", ""))
+    summary = str(entry.get("summary", ""))
+    description = str(entry.get("description", ""))
+    full_text = f"{title} {summary} {description}"
+
+    if not (AI_PURE_TITLE_KEYWORDS.search(title) or AI_CONTENT_KEYWORDS.search(full_text)):
+        return False
+
+    title_has_crypto = bool(CRYPTO_SPECIFIC_KEYWORDS.search(title))
+    text_without_llm_tokens = LLM_TOKEN_PATTERN.sub("", full_text)
+    crypto_matches_in_body = set(CRYPTO_SPECIFIC_KEYWORDS.findall(text_without_llm_tokens))
+
+    if AI_PURE_TITLE_KEYWORDS.search(title) and not title_has_crypto:
+        if len(crypto_matches_in_body) < 2:
+            return True
+
+    if len(crypto_matches_in_body) == 0 and not title_has_crypto:
+        return True
+
+    return False
+
+
 CORE_NEWS_KEYWORDS = re.compile(
     r"比特幣|比特币|以太坊|以太幣|以太币|加密貨幣|加密货币|區塊鏈|区块链|"
     r"穩定幣|稳定币|交易所|巨鯨|巨鲸|鏈上|链上|代幣|代币|監管|监管|"
@@ -83,6 +141,8 @@ CORE_NEWS_KEYWORDS = re.compile(
 
 
 def is_core_crypto_news(entry):
+    if is_pure_ai_news(entry):
+        return False
     content = " ".join(
         str(entry.get(field, ""))
         for field in ("title", "summary", "description")
@@ -90,12 +150,33 @@ def is_core_crypto_news(entry):
     return bool(CORE_NEWS_KEYWORDS.search(content))
 
 
+def remove_publish_time(text):
+    if not text:
+        return ""
+    s = str(text)
+    s = re.sub(r"[\[\(【（]\s*(?:發布時間|來源時間)[:：].*?[\]\)】）]", "", s, flags=re.I)
+    s = re.sub(r"(?:發布時間|來源時間)[:：]\s*\d{4}[-/年]\d{1,2}[-/月]\d{1,2}(?:\s*\d{1,2}:\d{2})?(?:\s*(?:CST|UTC))?", "", s, flags=re.I)
+    s = re.sub(r"[\[\(【（]\s*\d{4}[-/年]\d{1,2}[-/月]\d{1,2}(?:\s*\d{1,2}:\d{2})?(?:\s*(?:CST|UTC))?\s*[\]\)】）]", "", s, flags=re.I)
+    return s.strip()
+
+
+def clean_slide_text(text):
+    return remove_publish_time(text)
+
+
 def clean_slide_title(title):
-    cleaned = str(title or "").strip()
-    for _ in range(2):
-        cleaned = re.sub(r"^\d+\.\s*", "", cleaned)
-        cleaned = re.sub(r"^\[發布時間[:：].*?\]\s*", "", cleaned)
-        cleaned = re.sub(r"^市場焦點\s*\d+\s*[｜|:：]\s*", "", cleaned)
+    cleaned = remove_publish_time(title)
+    for _ in range(3):
+        cleaned = re.sub(r"^\d+[\.、\s]+", "", cleaned)
+        cleaned = re.sub(r"^[(（]\d+[)）]\s*", "", cleaned)
+        cleaned = re.sub(r"^市場焦點\s*[一二三四五六七八九十\d]*\s*[｜|:：\-]\s*", "", cleaned)
+        cleaned = re.sub(r"^焦點\s*[一二三四五六七八九十\d]*\s*[｜|:：\-]\s*", "", cleaned)
+        cleaned = re.sub(r"^【(.*)】$", r"\1", cleaned).strip()
+        cleaned = re.sub(r"^「(.*)」$", r"\1", cleaned).strip()
+        cleaned = re.sub(r'^"(.*)"$', r"\1", cleaned).strip()
+        cleaned = re.sub(r"^'(.*)'$", r"\1", cleaned).strip()
+        cleaned = re.sub(r"^(?:動區動趨|動區|BlockTempo|區塊客|blockcast\.it|Blockcast|快訊)[｜|:：\-]\s*", "", cleaned, flags=re.I)
+        cleaned = remove_publish_time(cleaned)
     return cleaned.strip()
 
 
@@ -130,7 +211,7 @@ def published_datetime(entry):
 def filter_recent_entries(source_entries, now_utc):
     cutoff = now_utc - timedelta(hours=36)
     valid_entries = []
-    discarded = {"invalid": 0, "future": 0, "stale": 0, "off_topic": 0}
+    discarded = {"invalid": 0, "future": 0, "stale": 0, "pure_ai": 0, "off_topic": 0}
     for source in source_entries:
         for entry in source:
             published_at = published_datetime(entry)
@@ -143,6 +224,9 @@ def filter_recent_entries(source_entries, now_utc):
                 continue
             if published_utc < cutoff:
                 discarded["stale"] += 1
+                continue
+            if is_pure_ai_news(entry):
+                discarded["pure_ai"] += 1
                 continue
             if not is_core_crypto_news(entry):
                 discarded["off_topic"] += 1
@@ -160,18 +244,19 @@ print(
     "RSS freshness filter: "
     f"{len(entries)} accepted; discarded {discarded_news['invalid']} invalid, "
     f"{discarded_news['future']} future, {discarded_news['stale']} older than 36h, "
+    f"{discarded_news['pure_ai']} pure AI, "
     f"{discarded_news['off_topic']} off-topic."
 )
 if len(entries) < 3:
     raise RuntimeError(
-        "Fewer than 3 RSS articles passed the 36-hour freshness and crypto/macro "
-        "topic filters; refusing to build an episode from stale, off-topic, or "
-        "unverifiable news."
+        "Fewer than 3 RSS articles passed the 36-hour freshness, crypto/macro "
+        "topic, and non-pure-AI filters; refusing to build an episode from stale, "
+        "off-topic, or unverifiable news."
     )
 
 news_list = "\n\n".join(
-    f"{index + 1}. [發布時間: {published_at.strftime('%Y-%m-%d %H:%M')} CST] "
-    f"【{clean_txt(entry.get('title'))}】\n"
+    f"{index + 1}. 【{clean_slide_title(clean_txt(entry.get('title')))}】\n"
+    f"發布時間：{published_at.strftime('%Y-%m-%d %H:%M')} CST\n"
     f"摘要：{clean_txt(entry.get('summary', '')).replace(chr(10), ' ')[:160]}..."
     for index, (published_at, entry) in enumerate(entries)
 )
@@ -1918,7 +2003,17 @@ p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段�
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
-【新聞選題與投影片一致性】只可從「近36小時新聞」清單中挑選三則不同新聞；每則口播段落分別對應 {news_slide_numbers[0]}、{news_slide_numbers[1]}、{news_slide_numbers[2]} 號錨點，開頭須清楚點出同一則新聞的核心事件。每則摘要行必須以「SLIDE_NEWS1:」「SLIDE_NEWS2:」「SLIDE_NEWS3:」開頭，後接單行 JSON，欄位固定為 source_news_number（清單中的1起算序號）、slide_title（該新聞的簡潔主標題）、positive（該新聞的利多敘事）、risk（該新聞的風險）。同一序號不可重複，標題與兩欄內容必須都對應其 source_news_number 的新聞及該錨點口播，不可拿清單第一則新聞代替實際討論內容。範例格式：SLIDE_NEWS1:{{"source_news_number":2,"slide_title":"USDe 清算風險升高","positive":"...","risk":"..."}}。三則摘要行不是口播內容，禁止 Markdown 與媒體名稱。
+【新聞選題與投影片嚴格一致性（最高優先級）】
+1. 純幣圈選題禁令：只可從「近36小時新聞」清單中挑選三則不同新聞，且必須是加密貨幣、區塊鏈、Web3 或總體經濟相關新聞；嚴格禁止挑選無關幣圈的純 AI 科技新聞（如 ChatGPT、Gemini、OpenAI、Claude、AI 晶片等純 AI 領域話題）。
+2. 口播、投影片大標題、中間內容三位一體完全一致：
+   - 第一則口播（錨點 [SLIDE_{news_slide_numbers[0]}]）、SLIDE_NEWS1 的 slide_title、positive、risk 必須【全部來自同一則新聞事件】！
+   - 第二則口播（錨點 [SLIDE_{news_slide_numbers[1]}]）、SLIDE_NEWS2 的 slide_title、positive、risk 必須【全部來自同一則新聞事件】！
+   - 第三則口播（錨點 [SLIDE_{news_slide_numbers[2]}]）、SLIDE_NEWS3 的 slide_title、positive、risk 必須【全部來自同一則新聞事件】！
+   每個新聞錨點後的第一句話，主持人必須清楚點出該新聞的主題事件。SLIDE_NEWS1/2/3 必須嚴格按照口播出場順序排列，不可依照清單原本序號排序。
+3. 標題與畫面時間標籤絕對禁令：
+   - slide_title 必須是精煉的新聞核心主標題（25字內），中間內容 positive（利多）與 risk（以太喵理性打折與隱藏風險）必須完全呼應此標題。
+   - 投影片畫面與逐字稿中【絕對嚴禁出現】「[發布時間:...]」、「來源時間」、「發布時間」、「CST」、「UTC」或任何時間戳記標籤！不可把發布時間印在標題或內容上。
+每則摘要行格式：SLIDE_NEWS1:{{"source_news_number": <序號>, "slide_title": "<精簡大標題>", "positive": "<正面利多敘事>", "risk": "<以太喵理性打折與風險>"}}。三則摘要行不是口播內容，禁止 Markdown 與媒體名稱。
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，依上述格式輸出恰好三行新聞圖卡 JSON 摘要。
 【內容】{p1_content_guidance}結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 def normalize_long_term_terms(text):
@@ -1934,6 +2029,74 @@ def extract_slide_notes(raw, prefix, fallback_notes):
         notes.append(match.group(1).strip() if match else fallback)
     raw = re.sub(rf'^{re.escape(prefix)}\d+:.*(?:\r?\n|$)', '', raw, flags=re.M)
     return notes, raw.rstrip()
+
+
+def extract_news_anchor_dialogues(script, target_slide_numbers):
+    anchor_pattern = re.compile(r"\[SLIDE_(\d+)\]")
+    sections = {}
+    current_slide = None
+    current_lines = []
+
+    for line in script.splitlines():
+        match = re.match(r"^(?:男|女)[：:]\s*(.+)", line.strip())
+        if not match:
+            continue
+        text = match.group(1).strip()
+        marker = anchor_pattern.search(text)
+        if marker:
+            slide_num = int(marker.group(1))
+            if current_slide is not None:
+                sections[current_slide] = " ".join(current_lines)
+            current_slide = slide_num
+            current_lines = [anchor_pattern.sub("", text).strip()]
+        else:
+            if current_slide is not None:
+                current_lines.append(text)
+
+    if current_slide is not None:
+        sections[current_slide] = " ".join(current_lines)
+
+    return [sections.get(num, "") for num in target_slide_numbers]
+
+
+def score_text_overlap(text1, text2):
+    words1 = set(re.findall(r"[\u4e00-\u9fff]{2,4}|[A-Za-z0-9]{2,}", str(text1).lower()))
+    words2 = set(re.findall(r"[\u4e00-\u9fff]{2,4}|[A-Za-z0-9]{2,}", str(text2).lower()))
+    if not words1 or not words2:
+        return 0.0
+    intersection = words1.intersection(words2)
+    return len(intersection) / (len(words1) ** 0.5 * len(words2) ** 0.5)
+
+
+def align_slide_news_with_dialogue(details, script, target_slide_numbers, available_entries):
+    spoken_dialogues = extract_news_anchor_dialogues(script, target_slide_numbers)
+    if len(details) != 3 or len(spoken_dialogues) != 3:
+        return details
+
+    detail_texts = []
+    for item in details:
+        news_idx = item["source_news_number"] - 1
+        entry_title = ""
+        entry_summary = ""
+        if 0 <= news_idx < len(available_entries):
+            entry = available_entries[news_idx][1]
+            entry_title = str(entry.get("title", ""))
+            entry_summary = str(entry.get("summary", ""))
+        combined = f"{item.get('slide_title', '')} {item.get('positive', '')} {item.get('risk', '')} {entry_title} {entry_summary}"
+        detail_texts.append(combined)
+
+    from itertools import permutations
+    best_score = -1.0
+    best_perm = (0, 1, 2)
+    for perm in permutations(range(3)):
+        total_score = sum(score_text_overlap(spoken_dialogues[i], detail_texts[perm[i]]) for i in range(3))
+        if total_score > best_score:
+            best_score = total_score
+            best_perm = perm
+
+    if best_perm != (0, 1, 2):
+        print(f"Re-aligned news slides to match spoken dialogue order: {best_perm} (score: {best_score:.3f})")
+    return [details[best_perm[i]] for i in range(3)]
 
 
 def extract_slide_news_details(raw, available_entries):
@@ -1966,9 +2129,15 @@ def extract_slide_news_details(raw, available_entries):
             raise RuntimeError(
                 f"SLIDE_NEWS{index} has a missing, repeated, or invalid source_news_number."
             )
+        entry = available_entries[news_number - 1][1]
+        source_title = clean_txt(entry.get("title", ""))
+
         slide_title = clean_slide_title(record.get("slide_title"))
-        positive = str(record.get("positive") or "").strip()
-        risk = str(record.get("risk") or "").strip()
+        if not slide_title or len(slide_title) < 4 or slide_title in {"今日市場焦點", "市場焦點"}:
+            slide_title = clean_slide_title(source_title)[:32]
+
+        positive = remove_publish_time(str(record.get("positive") or "")).strip()
+        risk = remove_publish_time(str(record.get("risk") or "")).strip()
         if not slide_title or not positive or not risk:
             raise RuntimeError(
                 f"SLIDE_NEWS{index} must include slide_title, positive, and risk."
@@ -1988,6 +2157,9 @@ def extract_slide_news_details(raw, available_entries):
 
 
 slide_news_details, part1_raw = extract_slide_news_details(part1_raw, entries)
+slide_news_details = align_slide_news_with_dialogue(
+    slide_news_details, part1_raw, news_slide_numbers, entries
+)
 slide_news = [
     f"利多：{item['positive']}；風險：{item['risk']}"
     for item in slide_news_details
@@ -2604,23 +2776,24 @@ conditions_24h = slide_24h_conditions
 
 def split_news_summary(summary):
     cleaned = re.sub(r"^\s*多空打折摘要\s*", "", str(summary)).strip()
+    cleaned = remove_publish_time(cleaned)
     match = re.search(
         r"利多[：:]\s*(.*?)\s*[；;]\s*(?:風險|理性折價)[：:]\s*(.*)",
         cleaned,
         flags=re.DOTALL,
     )
     if match:
-        return match.group(1).strip(), match.group(2).strip()
+        return remove_publish_time(match.group(1).strip()), remove_publish_time(match.group(2).strip())
 
     return (
-        cleaned,
+        remove_publish_time(cleaned),
         "利多敘事仍需由後續價格、量能與實際進展驗證，並留意預期落空風險。",
     )
 
 
 news_slides = [
     (
-        slide_news_details[index]["slide_title"],
+        clean_slide_title(slide_news_details[index]["slide_title"]),
         "#fbbf24",
         slide_news[index],
         "compare",
@@ -2763,11 +2936,11 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
     list_markup = ""
     if layout != "compare":
         list_markup = "".join(
-            f"<li>{highlight_key_numbers(item, highlight_state)}</li>"
+            f"<li>{highlight_key_numbers(clean_slide_text(item), highlight_state)}</li>"
             for item in highlights
             if str(item).strip()
         )
-    slide_caption = str(slide_data.get("caption", "")).strip()
+    slide_caption = clean_slide_text(str(slide_data.get("caption", ""))).strip()
     chart_caption_markup = (
         f'<li class="chart-caption">{html.escape(slide_caption)}</li>'
         if slide_caption and layout == "chart"
@@ -2776,10 +2949,10 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
 
     if layout == "compare":
         positive_markup = highlight_key_numbers(
-            slide_data.get("compare_positive", ""), highlight_state
+            clean_slide_text(slide_data.get("compare_positive", "")), highlight_state
         )
         risk_markup = highlight_key_numbers(
-            slide_data.get("compare_risk", ""), highlight_state
+            clean_slide_text(slide_data.get("compare_risk", "")), highlight_state
         )
         content_markup = (
             '<section class="content compare-layout">'
@@ -3815,9 +3988,10 @@ print("Custom thumbnail uploaded successfully!")
 def build_and_upload_short():
     short_target_chars = 45 if is_test else 230
     short_duration_limit = 15.0 if is_test else 60.0
+    headline_for_short = clean_slide_title(slide_news_details[0]["slide_title"]) if slide_news_details else "今日市場焦點"
     short_news = (
         f"資料抓取時間：{data_fetched_at}\n"
-        f"頭條：{t3[0]}\n"
+        f"頭條：{headline_for_short}\n"
         f"多空打折摘要：{slide_news[0]}\n"
         f"BTC：${cur_p}，24H {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%，"
         f"100日均線 ${ma100d}，200日均線 ${ma200d}，RSI {btc_rsi}\n"
@@ -3941,8 +4115,8 @@ def build_and_upload_short():
 
     short_highlight_state = {"remaining": 3}
     short_highlights = [
-        highlight_key_numbers(t3[0][:34], short_highlight_state),
-        highlight_key_numbers(slide_news[0][:42], short_highlight_state),
+        highlight_key_numbers(headline_for_short[:34], short_highlight_state),
+        highlight_key_numbers(clean_slide_text(slide_news[0])[:42], short_highlight_state),
         "完整15分鐘市場解析，點擊頻道觀看",
     ]
     highlights_markup = "".join(
