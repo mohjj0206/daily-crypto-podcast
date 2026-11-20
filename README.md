@@ -13,7 +13,7 @@ daily-crypto-podcast
 
 `.github/workflows/render.yml` 會安裝 Playwright 與 Chromium。`build_and_upload.py` 使用 1280×720 HTML/CSS 圖卡錄製動態進場，再以 FFmpeg 轉成 24fps 影片；超過 6 秒的圖卡會定格延長。簡報固定顯示 BTC、ETH、恐慌貪婪指數與 DCA 報酬狀態列，內容依頁面使用圖表、利多／風險對照或重點字卡版型。封面主題圖優先由 Gemini 圖像模型產生，失敗時依序改用 CoinGecko 幣種圖示或本機繪製的金屬幣徽。
 
-正片會從 `avatar.png` 左右半部產生以太喵與比特汪的圓形聆聽／發話頭像，依每段語音時間在畫面兩側切換並律動；字幕左右邊距設為 210px，並且頭像只出現在片頭之後、片尾之前。
+正片聆聽頭像優先取自 `cat_single.png`／`dog_single.png`，缺少時再使用 VTuber 影片首幀或 `avatar.png`。若有 `cat_vtober.mp4`／`dor_vtober.mp4`，對應角色說話時會播放循環張嘴動畫、圓形裁切與霓虹外框；否則使用靜態發話頭像。角色只在正片對話時間顯示，字幕左右邊距為 210px。
 
 Matplotlib 圖表使用至少 18pt 粗體標題、14pt 粗體刻度與圖例；圖表簡報採 54:46 左右欄，右側重點維持單欄且最多五項。
 

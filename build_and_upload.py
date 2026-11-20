@@ -1718,50 +1718,98 @@ def create_outro_frame():
     image.save("outro_frame.png")
 
 
-def create_speaker_avatars():
-    if not os.path.exists("avatar.png"):
-        raise FileNotFoundError("avatar.png is required to create the speaker avatars.")
+def create_speaker_avatars(talk_videos):
+    def square_crop(image, top_bias=0.5):
+        width, height = image.size
+        crop_size = min(width, height)
+        left = (width - crop_size) // 2
+        top = int((height - crop_size) * top_bias)
+        return image.crop((left, top, left + crop_size, top + crop_size))
 
-    portraits = {}
-    with Image.open("avatar.png") as source:
-        avatar = source.convert("RGB")
-        width, height = avatar.size
-        midpoint = width // 2
-        for speaker, bounds in (
-            ("cat", (0, 0, midpoint, height)),
-            ("dog", (midpoint, 0, width, height)),
-        ):
-            half = avatar.crop(bounds)
-            crop_size = min(half.size)
-            left = (half.width - crop_size) // 2
-            top = int((half.height - crop_size) * 0.25)
-            portraits[speaker] = half.crop(
-                (left, top, left + crop_size, top + crop_size)
-            ).resize((150, 150), Image.LANCZOS)
+    def load_portrait(speaker):
+        single_image_paths = (
+            (f"{speaker}_single.png", f"{speaker}_single.png.png")
+        )
+        for image_path in single_image_paths:
+            if os.path.exists(image_path):
+                with Image.open(image_path) as source:
+                    return square_crop(source.convert("RGB")).copy()
 
-    assets = {}
+        video_path = talk_videos.get(speaker)
+        if video_path:
+            try:
+                frame_bytes = subprocess.check_output(
+                    [
+                        "ffmpeg", "-v", "error", "-i", video_path,
+                        "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-",
+                    ],
+                    stderr=subprocess.PIPE,
+                )
+                with Image.open(io.BytesIO(frame_bytes)) as source:
+                    source.load()
+                    return square_crop(source.convert("RGB")).copy()
+            except (subprocess.CalledProcessError, OSError) as error:
+                details = getattr(error, "stderr", None)
+                if isinstance(details, bytes):
+                    details = details.decode("utf-8", errors="replace")
+                print(
+                    f"Could not capture the first frame from {video_path}; "
+                    f"trying avatar.png instead. {details or error}"
+                )
+
+        if os.path.exists("avatar.png"):
+            with Image.open("avatar.png") as source:
+                avatar = source.convert("RGB")
+                midpoint = avatar.width // 2
+                bounds = (
+                    (0, 0, midpoint, avatar.height)
+                    if speaker == "cat"
+                    else (midpoint, 0, avatar.width, avatar.height)
+                )
+                return square_crop(avatar.crop(bounds), top_bias=0.25).copy()
+
+        raise FileNotFoundError(
+            f"No still image, VTuber video frame, or avatar.png is available for {speaker}."
+        )
+
+    portraits = {
+        speaker: load_portrait(speaker).resize((150, 150), Image.LANCZOS)
+        for speaker in ("cat", "dog")
+    }
+    mask_large = Image.new("L", (672, 672), 0)
+    ImageDraw.Draw(mask_large).ellipse((2, 2, 670, 670), fill=255)
+    face_mask = mask_large.resize((150, 150), Image.LANCZOS)
+    circle_mask = Image.new("L", (168, 168), 0)
+    ImageDraw.Draw(circle_mask).ellipse((0, 0, 167, 167), fill=255)
+    circle_mask_path = "speaker_circle_mask.png"
+    circle_mask.save(circle_mask_path)
+
+    assets = {"circle_mask": circle_mask_path}
     for speaker, color in (("cat", (129, 140, 248)), ("dog", (251, 191, 36))):
         portrait = portraits[speaker]
-        mask_large = Image.new("L", (600, 600), 0)
-        ImageDraw.Draw(mask_large).ellipse((2, 2, 598, 598), fill=255)
-        mask = mask_large.resize((150, 150), Image.LANCZOS)
-
         listening_face = ImageEnhance.Brightness(portrait).enhance(0.72).convert("RGBA")
         listening = Image.new("RGBA", (150, 150), (0, 0, 0, 0))
-        listening.paste(listening_face, (0, 0), mask)
+        listening.paste(listening_face, (0, 0), face_mask)
         listening_path = f"{speaker}_avatar.png"
         listening.save(listening_path)
-        assets[speaker] = listening_path
+        assets[f"{speaker}_idle"] = listening_path
+
+        ring_glow = Image.new("RGBA", (168, 168), (0, 0, 0, 0))
+        ImageDraw.Draw(ring_glow).ellipse(
+            (4, 4, 164, 164), outline=(*color, 220), width=10
+        )
+        ring = ring_glow.filter(ImageFilter.GaussianBlur(9))
+        ring_draw = ImageDraw.Draw(ring)
+        ring_draw.ellipse((4, 4, 164, 164), outline=(*color, 255), width=6)
+        ring_draw.ellipse((10, 10, 158, 158), outline=(255, 255, 255, 180), width=1)
+        ring_path = f"{speaker}_avatar_ring.png"
+        ring.save(ring_path)
+        assets[f"{speaker}_ring"] = ring_path
 
         speaking_face = ImageEnhance.Brightness(portrait).enhance(1.18).convert("RGBA")
         speaking = Image.new("RGBA", (168, 168), (0, 0, 0, 0))
-        glow = Image.new("RGBA", speaking.size, (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse((4, 4, 164, 164), fill=(*color, 190))
-        speaking.alpha_composite(glow.filter(ImageFilter.GaussianBlur(10)))
-        speaking.paste(speaking_face, (9, 9), mask)
-        draw = ImageDraw.Draw(speaking)
-        draw.ellipse((4, 4, 164, 164), outline=(*color, 255), width=6)
-        draw.ellipse((10, 10, 158, 158), outline=(255, 255, 255, 180), width=1)
+        speaking.paste(speaking_face, (9, 9), face_mask)
+        speaking.alpha_composite(ring)
         speaking_path = f"{speaker}_avatar_speaking.png"
         speaking.save(speaking_path)
         assets[f"{speaker}_speaking"] = speaking_path
@@ -1908,7 +1956,11 @@ with open("list.txt", "w", encoding="utf-8") as f:
     f.write("file 'outro.mp4'\n")
 
 subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "base.mp4"], check=True)
-speaker_avatar_paths = create_speaker_avatars()
+talk_videos = {
+    "cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
+    "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None,
+}
+speaker_avatar_paths = create_speaker_avatars(talk_videos)
 cat_speaking = "+".join(
     f"between(t,{start:.6f},{end:.6f})"
     for start, end in speaker_intervals["F"]
@@ -1918,25 +1970,105 @@ dog_speaking = "+".join(
     for start, end in speaker_intervals["M"]
 ) or "0"
 speech_window = f"between(t,{intro_dur:.6f},{speech_end_t:.6f})"
-avatar_filter = (
-    "[0:v]ass=subs.ass[v_sub];"
-    f"[v_sub][2:v]overlay=x=28:y=545:"
-    f"enable='{speech_window}*not({cat_speaking})'[v_cat_idle];"
-    f"[v_cat_idle][3:v]overlay=x=28:y='536+4*sin(t*14)':eval=frame:"
-    f"enable='{cat_speaking}'[v_cat_speaking];"
-    f"[v_cat_speaking][4:v]overlay=x=1102:y=545:"
-    f"enable='{speech_window}*not({dog_speaking})'[v_dog_idle];"
-    f"[v_dog_idle][5:v]overlay=x=1102:y='536+4*sin(t*16)':eval=frame:"
-    f"enable='{dog_speaking}'[v_out]"
-)
 mux_command = ["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3"]
-for avatar_path in (
-    speaker_avatar_paths["cat"],
-    speaker_avatar_paths["cat_speaking"],
-    speaker_avatar_paths["dog"],
-    speaker_avatar_paths["dog_speaking"],
-):
-    mux_command.extend(["-loop", "1", "-framerate", "24", "-i", avatar_path])
+input_indexes = {}
+
+
+def add_avatar_input(name, path, is_video=False):
+    input_index = len(input_indexes) + 2
+    if is_video:
+        mux_command.extend(["-stream_loop", "-1", "-i", path])
+    else:
+        mux_command.extend(["-loop", "1", "-framerate", "24", "-i", path])
+    input_indexes[name] = input_index
+    return input_index
+
+
+add_avatar_input("cat_idle", speaker_avatar_paths["cat_idle"])
+add_avatar_input(
+    "cat_talk",
+    talk_videos["cat"] or speaker_avatar_paths["cat_speaking"],
+    is_video=bool(talk_videos["cat"]),
+)
+add_avatar_input("dog_idle", speaker_avatar_paths["dog_idle"])
+add_avatar_input(
+    "dog_talk",
+    talk_videos["dog"] or speaker_avatar_paths["dog_speaking"],
+    is_video=bool(talk_videos["dog"]),
+)
+if any(talk_videos.values()):
+    add_avatar_input("circle_mask", speaker_avatar_paths["circle_mask"])
+for speaker in ("cat", "dog"):
+    if talk_videos[speaker]:
+        add_avatar_input(f"{speaker}_ring", speaker_avatar_paths[f"{speaker}_ring"])
+
+avatar_filters = ["[0:v]ass=subs.ass[v_sub]"]
+active_speakers = [speaker for speaker in ("cat", "dog") if talk_videos[speaker]]
+if len(active_speakers) == 2:
+    avatar_filters.append(
+        f"[{input_indexes['circle_mask']}:v]format=gray,split=2"
+        "[cat_mask][dog_mask]"
+    )
+elif active_speakers:
+    speaker = active_speakers[0]
+    avatar_filters.append(
+        f"[{input_indexes['circle_mask']}:v]format=gray[{speaker}_mask]"
+    )
+for speaker in active_speakers:
+    input_index = input_indexes[f"{speaker}_talk"]
+    avatar_filters.extend(
+        [
+            f"[{input_index}:v]fps=24,"
+            "scale=168:168:force_original_aspect_ratio=increase,"
+            f"crop=168:168,setsar=1,format=rgba[{speaker}_square]",
+            f"[{speaker}_square][{speaker}_mask]alphamerge[{speaker}_talk_circle]",
+        ]
+    )
+
+cat_talk_input = (
+    "[cat_talk_circle]" if talk_videos["cat"]
+    else f"[{input_indexes['cat_talk']}:v]"
+)
+dog_talk_input = (
+    "[dog_talk_circle]" if talk_videos["dog"]
+    else f"[{input_indexes['dog_talk']}:v]"
+)
+avatar_filters.extend(
+    [
+        f"[v_sub][{input_indexes['cat_idle']}:v]overlay=x=28:y=545:"
+        f"enable='{speech_window}*not({cat_speaking})'[v_cat_idle]",
+        f"[v_cat_idle]{cat_talk_input}"
+        f"overlay=x=28:y='536+4*sin(t*14)':eval=frame:"
+        f"enable='{cat_speaking}'[v_cat_talk]",
+    ]
+)
+cat_stage = "v_cat_talk"
+if talk_videos["cat"]:
+    avatar_filters.append(
+        f"[{cat_stage}][{input_indexes['cat_ring']}:v]"
+        f"overlay=x=28:y='536+4*sin(t*14)':eval=frame:"
+        f"enable='{cat_speaking}'[v_cat_speaking]"
+    )
+    cat_stage = "v_cat_speaking"
+avatar_filters.append(
+    f"[{cat_stage}][{input_indexes['dog_idle']}:v]overlay=x=1102:y=545:"
+    f"enable='{speech_window}*not({dog_speaking})'[v_dog_idle]"
+)
+avatar_filters.append(
+    f"[v_dog_idle]{dog_talk_input}"
+    f"overlay=x=1102:y='536+4*sin(t*16)':eval=frame:"
+    f"enable='{dog_speaking}'[v_dog_talk]"
+)
+dog_stage = "v_dog_talk"
+if talk_videos["dog"]:
+    avatar_filters.append(
+        f"[{dog_stage}][{input_indexes['dog_ring']}:v]"
+        f"overlay=x=1102:y='536+4*sin(t*16)':eval=frame:"
+        f"enable='{dog_speaking}'[v_dog_speaking]"
+    )
+    dog_stage = "v_dog_speaking"
+avatar_filters.append(f"[{dog_stage}]null[v_out]")
+avatar_filter = ";".join(avatar_filters)
 mux_command.extend(
     [
         "-filter_complex", avatar_filter,
