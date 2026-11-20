@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import market_data
 import urllib.request
 from itertools import permutations
 from opencc import OpenCC
