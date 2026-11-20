@@ -359,6 +359,40 @@ lowest_dca_record = min(
 highest_dca_record = max(
     dca_portfolio["records"], key=lambda record: float(record["btc_price_usd"])
 )
+
+
+def dca_performance_guidance(unrealized_pnl_twd):
+    if unrealized_pnl_twd < 0:
+        return (
+            "浮虧",
+            "目前帳本是未實現浮虧。比特汪要冷靜看待當期損益：固定投入相同台幣，"
+            "若BTC折合台幣價格較低，該期可累積較多BTC；只有買進價低於既有均價時，"
+            "新增投入才會拉低平均成本。以太喵可解釋低檔持續投入、未來若價格回升時"
+            "資產可能受益的情境，但不得說成必然的微笑曲線或保證翻正。可溫和提醒，"
+            "恐慌時匆忙賣出可能鎖定損失，但尊重不同人的風險承受度；BTC仍可能續跌，"
+            "甚至長期無法回到買入成本。",
+            "浮虧期間，低於均價的買入才可能拉低平均成本；未來價格與報酬仍不確定。",
+        )
+    if unrealized_pnl_twd > 0:
+        return (
+            "帳面獲利",
+            "目前帳本為帳面獲利。比特汪與以太喵可指出，這是截至今日市價高於累積成本"
+            "的結果，先前定期投入讓持倉參與了這段價格變化；不得把它說成時間複利必然"
+            "或未來報酬保證。提醒觀眾勿因短期浮盈追高、急著加碼或使用槓桿；是否繼續"
+            "定投應依原有計畫、預算與風險承受度檢視。",
+            "目前帳面獲利仍會隨價格波動；避免因短期上漲追高或加槓桿。",
+        )
+    return (
+        "接近損益兩平",
+        "目前帳本接近損益兩平。兩位主持人應平實說明當期結果，不把短期持平解讀成"
+        "未來必漲或必跌；定期投入的成本與結果會隨價格變化，無法保證翻正。",
+        "帳面接近損益兩平；單期結果不代表未來，定投仍須符合個人預算與風險。",
+    )
+
+
+dca_performance_state, dca_prompt_guidance, dca_slide_caption = (
+    dca_performance_guidance(float(dca_portfolio["unrealized_pnl_twd"]))
+)
 dca_slide_body = "\n".join(
     [
         f"總投入 NT${dca_portfolio['total_twd']:,}｜累計 {dca_portfolio['total_btc']} BTC",
@@ -555,10 +589,16 @@ if show_dca:
         "[SLIDE_15]總結行動策略。"
     )
     dca_prompt_section = (
-        "風險提醒後由比特汪以第一人稱向觀眾開箱自己的節目模擬DCA帳本；明確說明是模擬紀錄、"
-        "不是實際成交。只用一句話交代自2025年10月起每月25日模擬投入NT$10,000，"
-        "再報最近一次買進日期及BTC美金／台幣價位、總投入、累計BTC（8位小數）、"
-        "平均成本、總賺賠金額及百分比。數字必須依帳本：\n"
+        "風險提醒後由比特汪以第一人稱播報「比特汪的 BTC 定期定額模擬帳本」，"
+        "清楚說明自2025年10月25日起，按節目設定每月25日模擬投入NT$10,000，"
+        "並非真實成交。只用一句話交代這項模擬規則，再報最近一次買進日期及BTC美金／"
+        "台幣價位、最新當月投入與買進數量、總投入、累計BTC（8位小數）、平均成本、"
+        "目前總市值、未實現賺賠金額及百分比；不可遺漏或改寫帳本數字。\n"
+        f"目前績效狀態：{dca_performance_state}。\n"
+        f"依狀態調整雙人互動：{dca_prompt_guidance}\n"
+        "合規要求：強調這是長期分批建倉的模擬紀律示範，不構成投資建議；"
+        "不鼓勵借貸、高槓桿或盲目追高殺低。不得保證獲利、回本或週期必然翻正。\n"
+        "帳本數字如下：\n"
         f"{dca_report}"
     )
     p1_content_guidance = (
@@ -1272,7 +1312,7 @@ slides_cfg = [
 ]
 if show_dca:
     slides_cfg.append(
-        ("BTC 長期定投（DCA）節目模擬成績單", "#fbbf24", dca_slide_body, "dca")
+        ("BTC 長期定投（DCA）模擬帳本成績單", "#fbbf24", dca_slide_body, "dca")
     )
 slides_cfg += [
     ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
@@ -1382,6 +1422,12 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
             for item in highlights
             if str(item).strip()
         )
+    slide_caption = str(slide_data.get("caption", "")).strip()
+    chart_caption_markup = (
+        f'<li class="chart-caption">{html.escape(slide_caption)}</li>'
+        if slide_caption and layout == "chart"
+        else ""
+    )
 
     if layout == "compare":
         positive_markup = highlight_key_numbers(
@@ -1403,7 +1449,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
     elif layout == "chart":
         content_markup = (
             '<section class="content chart-layout">'
-            f'{chart_markup}<ul>{list_markup}</ul></section>'
+            f'{chart_markup}<ul>{list_markup}{chart_caption_markup}</ul></section>'
         )
     else:
         content_markup = (
@@ -1536,6 +1582,12 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame .chart-layout > ul li {{
   margin: 0; font-size: 23px; line-height: 1.45;
 }}
+.chart-layout > ul li.chart-caption {{
+  margin-top: 2px; padding: 10px 12px; border: 1px solid rgba(251,191,36,.42);
+  border-radius: 10px; color: #fde68a; background: rgba(120,83,9,.18);
+  font-size: 17px; line-height: 1.35;
+}}
+.chart-layout > ul li.chart-caption::before {{ display: none; }}
 .content.dense-grid ul {{
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start; gap: 8px 12px; text-align: left;
@@ -1551,6 +1603,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame.fit-tight .compare-panel h2 {{ margin-bottom: 8px; font-size: 18px; }}
 .frame.fit-tight .content.dense-grid ul {{ gap: 8px; }}
 .frame.fit-tight .content.dense-grid li {{ padding: 8px 10px; }}
+.frame.fit-tight .chart-layout > ul li.chart-caption {{ padding: 7px 9px; font-size: 15px; }}
 .frame.fit-min {{ padding: 4px 8px; }}
 .frame.fit-min h1 {{ margin-bottom: 3px; font-size: 20px; }}
 .frame.fit-min .chart-layout, .frame.fit-min .compare-layout {{ gap: 4px; }}
@@ -1559,6 +1612,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame.fit-min li {{ margin-bottom: 1px; padding-left: 10px; font-size: 18px; line-height: 1.05; }}
 .frame.fit-min .content.dense-grid ul {{ gap: 4px; }}
 .frame.fit-min .content.dense-grid li {{ padding: 4px 6px; }}
+.frame.fit-min .chart-layout > ul li.chart-caption {{ padding: 4px 6px; font-size: 13px; }}
 @keyframes fadeInUp {{
   from {{ opacity: 0; transform: translateY(24px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -2064,6 +2118,7 @@ with sync_playwright() as playwright:
                 "chart_path": chart_path,
                 "chart_type": ctype,
                 "gauge_value": fng_num,
+                "caption": dca_slide_caption if ctype == "dca" else "",
                 "accent": color,
                 "compact": ctype == "dca",
                 "layout": layout,
