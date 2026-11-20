@@ -9,6 +9,7 @@ from urllib.parse import quote
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.font_manager import FontProperties
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -398,28 +399,558 @@ def calc_rsi(arr, p=14):
     losses = sum(max(0, sl[i-1]-sl[i]) for i in range(1, len(sl)))
     rs = (gains/p) / (1 if losses == 0 else losses/p)
     return f"{100 - (100/(1+rs)):.2f}"
+
+
+def validate_daily_history(candles, source_name, minimum_count=200):
+    if not isinstance(candles, list) or len(candles) < minimum_count:
+        raise ValueError(
+            f"{source_name} returned fewer than {minimum_count} daily candles."
+        )
+    history = []
+    previous_timestamp = None
+    for candle in candles:
+        try:
+            timestamp = float(candle["timestamp"])
+            high = float(candle["high"])
+            low = float(candle["low"])
+            close = float(candle["close"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"{source_name} returned a malformed daily candle.") from error
+        if (
+            not all(math.isfinite(value) for value in (timestamp, high, low, close))
+            or min(high, low, close) <= 0
+            or high < close
+            or low > close
+            or (previous_timestamp is not None and timestamp <= previous_timestamp)
+        ):
+            raise ValueError(f"{source_name} returned an invalid daily candle.")
+        observed_at = datetime.fromtimestamp(timestamp, timezone.utc)
+        if observed_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+            raise ValueError(f"{source_name} returned a future-dated daily candle.")
+        history.append({
+            "date": observed_at.date(),
+            "timestamp": timestamp,
+            "high": high,
+            "low": low,
+            "close": close,
+        })
+        previous_timestamp = timestamp
+    if datetime.now(timezone.utc) - datetime.fromtimestamp(
+        history[-1]["timestamp"], timezone.utc
+    ) > timedelta(days=2):
+        raise ValueError(f"{source_name} returned stale daily candles.")
+    return history
+
+
+def fetch_yahoo_daily_history(symbol):
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{quote(symbol, safe='')}?range=2y&interval=1d"
+    )
+    response = fetch_json(url, timeout=30)
+    chart = response.get("chart", {})
+    if chart.get("error"):
+        raise RuntimeError(f"Yahoo Finance error for {symbol}: {chart['error']}")
+    results = chart.get("result") or []
+    if not results:
+        raise RuntimeError(f"Yahoo Finance returned no daily prices for {symbol}.")
+    result = results[0]
+    timestamps = result.get("timestamp", [])
+    quote_data = result.get("indicators", {}).get("quote", [{}])[0]
+    highs = quote_data.get("high", [])
+    lows = quote_data.get("low", [])
+    closes = quote_data.get("close", [])
+    candles = [
+        {
+            "timestamp": timestamp,
+            "high": high,
+            "low": low,
+            "close": close,
+        }
+        for timestamp, high, low, close in zip(timestamps, highs, lows, closes)
+        if high is not None and low is not None and close is not None
+    ]
+    return candles[-365:]
+
+
+def fetch_daily_history(symbol):
+    try:
+        end_time = int(time.time() * 1000)
+        candles = fetch_json(
+            f"{vb}?symbol={symbol}&interval=1d&limit=365&endTime={end_time}",
+            timeout=30,
+            cache_bust_param=None,
+        )
+        normalized_candles = [
+            {
+                "timestamp": float(candle[0]) / 1000,
+                "high": candle[2],
+                "low": candle[3],
+                "close": candle[4],
+            }
+            for candle in candles
+        ]
+        return validate_daily_history(normalized_candles, "Binance")
+    except Exception as primary_error:
+        print(
+            f"Binance {symbol} daily history failed validation; "
+            f"querying Yahoo Finance in real time: {primary_error}"
+        )
+        try:
+            yahoo_symbol = YAHOO_SYMBOLS[symbol]
+            candles = fetch_yahoo_daily_history(yahoo_symbol)
+            return validate_daily_history(candles, "Yahoo Finance")
+        except Exception as backup_error:
+            raise RuntimeError(
+                f"No fresh valid daily history for {symbol}; "
+                f"Binance error: {primary_error}; Yahoo Finance error: {backup_error}"
+            ) from backup_error
+
+
+def calculate_rsi_series(closes, period=14):
+    if period < 1:
+        raise ValueError("RSI period must be positive.")
+    values = [None] * len(closes)
+    if len(closes) <= period:
+        return values
+    changes = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
+    average_gain = sum(max(change, 0) for change in changes[:period]) / period
+    average_loss = sum(max(-change, 0) for change in changes[:period]) / period
+
+    def rsi_value(gain, loss):
+        if gain == 0 and loss == 0:
+            return 50.0
+        if loss == 0:
+            return 100.0
+        return 100 - 100 / (1 + gain / loss)
+
+    values[period] = rsi_value(average_gain, average_loss)
+    for index in range(period + 1, len(closes)):
+        change = changes[index - 1]
+        average_gain = (average_gain * (period - 1) + max(change, 0)) / period
+        average_loss = (average_loss * (period - 1) + max(-change, 0)) / period
+        values[index] = rsi_value(average_gain, average_loss)
+    return values
+
+
+def calculate_sma_series(closes, period):
+    values = [None] * len(closes)
+    if period < 1:
+        raise ValueError("SMA period must be positive.")
+    running_total = 0.0
+    for index, close in enumerate(closes):
+        running_total += close
+        if index >= period:
+            running_total -= closes[index - period]
+        if index >= period - 1:
+            values[index] = running_total / period
+    return values
+
+
+def calculate_market_structure(history, spot_price, as_of_date):
+    if not history:
+        raise ValueError("Daily history is required for market-structure analysis.")
+    closes = [row["close"] for row in history]
+    last_90_days = [
+        row for row in history
+        if as_of_date - timedelta(days=90) < row["date"] <= as_of_date
+    ]
+    last_30_days = [
+        row for row in history
+        if as_of_date - timedelta(days=30) < row["date"] <= as_of_date
+    ]
+    if not last_90_days or not last_30_days or len(closes) < 200:
+        raise ValueError("Insufficient fresh daily history for technical indicators.")
+
+    swing_high = max(last_90_days, key=lambda row: row["high"])
+    if spot_price > swing_high["high"]:
+        peak_price = spot_price
+        peak_date = as_of_date
+    else:
+        peak_price = swing_high["high"]
+        peak_date = swing_high["date"]
+
+    running_peak = 0.0
+    maximum_drawdown = 0.0
+    drawdown_peak_date = None
+    drawdown_trough_date = None
+    for row in last_90_days:
+        if row["high"] >= running_peak:
+            running_peak = row["high"]
+            drawdown_peak_date = row["date"]
+        drawdown = row["low"] / running_peak - 1
+        if drawdown < maximum_drawdown:
+            maximum_drawdown = drawdown
+            drawdown_trough_date = row["date"]
+
+    sma_100 = sum(closes[-100:]) / 100
+    sma_200 = sum(closes[-200:]) / 200
+    return {
+        "spot_price": spot_price,
+        "swing_high": peak_price,
+        "swing_high_date": peak_date,
+        "days_since_high": max(0, (as_of_date - peak_date).days),
+        "current_drawdown_pct": min(0.0, (spot_price / peak_price - 1) * 100),
+        "maximum_drawdown_pct": maximum_drawdown * 100,
+        "maximum_drawdown_peak_date": drawdown_peak_date,
+        "maximum_drawdown_trough_date": drawdown_trough_date,
+        "support": min(row["low"] for row in last_30_days),
+        "resistance": max(row["high"] for row in last_30_days),
+        "sma_100": sma_100,
+        "sma_200": sma_200,
+        "sma_100_deviation_pct": (spot_price / sma_100 - 1) * 100,
+        "sma_200_deviation_pct": (spot_price / sma_200 - 1) * 100,
+        "rsi_series": calculate_rsi_series(closes),
+    }
+
+
+def find_rsi_oversold_events(history, rsi_series, as_of_date, threshold=30):
+    cutoff_date = as_of_date - timedelta(days=180)
+    events = []
+    active_event = None
+    for row, rsi_value in zip(history, rsi_series):
+        if rsi_value is None:
+            continue
+        if rsi_value < threshold:
+            if active_event is None:
+                active_event = {
+                    "start_date": row["date"],
+                    "low_date": row["date"],
+                    "low_rsi": rsi_value,
+                }
+            elif rsi_value < active_event["low_rsi"]:
+                active_event["low_date"] = row["date"]
+                active_event["low_rsi"] = rsi_value
+        elif active_event is not None:
+            active_event["end_date"] = row["date"]
+            events.append(active_event)
+            active_event = None
+    if active_event is not None:
+        active_event["end_date"] = history[-1]["date"]
+        events.append(active_event)
+    return [
+        event for event in events
+        if cutoff_date <= event["start_date"] <= as_of_date
+    ]
+
+
+def fetch_stablecoin_market_cap_changes():
+    url = "https://stablecoins.llama.fi/stablecoincharts/all?stablecoin=1"
+    try:
+        response = fetch_json(url, timeout=15)
+        if not isinstance(response, list) or not response:
+            raise ValueError("DefiLlama returned no stablecoin history.")
+        daily_totals = {}
+        for item in response:
+            try:
+                timestamp = float(item["date"])
+                components = item["totalCirculatingUSD"]
+                if not isinstance(components, dict) or not components:
+                    continue
+                amounts = [float(amount) for amount in components.values()]
+                if not all(math.isfinite(amount) and amount >= 0 for amount in amounts):
+                    continue
+                observed_at = datetime.fromtimestamp(timestamp, timezone.utc)
+                daily_totals[observed_at.date()] = sum(amounts)
+            except (KeyError, TypeError, ValueError, OverflowError, OSError):
+                continue
+        if not daily_totals:
+            raise ValueError("DefiLlama returned no valid stablecoin market-cap records.")
+        latest_date = max(daily_totals)
+        latest_timestamp = datetime.combine(
+            latest_date, datetime.min.time(), timezone.utc
+        )
+        age = datetime.now(timezone.utc) - latest_timestamp
+        if age < timedelta(0) or age > timedelta(hours=36):
+            raise ValueError("DefiLlama stablecoin market-cap data is stale.")
+        latest_total = daily_totals[latest_date]
+        if latest_total <= 0:
+            raise ValueError("DefiLlama returned a non-positive stablecoin market cap.")
+
+        changes = {}
+        for days in (7, 30):
+            target_date = latest_date - timedelta(days=days)
+            if target_date not in daily_totals:
+                continue
+            previous_date = target_date
+            previous_total = daily_totals[previous_date]
+            if previous_total <= 0:
+                continue
+            amount = latest_total - previous_total
+            changes[days] = {
+                "start_date": previous_date,
+                "end_date": latest_date,
+                "start_total": previous_total,
+                "end_total": latest_total,
+                "change_amount": amount,
+                "change_pct": amount / previous_total * 100,
+            }
+        return changes
+    except Exception as error:
+        print(f"Stablecoin market-cap data unavailable; omitting it: {error}")
+        return None
+
+
+def format_market_structure_report(name, metrics, spot_price):
+    drawdown_dates = (
+        f"（{metrics['maximum_drawdown_peak_date']} 至 "
+        f"{metrics['maximum_drawdown_trough_date']}）"
+        if metrics["maximum_drawdown_peak_date"] is not None
+        else "（近90日未觀察到回撤）"
+    )
+    return (
+        f"{name}：現價 ${spot_price:,.2f}；90日高點 ${metrics['swing_high']:,.2f}"
+        f"（{metrics['swing_high_date']}），距該高點 {metrics['days_since_high']} 天，"
+        f"目前回撤 {metrics['current_drawdown_pct']:.2f}%；"
+        f"90日最大回撤 {metrics['maximum_drawdown_pct']:.2f}%"
+        f"{drawdown_dates}；"
+        f"30日支撐 ${metrics['support']:,.2f}、壓力 ${metrics['resistance']:,.2f}；"
+        f"現價相對100日線 {metrics['sma_100_deviation_pct']:+.2f}%、"
+        f"相對200日線 {metrics['sma_200_deviation_pct']:+.2f}%"
+    )
+
+
+def format_stablecoin_market_cap_report(changes):
+    if changes is None:
+        return "未取得通過時效與資料驗證的穩定幣市值資料，略過，不推測。"
+    reports = []
+    for days in (7, 30):
+        change = changes.get(days)
+        if change is None:
+            reports.append(f"近{days}日資料不足，略過")
+            continue
+        direction = "增加" if change["change_amount"] >= 0 else "減少"
+        reports.append(
+            f"近{days}日{direction} US${abs(change['change_amount']):,.0f}"
+            f"（{change['change_pct']:+.2f}%）"
+        )
+    return (
+        f"截至 {max(item['end_date'] for item in changes.values())}："
+        + "；".join(reports)
+        + "。市值變化不等同於實際流入加密資產。"
+        if changes else "未取得足夠的穩定幣歷史資料，略過，不推測。"
+    )
+
+
+def format_oversold_report(events, rsi_series):
+    latest_rsi = next(
+        (value for value in reversed(rsi_series) if value is not None), None
+    )
+    if latest_rsi is None:
+        return "14日 RSI 資料不足，略過超賣判讀。"
+    event_dates = "、".join(
+        f"{event['start_date']}（低點 {event['low_date']}，RSI {event['low_rsi']:.1f}）"
+        for event in events
+    ) or "無"
+    state = "目前低於30，屬超賣區" if latest_rsi < 30 else "目前未低於30"
+    return (
+        f"目前14日 RSI {latest_rsi:.2f}，{state}；近180日 RSI 跌破30共"
+        f"{len(events)}個區段，起始日期與區段低點：{event_dates}。"
+        "超賣僅是動能狀態描述，不代表價格已見底。"
+    )
+
+
+def get_chart_font():
+    font_paths = (
+        r"C:\Windows\Fonts\msjh.ttc",
+        r"C:\Windows\Fonts\mingliu.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    )
+    font_path = next((path for path in font_paths if os.path.isfile(path)), None)
+    if font_path is None:
+        raise RuntimeError("No supported Traditional Chinese chart font is installed.")
+    return FontProperties(fname=font_path)
+
+
+def generate_technical_charts(btc_history, btc_metrics, oversold_events):
+    chart_dir = tempfile.TemporaryDirectory(prefix="crypto_technical_charts_")
+    try:
+        font = get_chart_font()
+        closes = [row["close"] for row in btc_history]
+        sma_100 = calculate_sma_series(closes, 100)
+        sma_200 = calculate_sma_series(closes, 200)
+        rsi_series = btc_metrics["rsi_series"]
+        chart_color = "#0B0F19"
+        panel_color = "#101827"
+        grid_color = "#263244"
+        price_path = os.path.join(chart_dir.name, "btc_price_structure.png")
+        rsi_path = os.path.join(chart_dir.name, "btc_rsi_oversold.png")
+
+        visible_start = max(0, len(btc_history) - 90)
+        visible = btc_history[visible_start:]
+        dates = [row["date"] for row in visible]
+        fig, ax = plt.subplots(figsize=(13, 7.5), dpi=220)
+        fig.patch.set_facecolor(chart_color)
+        ax.set_facecolor(panel_color)
+        ax.plot(
+            dates, closes[visible_start:], color="#22D3EE", linewidth=2.2,
+            label="BTC 收盤價",
+        )
+        ax.plot(
+            dates, sma_100[visible_start:], color="#FBBF24", linewidth=1.8,
+            label="100 日線",
+        )
+        ax.plot(
+            dates, sma_200[visible_start:], color="#A78BFA", linewidth=1.8,
+            label="200 日線",
+        )
+        ax.axhline(
+            btc_metrics["resistance"], color="#F87171", linestyle="--",
+            linewidth=1.3, label=f"30 日壓力 ${btc_metrics['resistance']:,.0f}",
+        )
+        ax.axhline(
+            btc_metrics["support"], color="#34D399", linestyle="--",
+            linewidth=1.3, label=f"30 日支撐 ${btc_metrics['support']:,.0f}",
+        )
+        ax.set_title(
+            "BTC 價格結構與關鍵多空攻防圖", color="#F8FAFC",
+            fontsize=19, fontweight="bold", fontproperties=font, pad=16,
+        )
+        ax.text(
+            0.015, 0.97,
+            f"現價 ${btc_metrics['spot_price']:,.0f}"
+            f"  |  距 90 日高點 {btc_metrics['days_since_high']} 天"
+            f"  |  回撤 {btc_metrics['current_drawdown_pct']:.2f}%"
+            f"  |  最大回撤 {btc_metrics['maximum_drawdown_pct']:.2f}%",
+            transform=ax.transAxes, va="top", color="#F8FAFC", fontsize=10,
+            fontproperties=font,
+        )
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+        ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda value, _: f"${value:,.0f}")
+        )
+        ax.tick_params(colors="#CBD5E1", labelsize=9)
+        ax.grid(color=grid_color, linewidth=0.65)
+        for spine in ax.spines.values():
+            spine.set_color("#334155")
+        ax.legend(
+            loc="upper left", bbox_to_anchor=(0, 0.90), ncol=2,
+            facecolor=panel_color, edgecolor="none", labelcolor="#E2E8F0",
+            prop=font, fontsize=9,
+        )
+        fig.tight_layout()
+        fig.savefig(price_path, facecolor=chart_color, dpi=220)
+        plt.close(fig)
+
+        visible_start = max(0, len(btc_history) - 180)
+        visible_history = btc_history[visible_start:]
+        visible_rsi = rsi_series[visible_start:]
+        rsi_dates = [
+            row["date"] for row, value in zip(visible_history, visible_rsi)
+            if value is not None
+        ]
+        rsi_values = [value for value in visible_rsi if value is not None]
+        fig, ax = plt.subplots(figsize=(13, 7.5), dpi=220)
+        fig.patch.set_facecolor(chart_color)
+        ax.set_facecolor(panel_color)
+        ax.axhspan(70, 100, color="#EF4444", alpha=0.14)
+        ax.axhspan(0, 30, color="#22C55E", alpha=0.14)
+        ax.plot(rsi_dates, rsi_values, color="#22D3EE", linewidth=2.0, label="14 日 RSI")
+        ax.axhline(70, color="#F87171", linestyle="--", linewidth=1.2, label="70 超買")
+        ax.axhline(30, color="#34D399", linestyle="--", linewidth=1.2, label="30 超賣")
+        for index, event in enumerate(oversold_events):
+            ax.scatter(
+                event["low_date"], event["low_rsi"], s=62,
+                color="#FBBF24", edgecolors="#0B0F19", linewidths=1.0,
+                zorder=5, label="歷史超賣區段低點" if index == 0 else None,
+            )
+        latest_rsi = next(
+            (value for value in reversed(rsi_series) if value is not None), None
+        )
+        if latest_rsi is not None:
+            ax.scatter(
+                btc_history[-1]["date"], latest_rsi, s=84, marker="D",
+                color="#FB7185", edgecolors="#F8FAFC", linewidths=0.8,
+                zorder=6, label=f"最新 RSI {latest_rsi:.1f}",
+            )
+        ax.set_ylim(0, 100)
+        ax.set_title(
+            "BTC 14 日 RSI 歷史超賣與底部對比圖", color="#F8FAFC",
+            fontsize=19, fontweight="bold", fontproperties=font, pad=16,
+        )
+        ax.text(
+            0.015, 0.97,
+            f"近 180 日超賣區段 {len(oversold_events)} 次；"
+            "歷史低點不代表未來價格底部",
+            transform=ax.transAxes, va="top", color="#F8FAFC", fontsize=10,
+            fontproperties=font,
+        )
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
+        ax.tick_params(colors="#CBD5E1", labelsize=9)
+        ax.grid(color=grid_color, linewidth=0.65)
+        for spine in ax.spines.values():
+            spine.set_color("#334155")
+        ax.legend(
+            loc="upper right", facecolor=panel_color, edgecolor="none",
+            labelcolor="#E2E8F0", prop=font, fontsize=9,
+        )
+        fig.tight_layout()
+        fig.savefig(rsi_path, facecolor=chart_color, dpi=220)
+        plt.close(fig)
+        return {"price": price_path, "rsi": rsi_path}, chart_dir
+    except Exception:
+        chart_dir.cleanup()
+        raise
+
+
 syms = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "ZECUSDT"]
 cdata = {}
 spot_prices = {}
+daily_histories = {}
 try:
     primary_quotes = fetch_coingecko_quotes()
 except Exception as error:
     print(f"CoinGecko batch quotes unavailable; each coin will use the backup API: {error}")
     primary_quotes = {}
 for s in syms:
-    lim = 210 if s in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"] else 5
-    cl = fetch_market_series(s, "1d", lim)
+    name = s.replace("USDT", "")
+    if s in ("BTCUSDT", "ETHUSDT"):
+        daily_histories[name] = fetch_daily_history(s)
+        cl = [row["close"] for row in daily_histories[name]]
+        rsi_series = calculate_rsi_series(cl)
+        rsi = f"{rsi_series[-1]:.2f}" if rsi_series[-1] is not None else ""
+    else:
+        lim = 210 if s in ["SOLUSDT", "XRPUSDT"] else 5
+        cl = fetch_market_series(s, "1d", lim)
+        rsi = calc_rsi(cl, 14) if lim == 210 else ""
     spot_prices[s.replace("USDT", "")], pct = fetch_market_quote(s, primary_quotes)
-    cdata[s.replace("USDT", "")] = (cl, pct, calc_rsi(cl, 14) if lim == 210 else "")
+    cdata[name] = (cl, pct, rsi)
 
 btc_w = fetch_market_series("BTCUSDT", "1w", 210)
 btc_cl, btc_pct, btc_rsi = cdata["BTC"]
 eth_cl, eth_pct, eth_rsi = cdata["ETH"]
 cur_p = f"{spot_prices['BTC']:.2f}"
 data_fetched_at = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M 台灣時間")
-ma100d, ma200d = calc_sma(btc_cl, 100), calc_sma(btc_cl, 200)
+btc_metrics = calculate_market_structure(
+    daily_histories["BTC"], spot_prices["BTC"], now_tw.date()
+)
+eth_metrics = calculate_market_structure(
+    daily_histories["ETH"], spot_prices["ETH"], now_tw.date()
+)
+btc_oversold_events = find_rsi_oversold_events(
+    daily_histories["BTC"], btc_metrics["rsi_series"], now_tw.date()
+)
+ma100d = f"{btc_metrics['sma_100']:.2f}"
+ma200d = f"{btc_metrics['sma_200']:.2f}"
 ma100w, ma200w = calc_sma(btc_w, 100), calc_sma(btc_w, 200)
-eth_ma100d, eth_ma200d = calc_sma(eth_cl, 100), calc_sma(eth_cl, 200)
+eth_ma100d = f"{eth_metrics['sma_100']:.2f}"
+eth_ma200d = f"{eth_metrics['sma_200']:.2f}"
+stablecoin_changes = fetch_stablecoin_market_cap_changes()
+technical_chart_paths, technical_chart_dir = generate_technical_charts(
+    daily_histories["BTC"], btc_metrics, btc_oversold_events
+)
+btc_technical_report = format_market_structure_report(
+    "BTC", btc_metrics, spot_prices["BTC"]
+)
+eth_technical_report = format_market_structure_report(
+    "ETH", eth_metrics, spot_prices["ETH"]
+)
+btc_oversold_report = format_oversold_report(
+    btc_oversold_events, btc_metrics["rsi_series"]
+)
+stablecoin_report = format_stablecoin_market_cap_report(stablecoin_changes)
 
 def fetch_yahoo_daily_closes(symbol, start_date, end_date):
     start_ts = calendar.timegm(
@@ -860,6 +1391,10 @@ full_report = (
     f"- BTC 即時報價：${cur_p} USD (24H: {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%)\n"
     f"- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n"
     f"- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n"
+    f"- 波段結構：{btc_technical_report}\n"
+    f"- ETH 波段結構：{eth_technical_report}\n"
+    f"- BTC RSI 歷史：{btc_oversold_report}\n"
+    f"- 全網穩定幣總市值變化：{stablecoin_report}\n"
     f"- 市場恐慌與貪婪指數：{fear_report}\n\n"
     f"{dca_report}\n\n【主流幣即時報價與RSI掃描】\n{coins_summary}\n\n"
     f"【近36小時通過時效驗證的新聞】\n{news_list}"
@@ -913,13 +1448,13 @@ if show_dca:
     p1_part_slide_count = 8
     p1_slide_anchors = (
         "[SLIDE_1]開場與風險提醒；[SLIDE_2]BTC長期定投（DCA）實戰帳本；"
-        "[SLIDE_3]恐慌與貪婪指數；[SLIDE_4]BTC四大均線與RSI；"
+        "[SLIDE_3]恐慌與貪婪指數；[SLIDE_4]BTC四大均線、RSI與歷史超賣圖；"
         "[SLIDE_5]ETH日線均線與RSI；[SLIDE_6]第一則市場焦點；"
         "[SLIDE_7]第二則市場焦點；[SLIDE_8]第三則市場焦點。"
     )
     p2_slide_anchors = (
         "[SLIDE_9]六大主流幣報價與指標總表；[SLIDE_10]六大主流幣24H漲跌；"
-        "[SLIDE_11]BTC與ETH百日走勢圖解讀；[SLIDE_12]關鍵價位攻防；"
+        "[SLIDE_11]BTC價格結構與關鍵多空攻防圖；[SLIDE_12]關鍵價位攻防；"
         "[SLIDE_13]美股開盤連動；[SLIDE_14]短線清算風險；"
         "[SLIDE_15]總結行動策略。"
     )
@@ -938,25 +1473,25 @@ if show_dca:
     )
     p1_content_guidance = (
         "先以[SLIDE_1]開場並完成風險提醒，下一段由比特汪親自以第一人稱播報[SLIDE_2]節目模擬DCA帳本；"
-        "接續依序以[SLIDE_3]分析恐慌貪婪指數、[SLIDE_4]分析BTC均線、"
+        "接續依序以[SLIDE_3]分析恐慌貪婪指數、[SLIDE_4]分析BTC均線與RSI歷史超賣圖、"
         "[SLIDE_5]分析ETH，再以[SLIDE_6]至[SLIDE_8]逐一深入解析三大市場焦點。"
     )
     p1_formal_length = (
         "正式版本段必須達2,600至2,900字：開場風險提醒50至65字；DCA帳本播報約220至250字；"
-        "BTC四大均線、恐慌貪婪指數與ETH均線RSI合計700至800字；三大市場焦點各450至500字，"
+        "BTC均線、RSI歷史超賣、恐慌貪婪指數與ETH均線RSI合計700至800字；三大市場焦點各450至500字，"
         "逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。"
     )
 else:
     p1_part_slide_count = 7
     p1_slide_anchors = (
         "[SLIDE_1]開場與風險提醒；[SLIDE_2]恐慌與貪婪指數；"
-        "[SLIDE_3]BTC四大均線與RSI；[SLIDE_4]ETH日線均線與RSI；"
+        "[SLIDE_3]BTC四大均線、RSI與歷史超賣圖；[SLIDE_4]ETH日線均線與RSI；"
         "[SLIDE_5]第一則市場焦點；[SLIDE_6]第二則市場焦點；"
         "[SLIDE_7]第三則市場焦點。"
     )
     p2_slide_anchors = (
         "[SLIDE_8]六大主流幣報價與指標總表；[SLIDE_9]六大主流幣24H漲跌；"
-        "[SLIDE_10]BTC與ETH百日走勢圖解讀；[SLIDE_11]關鍵價位攻防；"
+        "[SLIDE_10]BTC價格結構與關鍵多空攻防圖；[SLIDE_11]關鍵價位攻防；"
         "[SLIDE_12]美股開盤連動；[SLIDE_13]短線清算風險；"
         "[SLIDE_14]總結行動策略。"
     )
@@ -966,11 +1501,12 @@ else:
     )
     p1_content_guidance = (
         "以[SLIDE_1]開場並完成風險提醒，接續依序以[SLIDE_2]分析恐慌貪婪指數、"
-        "[SLIDE_3]分析BTC均線、[SLIDE_4]分析ETH，再以[SLIDE_5]至[SLIDE_7]逐一深入解析三大市場焦點。"
+        "[SLIDE_3]分析BTC均線與RSI歷史超賣圖、[SLIDE_4]分析ETH，"
+        "再以[SLIDE_5]至[SLIDE_7]逐一深入解析三大市場焦點。"
     )
     p1_formal_length = (
         "正式版本段必須達2,600至2,900字：開場風險提醒50至65字；"
-        "BTC四大均線、恐慌貪婪指數與ETH均線RSI合計900至1,000字；"
+        "BTC均線、RSI歷史超賣、恐慌貪婪指數與ETH均線RSI合計900至1,000字；"
         "三大市場焦點各500至550字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。"
     )
 p1_length_guidance = (
@@ -982,15 +1518,17 @@ p1_length_guidance = (
 p2_length_guidance = (
     "測試模式仍須為後半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
     if is_test else
-    "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC/ETH百日走勢圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+    "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC近90日價格結構與支撐壓力圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
-host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；她是忠實的以太坊信仰者，對ETH長期極度看好，熟悉技術升級、Layer 2、DeFi與RWA，對長期潛力抱持如同Tom Lee公開看好以太坊般的信心，但不得冒充或模仿任何外部人士。即使長期看多ETH，也必須依當下數據客觀分析均線壓力、生態瓶頸與風險，絕不盲目吹捧，並常替激動的比特汪踩煞車。
-男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；他是BTC長期持有者，深信比特幣未來數十年必將成為全球公認的數位黃金（這是角色信念，不是價格或結果保證），並自2025年10月25日起每月25日定額NT$10,000累積BTC。這是節目角色設定中的模擬帳戶，不是真實成交紀錄；另長線配置少量ETH、SOL、XRP、ADA。即使長期看好BTC，也必須客觀看待回檔、過熱與技術風險，不盲目吹捧，反對頻繁短線進出。
+host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；熟悉以太坊技術升級、Layer 2、DeFi與RWA。她負責精準拆解價格結構圖與RSI圖，報出回撤天數與幅度、30日支撐壓力、相對100日及200日線乖離、歷史超賣區段，以及穩定幣總市值變化；客觀描述短線賣壓與情緒，分別說明站穩壓力或跌破支撐後可驗證的市場劇本，不把指標當成必然預測，並替激動的比特汪踩煞車。
+男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；重視BTC長期週期與紀律定投。接住以太喵的數據，以不猜最低點、不追短線、不碰高槓桿為原則，說明分批定投只能按個人預算與風險承受能力評估；不得保證獲利、回本或週期必然翻正。節目角色設定中的每月定投帳本是模擬紀錄，並非真實成交。
 兩人分別代表「數位黃金派」與「世界計算機生態派」，互相尊重、立場互補，自然吐槽、穿插幣圈冷笑話與台灣網路梗；以太喵以數據幫比特汪踩煞車。口播禁止使用HODL、HODLer等縮寫，一律自然說「長期持有」或「長期持有者」。若今日不是DCA播報日，勿主動插入帳本環節；只有在指定DCA環節才可報帳本數字。"""
+strategy_script_guidance = """【分析順序與雙人分工】全節目以「數據拆解 → 條件式策略劇本 → 長期定投心法」推進。以太喵先依本次報告讀出BTC與ETH結構數據，並說明RSI超賣區段只是歷史動能訊號；穩定幣市值增加或減少不等於資金已買入或賣出BTC。接著以太喵提出兩種條件式劇本：若價格站穩30日壓力並有後續價格確認，描述可能改善的結構；若跌破30日支撐，說明回撤風險仍在及需觀察的後續訊號。不可捏造支撐、壓力或確認條件。比特汪接續從長期週期談紀律、分批配置與不猜最低點，但必須明說超賣不保證反彈，歷史表現不保證未來；只可將定期定額描述為一種須符合預算、期限與風險承受度的做法，不可催促觀眾買進。"""
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
 {full_report}
 【雙人角色與互動】{host_persona_guidance}
+{strategy_script_guidance}
 【頻道核心精神】兩位主持人分別代表BTC數位黃金與ETH世界計算機生態兩種長期視角。分析以數據與可驗證事實為準，反對盲目短線追高殺低與高槓桿賭博；長期看好不代表忽視短線回檔、過熱與生態風險。
 【DCA播報規則】{dca_prompt_section}
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
@@ -1029,12 +1567,13 @@ p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半�
 【前段結尾】{part1_raw[-350:]}
 【數據】{full_report}
 【雙人角色與互動】{host_persona_guidance}
+{strategy_script_guidance}
 【頻道核心精神】兩人以BTC數位黃金與ETH世界計算機生態兩種長期視角互補；所有技術分析與未來24小時觀察條件都要依數據客觀說明，既不盲目吹捧BTC或ETH，也不把長期信念包裝成短線買賣指令。反對高槓桿賭博與頻繁短線交易，結尾提醒以長期週期和風險管理看待市場。
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。後半段標記對應：{p2_slide_anchors}
 【篇幅配額】{p2_length_guidance}
 【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
-【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC與ETH百日走勢圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據，且必須從長期持有與DCA風險管理角度解讀，不可給短線下單指令。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位、長期週期與紀律DCA並道別，不使用分段字眼。"""
+【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC近90日價格結構與支撐壓力圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據，且必須從長期持有與DCA風險管理角度解讀，不可給短線下單指令。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位、長期週期與紀律DCA並道別，不使用分段字眼。"""
 part2_raw = normalize_long_term_terms(call_gemini(p2_prompt))
 default_24h_conditions = [
     f"均線守位｜BTC ${cur_p}、ETH ${spot_prices['ETH']:.2f} 能否守穩各自100日均線 ${ma100d}、${calc_sma(cdata['ETH'][0], 100)}。",
@@ -1669,12 +2208,22 @@ if show_dca:
     )
 slides_cfg += [
     ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
-    ("BTC 動態｜四大均線與 RSI", "#38bdf8", s1, "dual"),
+    (
+        "BTC 動態｜均線、RSI 與歷史超賣",
+        "#38bdf8",
+        f"{s1}\n{btc_oversold_report}",
+        "btc_rsi",
+    ),
     ("ETH 動態｜日線均線與 RSI", "#a78bfa", eth_slide, "dual"),
 ] + news_slides + [
     ("六大主流幣｜報價與指標總表", "#34d399", cc.convert(coins_summary), None),
     ("六大主流幣｜24H 漲跌幅", "#34d399", "即時報價、漲跌幅與 RSI 對照", "bars"),
-    ("BTC 與 ETH｜百日走勢對照", "#a78bfa", "價格走勢與20日均線動態比較", "dual"),
+    (
+        "BTC 價格結構與關鍵攻防",
+        "#a78bfa",
+        f"{btc_technical_report}\n{eth_technical_report}",
+        "btc_structure",
+    ),
 ] + condition_slides + [
     ("24小時策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
 ]
@@ -2465,6 +3014,8 @@ with sync_playwright() as playwright:
                 chart_dca_path if ctype == "dca"
                 else "chart_bars.png" if ctype == "bars"
                 else "chart_dual.png" if ctype == "dual"
+                else technical_chart_paths["price"] if ctype == "btc_structure"
+                else technical_chart_paths["rsi"] if ctype == "btc_rsi"
                 else None
             )
             layout = (
@@ -2497,8 +3048,11 @@ with sync_playwright() as playwright:
                 idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4"
             )
     finally:
-        _slide_browser.close()
-        _slide_browser = None
+        try:
+            _slide_browser.close()
+        finally:
+            _slide_browser = None
+            technical_chart_dir.cleanup()
 
 create_outro_frame()
 if has_intro_video:
