@@ -168,11 +168,11 @@
   "total_btc": "0.05279016",
   "avg_buy_price_twd": 2462580.15,
   "avg_buy_price_usd": 77742.02,
-  "current_btc_usd": 61715.35,
-  "current_twd_rate": 32.971,
-  "current_market_value_usd": 3257.96,
-  "current_market_value_twd": 107418.31,
-  "unrealized_pnl_usd": -846.05,
-  "unrealized_pnl_twd": -22581.69,
-  "total_return_pct": -17.37
+  "current_btc_usd": 61663.0,
+  "current_twd_rate": 32.975,
+  "current_market_value_usd": 3255.2,
+  "current_market_value_twd": 107340.2,
+  "unrealized_pnl_usd": -848.81,
+  "unrealized_pnl_twd": -22659.8,
+  "total_return_pct": -17.43
 }
