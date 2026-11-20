@@ -1,4 +1,4 @@
-import os, re, json, time, calendar, base64, html, io, tempfile, subprocess, urllib.request, math
+import os, re, json, time, calendar, base64, html, io, tempfile, subprocess, urllib.request, math, unicodedata
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
@@ -924,7 +924,141 @@ def fmt_ass_t(sec):
     m, s = divmod(r, 60)
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
-ass_head = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,44,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,3,3,0,2,210,210,42,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+
+MAIN_VIDEO_WIDTH = 1920
+MAIN_VIDEO_HEIGHT = 1080
+MAIN_DESIGN_WIDTH = 1280
+MAIN_DESIGN_HEIGHT = 720
+MAIN_OUTPUT_SCALE = 1.5
+SHORT_VIDEO_WIDTH = 1080
+SHORT_VIDEO_HEIGHT = 1920
+SHORT_DESIGN_WIDTH = 720
+SHORT_DESIGN_HEIGHT = 1280
+SHORT_OUTPUT_SCALE = 1.5
+SHORT_SUBTITLE_MAX_WIDTH = 12.5
+SHORT_SUBTITLE_SHRINK_LIMIT = 15.5
+SHORT_SUBTITLE_SHRINK_PERCENT = 88
+SHORT_SUBTITLE_SENTENCE_END = re.compile(r"[。！？!?；;\n]+")
+SHORT_SUBTITLE_BREAKS = re.compile(r"[，、,]")
+SHORT_SUBTITLE_CONNECTORS = re.compile(
+    r"但是|不過|然而|因此|所以|同時|而且|此外|另外|接著|反而|因為|如果|"
+    r"雖然|並且|可是|但|而|且|或|則"
+)
+SHORT_SUBTITLE_EDGE_PUNCTUATION = re.compile(
+    r"^[，、,。！？!?；;：:]+|[，、,。！？!?；;：:]+$"
+)
+
+
+def short_subtitle_visual_width(text):
+    return sum(
+        1.0
+        if unicodedata.east_asian_width(char) in ("F", "W")
+        else 0.5
+        for char in text
+        if char not in "\r\n"
+    )
+
+
+def split_short_subtitle_text(text):
+    def trim_edges(value):
+        return SHORT_SUBTITLE_EDGE_PUNCTUATION.sub("", value).strip()
+
+    def split_at_midpoint(value):
+        candidates = []
+        for match in SHORT_SUBTITLE_BREAKS.finditer(value):
+            left = trim_edges(value[:match.start()])
+            right = trim_edges(value[match.end():])
+            if left and right:
+                candidates.append(
+                    (
+                        abs(
+                            short_subtitle_visual_width(left)
+                            - short_subtitle_visual_width(right)
+                        ),
+                        0,
+                        left,
+                        right,
+                    )
+                )
+
+        for match in SHORT_SUBTITLE_CONNECTORS.finditer(value):
+            for boundary in (match.start(), match.end()):
+                left = trim_edges(value[:boundary])
+                right = trim_edges(value[boundary:])
+                if left and right:
+                    candidates.append(
+                        (
+                            abs(
+                                short_subtitle_visual_width(left)
+                                - short_subtitle_visual_width(right)
+                            ),
+                            1,
+                            left,
+                            right,
+                        )
+                    )
+
+        if candidates:
+            _, _, left, right = min(candidates, key=lambda item: item[:2])
+            return left, right
+
+        boundaries = []
+        for boundary in range(1, len(value)):
+            left = trim_edges(value[:boundary])
+            right = trim_edges(value[boundary:])
+            if left and right:
+                boundaries.append(
+                    (
+                        abs(
+                            short_subtitle_visual_width(left)
+                            - short_subtitle_visual_width(right)
+                        ),
+                        left,
+                        right,
+                    )
+                )
+        if not boundaries:
+            return value, ""
+        _, left, right = min(boundaries, key=lambda item: item[0])
+        return left, right
+
+    def split_clause(clause):
+        clause = re.sub(r"\s+", " ", trim_edges(clause))
+        width = short_subtitle_visual_width(clause)
+        if not clause:
+            return []
+        if width <= SHORT_SUBTITLE_SHRINK_LIMIT:
+            scale = (
+                SHORT_SUBTITLE_SHRINK_PERCENT
+                if width > SHORT_SUBTITLE_MAX_WIDTH
+                else 100
+            )
+            return [(clause, scale)]
+
+        left, right = split_at_midpoint(clause)
+        if not right:
+            return [(clause, SHORT_SUBTITLE_SHRINK_PERCENT)]
+        return split_clause(left) + split_clause(right)
+
+    chunks = []
+    for sentence in SHORT_SUBTITLE_SENTENCE_END.split(text):
+        chunks.extend(split_clause(sentence))
+    return chunks
+
+
+ass_head = (
+    f"[Script Info]\nScriptType: v4.00+\n"
+    f"PlayResX: {MAIN_VIDEO_WIDTH}\nPlayResY: {MAIN_VIDEO_HEIGHT}\n\n"
+    "[V4+ Styles]\n"
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+    "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+    "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+    "MarginL, MarginR, MarginV, Encoding\n"
+    "Style: Default,Noto Sans CJK TC,66,&H00FFFFFF,&H000000FF,&H00000000,"
+    "&H99000000,0,0,0,0,100,100,0,0,3,3,0,2,315,315,60,1\n\n"
+    "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
+    "MarginV, Effect, Text\n"
+)
 kw_pat = r'(\$[\d,.]+|\b\d+(?:,\d+)*(?:\.\d+)?%?\b|比特幣|以太幣|以太坊|BTC|ETH|SOL|XRP|ADA|ZEC|RSI|均線|恐慌與貪婪指數|超賣|超買|支撐|壓力|風險提醒|投資建議)'
 punct_pat = r'[，。！？、；：「」『』（）【】《》—…!?;:\(\)\[\]]+|(?<!\d)[,\.](?!\d)'
 cur_t, evs = intro_dur, []
@@ -983,7 +1117,7 @@ for idx, _, txt, dur in results:
             sub_end = segment_cur + dur * (len(segment) / total_chars)
 
         hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', sub_txt)
-        evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,210,210,0,,{hl}")
+        evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,315,315,0,,{hl}")
         segment_cur = sub_end
 
     cur_t += dur
@@ -1064,24 +1198,26 @@ plt.savefig("chart_bars.png", facecolor="#111827")
 plt.close()
 fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 if not os.path.exists(fp): fp = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-fh, fs, ft, fb, fn = ImageFont.truetype(fp, 40), ImageFont.truetype(fp, 24), ImageFont.truetype(fp, 34), ImageFont.truetype(fp, 28), ImageFont.truetype(fp, 22)
+fh, fs, ft, fb, fn = ImageFont.truetype(fp, 60), ImageFont.truetype(fp, 36), ImageFont.truetype(fp, 51), ImageFont.truetype(fp, 42), ImageFont.truetype(fp, 33)
 
 if has_intro_video:
-    intro_frame = Image.new("RGB", (1280, 720), "#090d16")
+    intro_frame = Image.new(
+        "RGB", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), "#090d16"
+    )
     intro_draw = ImageDraw.Draw(intro_frame)
-    intro_draw.rectangle((20, 20, 1260, 700), outline="#fbbf24", width=4)
-    intro_draw.rectangle((404, 49, 876, 521), outline="#fbbf24", width=4)
-    intro_draw.line((40, 40, 180, 40), fill="#38bdf8", width=2)
-    intro_draw.line((1100, 680, 1240, 680), fill="#38bdf8", width=2)
+    intro_draw.rectangle((30, 30, 1890, 1050), outline="#fbbf24", width=6)
+    intro_draw.rectangle((606, 74, 1314, 782), outline="#fbbf24", width=6)
+    intro_draw.line((60, 60, 270, 60), fill="#38bdf8", width=3)
+    intro_draw.line((1650, 1020, 1860, 1020), fill="#38bdf8", width=3)
     intro_draw.text(
-        (640, 558),
+        (960, 837),
         "幣看趨勢｜比特幣與加密貨幣情報",
         fill="#f8fafc",
         font=fh,
         anchor="mm",
     )
     intro_draw.text(
-        (640, 612),
+        (960, 918),
         f"以太喵 ＆ 比特汪・每日市場深度解析（{today_str}）",
         fill="#fbbf24",
         font=ft,
@@ -1296,15 +1432,21 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4):
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=1280, initial-scale=1">
+<meta name="viewport" content="width={MAIN_VIDEO_WIDTH}, initial-scale=1">
 <style>
 * {{ box-sizing: border-box; }}
-html, body {{ width: 1280px; height: 720px; margin: 0; overflow: hidden; }}
+html, body {{ width: {MAIN_VIDEO_WIDTH}px; height: {MAIN_VIDEO_HEIGHT}px; margin: 0; overflow: hidden; }}
 body {{
-  position: relative; color: #f8fafc; background: #090d16;
+  position: relative; width: {MAIN_VIDEO_WIDTH}px; height: {MAIN_VIDEO_HEIGHT}px;
+  color: #f8fafc; background: #090d16;
   font-family: 'Noto Sans CJK TC', sans-serif;
 }}
-body::before {{
+.slide-stage {{
+  position: relative; width: {MAIN_DESIGN_WIDTH}px; height: {MAIN_DESIGN_HEIGHT}px;
+  overflow: hidden; background: #090d16;
+  transform: scale({MAIN_OUTPUT_SCALE}); transform-origin: top left;
+}}
+.slide-stage::before {{
   position: absolute; inset: -20%; content: ""; opacity: .46;
   background:
     radial-gradient(ellipse at 18% 22%, rgba(56,189,248,.18), transparent 34%),
@@ -1479,11 +1621,13 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 </style>
 </head>
 <body>
+<div class="slide-stage">
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
   {content_markup}
 </main>
+</div>
   <script>
   window.fitSlideLayout = () => {{
     const frame = document.querySelector(".frame");
@@ -1526,21 +1670,26 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
     const frameBox = frame.getBoundingClientRect();
     const contentBox = content.getBoundingClientRect();
     const itemRects = items.map(item => item.getBoundingClientRect());
-    const minLeft = Math.min(0, ...itemRects.map(rect => rect.left - frameBox.left));
-    const minTop = Math.min(0, ...itemRects.map(rect => rect.top - frameBox.top));
+    const minLeft = Math.min(
+      0, ...itemRects.map(rect => (rect.left - frameBox.left) / {MAIN_OUTPUT_SCALE})
+    );
+    const minTop = Math.min(
+      0, ...itemRects.map(rect => (rect.top - frameBox.top) / {MAIN_OUTPUT_SCALE})
+    );
     const maxRight = Math.max(
       frame.clientWidth,
-      contentBox.right - frameBox.left,
-      contentBox.left - frameBox.left + content.scrollWidth,
+      (contentBox.right - frameBox.left) / {MAIN_OUTPUT_SCALE},
+      (contentBox.left - frameBox.left) / {MAIN_OUTPUT_SCALE} + content.scrollWidth,
       ...itemRects.map((rect, index) =>
-        rect.right - frameBox.left + Math.max(0, items[index].scrollWidth - items[index].clientWidth)
+        (rect.right - frameBox.left) / {MAIN_OUTPUT_SCALE} +
+          Math.max(0, items[index].scrollWidth - items[index].clientWidth)
       )
     );
     const maxBottom = Math.max(
       frame.clientHeight,
-      contentBox.bottom - frameBox.top,
-      contentBox.top - frameBox.top + content.scrollHeight,
-      ...itemRects.map(rect => rect.bottom - frameBox.top)
+      (contentBox.bottom - frameBox.top) / {MAIN_OUTPUT_SCALE},
+      (contentBox.top - frameBox.top) / {MAIN_OUTPUT_SCALE} + content.scrollHeight,
+      ...itemRects.map(rect => (rect.bottom - frameBox.top) / {MAIN_OUTPUT_SCALE})
     );
     const scale = Math.min(
       1,
@@ -1557,10 +1706,10 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 
     with tempfile.TemporaryDirectory(prefix=f"slide_{idx}_") as record_dir:
         context = _slide_browser.new_context(
-            viewport={"width": 1280, "height": 720},
+            viewport={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
             device_scale_factor=1,
             record_video_dir=record_dir,
-            record_video_size={"width": 1280, "height": 720},
+            record_video_size={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
         )
         page = context.new_page()
         video = page.video
@@ -1574,7 +1723,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
             context.close()
         recording_path = video.path()
         filters = (
-            f"fps=24,scale=1280:720:flags=lanczos,"
+            f"fps=24,scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
             f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS"
             f"{tpad_filter},format=yuv420p"
         )
@@ -1679,32 +1828,41 @@ def generate_topic_icon(topic_summary, coin_code):
 
 
 def create_outro_frame():
-    image = Image.new("RGB", (1280, 720), "#090d16")
+    image = Image.new("RGB", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), "#090d16")
     draw = ImageDraw.Draw(image)
-    draw.rectangle((20, 20, 1260, 700), outline="#fbbf24", width=4)
+    draw.rectangle((30, 30, 1890, 1050), outline="#fbbf24", width=6)
     if os.path.exists("avatar.png"):
         with Image.open("avatar.png") as avatar:
-            image.paste(avatar.convert("RGB").resize((260, 260), Image.LANCZOS), (510, 30))
+            image.paste(
+                avatar.convert("RGB").resize((390, 390), Image.LANCZOS),
+                (765, 45),
+            )
 
     draw = ImageDraw.Draw(image)
     title = "感謝收聽【幣看趨勢】｜別忘了按讚、訂閱、開啟小鈴鐺！"
-    title_font = ImageFont.truetype(fp, 40)
-    title_lines = wrap_by_width(draw, title, title_font, 1160)
+    title_font = ImageFont.truetype(fp, 60)
+    title_lines = wrap_by_width(draw, title, title_font, 1740)
     for line_index, line in enumerate(title_lines):
         bounds = draw.textbbox((0, 0), line, font=title_font)
         draw.text(
-            ((1280 - (bounds[2] - bounds[0])) // 2, 315 + line_index * 50),
+            (
+                (MAIN_VIDEO_WIDTH - (bounds[2] - bounds[0])) // 2,
+                472 + line_index * 75,
+            ),
             line,
             fill="#f8fafc",
             font=title_font,
         )
     subtitle = "留言告訴以太喵與比特汪，下一集你想看哪一顆幣？"
-    subtitle_font = ImageFont.truetype(fp, 28)
-    subtitle_lines = wrap_by_width(draw, subtitle, subtitle_font, 1160)
+    subtitle_font = ImageFont.truetype(fp, 42)
+    subtitle_lines = wrap_by_width(draw, subtitle, subtitle_font, 1740)
     for line_index, line in enumerate(subtitle_lines):
         bounds = draw.textbbox((0, 0), line, font=subtitle_font)
         draw.text(
-            ((1280 - (bounds[2] - bounds[0])) // 2, 420 + line_index * 38),
+            (
+                (MAIN_VIDEO_WIDTH - (bounds[2] - bounds[0])) // 2,
+                630 + line_index * 57,
+            ),
             line,
             fill="#fbbf24",
             font=subtitle_font,
@@ -1712,8 +1870,18 @@ def create_outro_frame():
 
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    overlay_draw.rectangle((60, 510, 600, 680), fill=(5, 8, 18, 185), outline=(251, 191, 36, 210), width=3)
-    overlay_draw.rectangle((680, 510, 1220, 680), fill=(5, 8, 18, 185), outline=(56, 189, 248, 210), width=3)
+    overlay_draw.rectangle(
+        (90, 765, 900, 1020),
+        fill=(5, 8, 18, 185),
+        outline=(251, 191, 36, 210),
+        width=5,
+    )
+    overlay_draw.rectangle(
+        (1020, 765, 1830, 1020),
+        fill=(5, 8, 18, 185),
+        outline=(56, 189, 248, 210),
+        width=5,
+    )
     image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
     image.save("outro_frame.png")
 
@@ -1773,14 +1941,14 @@ def create_speaker_avatars(talk_videos):
         )
 
     portraits = {
-        speaker: load_portrait(speaker).resize((150, 150), Image.LANCZOS)
+        speaker: load_portrait(speaker).resize((225, 225), Image.LANCZOS)
         for speaker in ("cat", "dog")
     }
-    mask_large = Image.new("L", (672, 672), 0)
-    ImageDraw.Draw(mask_large).ellipse((2, 2, 670, 670), fill=255)
-    face_mask = mask_large.resize((150, 150), Image.LANCZOS)
-    circle_mask = Image.new("L", (168, 168), 0)
-    ImageDraw.Draw(circle_mask).ellipse((0, 0, 167, 167), fill=255)
+    mask_large = Image.new("L", (1008, 1008), 0)
+    ImageDraw.Draw(mask_large).ellipse((3, 3, 1005, 1005), fill=255)
+    face_mask = mask_large.resize((225, 225), Image.LANCZOS)
+    circle_mask = Image.new("L", (252, 252), 0)
+    ImageDraw.Draw(circle_mask).ellipse((0, 0, 251, 251), fill=255)
     circle_mask_path = "speaker_circle_mask.png"
     circle_mask.save(circle_mask_path)
 
@@ -1788,27 +1956,27 @@ def create_speaker_avatars(talk_videos):
     for speaker, color in (("cat", (129, 140, 248)), ("dog", (251, 191, 36))):
         portrait = portraits[speaker]
         listening_face = ImageEnhance.Brightness(portrait).enhance(0.72).convert("RGBA")
-        listening = Image.new("RGBA", (150, 150), (0, 0, 0, 0))
+        listening = Image.new("RGBA", (225, 225), (0, 0, 0, 0))
         listening.paste(listening_face, (0, 0), face_mask)
         listening_path = f"{speaker}_avatar.png"
         listening.save(listening_path)
         assets[f"{speaker}_idle"] = listening_path
 
-        ring_glow = Image.new("RGBA", (168, 168), (0, 0, 0, 0))
+        ring_glow = Image.new("RGBA", (252, 252), (0, 0, 0, 0))
         ImageDraw.Draw(ring_glow).ellipse(
-            (4, 4, 164, 164), outline=(*color, 220), width=10
+            (6, 6, 246, 246), outline=(*color, 220), width=15
         )
-        ring = ring_glow.filter(ImageFilter.GaussianBlur(9))
+        ring = ring_glow.filter(ImageFilter.GaussianBlur(14))
         ring_draw = ImageDraw.Draw(ring)
-        ring_draw.ellipse((4, 4, 164, 164), outline=(*color, 255), width=6)
-        ring_draw.ellipse((10, 10, 158, 158), outline=(255, 255, 255, 180), width=1)
+        ring_draw.ellipse((6, 6, 246, 246), outline=(*color, 255), width=9)
+        ring_draw.ellipse((15, 15, 237, 237), outline=(255, 255, 255, 180), width=2)
         ring_path = f"{speaker}_avatar_ring.png"
         ring.save(ring_path)
         assets[f"{speaker}_ring"] = ring_path
 
         speaking_face = ImageEnhance.Brightness(portrait).enhance(1.18).convert("RGBA")
-        speaking = Image.new("RGBA", (168, 168), (0, 0, 0, 0))
-        speaking.paste(speaking_face, (9, 9), face_mask)
+        speaking = Image.new("RGBA", (252, 252), (0, 0, 0, 0))
+        speaking.paste(speaking_face, (14, 14), face_mask)
         speaking.alpha_composite(ring)
         speaking_path = f"{speaker}_avatar_speaking.png"
         speaking.save(speaking_path)
@@ -1925,14 +2093,14 @@ if has_intro_video:
     boomerang_frames = source_frame_count * 2
     intro_filter = (
         "[1:v]setpts=PTS-STARTPTS,"
-        "scale=440:440:force_original_aspect_ratio=decrease,"
-        "pad=440:440:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+        "scale=660:660:force_original_aspect_ratio=decrease,"
+        "pad=660:660:(ow-iw)/2:(oh-ih)/2,setsar=1,"
         "split=2[forward][backward];"
         "[backward]reverse,setpts=PTS-STARTPTS[reversed];"
         f"[forward][reversed]concat=n=2:v=1:a=0,"
         f"loop=loop=-1:size={boomerang_frames}:start=0,"
         "fps=24,trim=duration=15,setpts=PTS-STARTPTS[animation];"
-        "[0:v][animation]overlay=420:65:shortest=1,"
+        "[0:v][animation]overlay=630:98:shortest=1,"
         "fade=t=out:st=14:d=1,format=yuv420p[output]"
     )
     subprocess.run(
@@ -2019,8 +2187,8 @@ for speaker in active_speakers:
     avatar_filters.extend(
         [
             f"[{input_index}:v]fps=24,"
-            "scale=168:168:force_original_aspect_ratio=increase,"
-            f"crop=168:168,setsar=1,format=rgba[{speaker}_square]",
+            "scale=252:252:force_original_aspect_ratio=increase,"
+            f"crop=252:252,setsar=1,format=rgba[{speaker}_square]",
             f"[{speaker}_square][{speaker}_mask]alphamerge[{speaker}_talk_circle]",
         ]
     )
@@ -2035,10 +2203,10 @@ dog_talk_input = (
 )
 avatar_filters.extend(
     [
-        f"[v_sub][{input_indexes['cat_idle']}:v]overlay=x=28:y=545:"
+        f"[v_sub][{input_indexes['cat_idle']}:v]overlay=x=42:y=817.5:"
         f"enable='{speech_window}*not({cat_speaking})'[v_cat_idle]",
         f"[v_cat_idle]{cat_talk_input}"
-        f"overlay=x=28:y='536+4*sin(t*14)':eval=frame:"
+        f"overlay=x=42:y='804+6*sin(t*14)':eval=frame:"
         f"enable='{cat_speaking}'[v_cat_talk]",
     ]
 )
@@ -2046,24 +2214,24 @@ cat_stage = "v_cat_talk"
 if talk_videos["cat"]:
     avatar_filters.append(
         f"[{cat_stage}][{input_indexes['cat_ring']}:v]"
-        f"overlay=x=28:y='536+4*sin(t*14)':eval=frame:"
+        f"overlay=x=42:y='804+6*sin(t*14)':eval=frame:"
         f"enable='{cat_speaking}'[v_cat_speaking]"
     )
     cat_stage = "v_cat_speaking"
 avatar_filters.append(
-    f"[{cat_stage}][{input_indexes['dog_idle']}:v]overlay=x=1102:y=545:"
+    f"[{cat_stage}][{input_indexes['dog_idle']}:v]overlay=x=1653:y=817.5:"
     f"enable='{speech_window}*not({dog_speaking})'[v_dog_idle]"
 )
 avatar_filters.append(
     f"[v_dog_idle]{dog_talk_input}"
-    f"overlay=x=1102:y='536+4*sin(t*16)':eval=frame:"
+    f"overlay=x=1653:y='804+6*sin(t*16)':eval=frame:"
     f"enable='{dog_speaking}'[v_dog_talk]"
 )
 dog_stage = "v_dog_talk"
 if talk_videos["dog"]:
     avatar_filters.append(
         f"[{dog_stage}][{input_indexes['dog_ring']}:v]"
-        f"overlay=x=1102:y='536+4*sin(t*16)':eval=frame:"
+        f"overlay=x=1653:y='804+6*sin(t*16)':eval=frame:"
         f"enable='{dog_speaking}'[v_dog_speaking]"
     )
     dog_stage = "v_dog_speaking"
@@ -2074,7 +2242,7 @@ mux_command.extend(
         "-filter_complex", avatar_filter,
         "-map", "[v_out]", "-map", "1:a:0",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-        "-r", "24", "-c:a", "aac", "-b:a", "128k",
+        "-threads", "4", "-r", "24", "-c:a", "aac", "-b:a", "128k",
         "-shortest", "output.mp4",
     ]
 )
@@ -2121,11 +2289,16 @@ res = None
 while res is None: _, res = req.next_chunk()
 print("Uploaded Video ID:", res["id"])
 
-t_img = Image.new("RGB", (1280, 720), "#090d16")
+t_img = Image.new("RGB", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), "#090d16")
 td = ImageDraw.Draw(t_img)
-td.rectangle((14, 14, 1266, 706), outline="#fbbf24", width=4)
-td.line((50, 90, 735, 90), fill="#38bdf8", width=3)
-td.text((55, 42), "幣看趨勢｜每日深度財經情報", fill="#fbbf24", font=ImageFont.truetype(fp, 30))
+td.rectangle((21, 21, 1899, 1059), outline="#fbbf24", width=6)
+td.line((75, 135, 1102, 135), fill="#38bdf8", width=5)
+td.text(
+    (82, 63),
+    "幣看趨勢｜每日深度財經情報",
+    fill="#fbbf24",
+    font=ImageFont.truetype(fp, 45),
+)
 raw_t = re.sub(r'^【幣看趨勢】|\([^)]+\)$', '', video_title).strip()
 
 def split_thumb_title(text, font, draw, max_width, max_lines=3):
@@ -2158,9 +2331,11 @@ def split_thumb_title(text, font, draw, max_width, max_lines=3):
 
 thumb_font = None
 thumb_lines = []
-thumb_max_width = 700
+thumb_max_width = 1050
 for thumb_size in range(58, 27, -2):
-    candidate_font = ImageFont.truetype(fp, thumb_size)
+    candidate_font = ImageFont.truetype(
+        fp, round(thumb_size * MAIN_OUTPUT_SCALE)
+    )
     candidate_lines = split_thumb_title(raw_t, candidate_font, td, thumb_max_width)
     widest = max((td.textbbox((0, 0), line, font=candidate_font)[2] for line in candidate_lines), default=0)
     if len(candidate_lines) <= 3 and widest <= thumb_max_width:
@@ -2168,39 +2343,53 @@ for thumb_size in range(58, 27, -2):
         thumb_lines = candidate_lines
         break
 if thumb_font is None:
-    thumb_font = ImageFont.truetype(fp, 26)
+    thumb_font = ImageFont.truetype(
+        fp, round(26 * MAIN_OUTPUT_SCALE)
+    )
     thumb_lines = split_thumb_title(raw_t, thumb_font, td, thumb_max_width)
 
-line_height = thumb_font.size + 18
-text_y = 116
+line_height = thumb_font.size + 27
+text_y = 174
 for line_index, line in enumerate(thumb_lines):
-    td.text((55, text_y + line_index * line_height), line, fill="#ffffff", font=thumb_font)
+    td.text(
+        (82, text_y + line_index * line_height),
+        line,
+        fill="#ffffff",
+        font=thumb_font,
+    )
 
-glow = Image.new("RGBA", (1280, 720), (0, 0, 0, 0))
+glow = Image.new(
+    "RGBA", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), (0, 0, 0, 0)
+)
 glow_draw = ImageDraw.Draw(glow)
-for radius, alpha in ((132, 22), (118, 34), (102, 48)):
+for radius, alpha in ((198, 22), (177, 34), (153, 48)):
     glow_draw.ellipse(
-        (175 - radius, 570 - radius, 175 + radius, 570 + radius),
+        (262 - radius, 855 - radius, 262 + radius, 855 + radius),
         fill=(251, 191, 36, alpha),
     )
 t_img = Image.alpha_composite(t_img.convert("RGBA"), glow).convert("RGB")
 with Image.open(topic_icon_path) as icon:
-    icon = icon.convert("RGBA").resize((230, 230), Image.LANCZOS)
-    icon_mask = Image.new("L", (230, 230), 0)
-    ImageDraw.Draw(icon_mask).ellipse((0, 0, 229, 229), fill=255)
+    icon = icon.convert("RGBA").resize((345, 345), Image.LANCZOS)
+    icon_mask = Image.new("L", (345, 345), 0)
+    ImageDraw.Draw(icon_mask).ellipse((0, 0, 344, 344), fill=255)
     icon.putalpha(icon_mask)
-    t_img.paste(icon, (60, 455), icon)
+    t_img.paste(icon, (90, 682), icon)
 td = ImageDraw.Draw(t_img)
-td.ellipse((58, 453, 292, 687), outline="#fbbf24", width=4)
-metric_font = ImageFont.truetype(fp, 27)
-td.text((320, 474), f"BTC 即時價格　${cur_p}", fill="#fbbf24", font=metric_font)
-td.text((320, 532), f"24H 漲跌　{'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%", fill="#38bdf8", font=metric_font)
-td.text((320, 590), f"恐慌貪婪指數　{fng_num} / 100", fill="#cbd5e1", font=metric_font)
+td.ellipse((87, 680, 438, 1031), outline="#fbbf24", width=6)
+metric_font = ImageFont.truetype(fp, round(27 * MAIN_OUTPUT_SCALE))
+td.text((480, 711), f"BTC 即時價格　${cur_p}", fill="#fbbf24", font=metric_font)
+td.text((480, 798), f"24H 漲跌　{'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%", fill="#38bdf8", font=metric_font)
+td.text((480, 885), f"恐慌貪婪指數　{fng_num} / 100", fill="#cbd5e1", font=metric_font)
 if os.path.exists("avatar.png"):
     with Image.open("avatar.png") as avatar:
-        avatar = avatar.convert("RGBA").resize((430, 430), Image.LANCZOS)
-        t_img.paste(avatar, (800, 145), avatar)
-    td.rounded_rectangle((796, 141, 1234, 579), radius=20, outline="#fbbf24", width=4)
+        avatar = avatar.convert("RGBA").resize((645, 645), Image.LANCZOS)
+        t_img.paste(avatar, (1200, 218), avatar)
+    td.rounded_rectangle(
+        (1194, 212, 1851, 869),
+        radius=30,
+        outline="#fbbf24",
+        width=6,
+    )
 
 t_img.save("thumb.jpg", "JPEG", quality=92)
 youtube.thumbnails().set(videoId=res["id"], media_body=MediaFileUpload("thumb.jpg")).execute()
@@ -2267,49 +2456,47 @@ def build_and_upload_short():
     )
 
     short_ass_header = (
-        "[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n"
+        "[Script Info]\nScriptType: v4.00+\nWrapStyle: 2\n"
+        f"PlayResX: {SHORT_VIDEO_WIDTH}\nPlayResY: {SHORT_VIDEO_HEIGHT}\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Noto Sans CJK TC,52,&H0000D7FF,&H000000FF,&H00101010,"
-        "&HAA000000,1,0,0,0,100,100,0,0,1,3,1,2,28,28,190,1\n\n"
+        "Style: Default,Noto Sans CJK TC,68,&H0000D7FF,&H000000FF,&H00101010,"
+        "&HAA000000,1,0,0,0,100,100,0,0,1,4,2,2,60,60,285,1\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
         "MarginV, Effect, Text\n"
     )
     short_subtitle_events = []
     subtitle_time = 0.0
-    short_punctuation = r"[，。！？、；：…!?;\n]+"
     for _, _, spoken_text, segment_duration in short_segments:
-        phrases = [
-            phrase.strip()
-            for phrase in re.split(short_punctuation, spoken_text)
-            if phrase.strip()
-        ]
-        subtitle_chunks = []
-        for phrase in phrases:
-            subtitle_chunks.extend(
-                phrase[index:index + 12]
-                for index in range(0, len(phrase), 12)
-            )
-        total_chars = sum(len(chunk) for chunk in subtitle_chunks)
+        clean_text = re.sub(r"[{}\\]", "", spoken_text).strip()
+        subtitle_chunks = split_short_subtitle_text(clean_text)
+        total_width = sum(
+            short_subtitle_visual_width(chunk)
+            for chunk, _ in subtitle_chunks
+        )
         segment_time = subtitle_time
-        for index, chunk in enumerate(subtitle_chunks):
+        for index, (chunk, scale_percent) in enumerate(subtitle_chunks):
+            chunk_width = short_subtitle_visual_width(chunk)
             subtitle_end = (
                 subtitle_time + segment_duration
                 if index == len(subtitle_chunks) - 1
-                else segment_time + segment_duration * len(chunk) / total_chars
+                else segment_time + segment_duration * chunk_width / total_width
             )
-            clean_chunk = re.sub(r"[{}\\]", "", chunk).strip()
             highlighted = re.sub(
                 kw_pat,
                 r"{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H0000D7FF&}",
-                clean_chunk,
+                chunk,
             )
+            if scale_percent != 100:
+                highlighted = (
+                    f"{{\\fscx{scale_percent}\\fscy{scale_percent}}}{highlighted}"
+                )
             short_subtitle_events.append(
                 f"Dialogue: 0,{fmt_ass_t(segment_time)},{fmt_ass_t(subtitle_end)},"
-                f"Default,,0,0,0,,{highlighted}"
+                f"Default,,60,60,0,,{highlighted}"
             )
             segment_time = subtitle_end
         subtitle_time += segment_duration
@@ -2345,15 +2532,21 @@ def build_and_upload_short():
     fear_classification = html.escape(str(today_fng["value_classification"]))
     short_html = f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
-<meta name="viewport" content="width=720, initial-scale=1">
+<meta name="viewport" content="width={SHORT_VIDEO_WIDTH}, initial-scale=1">
 <style>
 * {{ box-sizing: border-box; }}
-html, body {{ width:720px; height:1280px; margin:0; overflow:hidden; }}
+html, body {{ width:{SHORT_VIDEO_WIDTH}px; height:{SHORT_VIDEO_HEIGHT}px; margin:0; overflow:hidden; }}
 body {{
-  position:relative; color:#f8fafc; background:#090d16;
+  position:relative; width:{SHORT_VIDEO_WIDTH}px; height:{SHORT_VIDEO_HEIGHT}px;
+  color:#f8fafc; background:#090d16;
   font-family:'Noto Sans CJK TC',sans-serif;
 }}
-body::before {{
+.short-stage {{
+  position:relative; width:{SHORT_DESIGN_WIDTH}px; height:{SHORT_DESIGN_HEIGHT}px;
+  overflow:hidden; background:#090d16;
+  transform:scale({SHORT_OUTPUT_SCALE}); transform-origin:top left;
+}}
+.short-stage::before {{
   position:absolute; inset:-8%; content:""; opacity:.5;
   background:
     radial-gradient(ellipse at 50% 38%,rgba(56,189,248,.2),transparent 40%),
@@ -2429,6 +2622,7 @@ body::before {{
 @keyframes fadeInUp {{ from {{ opacity:0; transform:translateY(20px); }} to {{ opacity:1; transform:translateY(0); }} }}
 </style></head>
 <body>
+<div class="short-stage">
 <header class="brand">【幣看趨勢】｜每日市場快訊</header>
 {avatar_markup}
 <main class="panel">
@@ -2443,6 +2637,7 @@ body::before {{
   </section>
   <ul class="points">{highlights_markup}</ul>
 </main>
+</div>
 <script>
 window.fitShortLayout = () => {{
   const panel = document.querySelector(".panel");
@@ -2453,8 +2648,8 @@ window.fitShortLayout = () => {{
       if (size > 17) point.style.fontSize = `${{size - 1}}px`;
     }}
   }}
-  return document.documentElement.scrollWidth <= 720 &&
-    document.documentElement.scrollHeight <= 1280 &&
+  return document.documentElement.scrollWidth <= {SHORT_VIDEO_WIDTH} &&
+    document.documentElement.scrollHeight <= {SHORT_VIDEO_HEIGHT} &&
     panel.scrollHeight <= panel.clientHeight + 1;
 }};
 </script>
@@ -2466,10 +2661,13 @@ window.fitShortLayout = () => {{
         try:
             with tempfile.TemporaryDirectory(prefix="short_render_") as video_dir:
                 context = browser.new_context(
-                    viewport={"width": 720, "height": 1280},
+                    viewport={"width": SHORT_VIDEO_WIDTH, "height": SHORT_VIDEO_HEIGHT},
                     device_scale_factor=1,
                     record_video_dir=video_dir,
-                    record_video_size={"width": 720, "height": 1280},
+                    record_video_size={
+                        "width": SHORT_VIDEO_WIDTH,
+                        "height": SHORT_VIDEO_HEIGHT,
+                    },
                 )
                 page = context.new_page()
                 video = page.video
@@ -2485,7 +2683,10 @@ window.fitShortLayout = () => {{
                 subprocess.run(
                     [
                         "ffmpeg", "-y", "-i", recording_path,
-                        "-vf", "fps=24,scale=720:1280:flags=lanczos,format=yuv420p",
+                        "-vf", (
+                            f"fps=24,scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:"
+                            "flags=lanczos,format=yuv420p"
+                        ),
                         "-t", f"{render_duration:.6f}", "-an", "-r", "24",
                         "-c:v", "libx264", "-preset", "ultrafast",
                         "-pix_fmt", "yuv420p", "short_visual.mp4",
