@@ -616,8 +616,8 @@ p2_length_guidance = (
     if is_test else
     "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC/ETH百日走勢圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
 )
-host_persona_guidance = """女聲「以太喵」（cmn-TW-Neural2-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；她是忠實的以太坊信仰者，對ETH長期極度看好，熟悉技術升級、Layer 2、DeFi與RWA，對長期潛力抱持如同Tom Lee公開看好以太坊般的信心，但不得冒充或模仿任何外部人士。即使長期看多ETH，也必須依當下數據客觀分析均線壓力、生態瓶頸與風險，絕不盲目吹捧，並常替激動的比特汪踩煞車。
-男聲「比特汪」（cmn-TW-Neural2-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；他是BTC長期持有者，深信比特幣未來數十年必將成為全球公認的數位黃金（這是角色信念，不是價格或結果保證），並自2025年10月25日起每月25日定額NT$10,000累積BTC。這是節目角色設定中的模擬帳戶，不是真實成交紀錄；另長線配置少量ETH、SOL、XRP、ADA。即使長期看好BTC，也必須客觀看待回檔、過熱與技術風險，不盲目吹捧，反對頻繁短線進出。
+host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；她是忠實的以太坊信仰者，對ETH長期極度看好，熟悉技術升級、Layer 2、DeFi與RWA，對長期潛力抱持如同Tom Lee公開看好以太坊般的信心，但不得冒充或模仿任何外部人士。即使長期看多ETH，也必須依當下數據客觀分析均線壓力、生態瓶頸與風險，絕不盲目吹捧，並常替激動的比特汪踩煞車。
+男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；他是BTC長期持有者，深信比特幣未來數十年必將成為全球公認的數位黃金（這是角色信念，不是價格或結果保證），並自2025年10月25日起每月25日定額NT$10,000累積BTC。這是節目角色設定中的模擬帳戶，不是真實成交紀錄；另長線配置少量ETH、SOL、XRP、ADA。即使長期看好BTC，也必須客觀看待回檔、過熱與技術風險，不盲目吹捧，反對頻繁短線進出。
 兩人分別代表「數位黃金派」與「世界計算機生態派」，互相尊重、立場互補，自然吐槽、穿插幣圈冷笑話與台灣網路梗；以太喵以數據幫比特汪踩煞車。口播禁止使用HODL、HODLer等縮寫，一律自然說「長期持有」或「長期持有者」。若今日不是DCA播報日，勿主動插入帳本環節；只有在指定DCA環節才可報帳本數字。"""
 p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 {full_report}
@@ -785,14 +785,22 @@ tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].stri
 def synth_audio_segment(item, file_prefix):
     idx, (role, txt) = item
     txt = normalize_long_term_terms(txt)
-    v_name = "cmn-TW-Neural2-B" if role == "男" else "cmn-TW-Neural2-A"
-    fallback_voice = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
+    v_name = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
+    fallback_voice = "cmn-TW-Standard-B" if role == "男" else "cmn-TW-Standard-A"
     pitch = -1.5 if role == "男" else 1.5
     clean_say = re.sub(r'[*#\[\]()]', '', txt)
+    ssml_say = html.escape(clean_say, quote=False)
+    ssml_say = re.sub(r"([，、,])", r'\1<break time="120ms"/>', ssml_say)
+    ssml_say = re.sub(r"([。！？!?])", r'\1<break time="280ms"/>', ssml_say)
+    for emphasized_phrase in ("請注意", "關鍵是", "風險提醒"):
+        ssml_say = ssml_say.replace(
+            emphasized_phrase,
+            f'<emphasis level="moderate">{emphasized_phrase}</emphasis>',
+        )
 
     def request_tts(voice_name):
         payload_tts = json.dumps({
-            "input": {"text": clean_say},
+            "input": {"ssml": f"<speak>{ssml_say}</speak>"},
             "voice": {"languageCode": "cmn-TW", "name": voice_name},
             "audioConfig": {"audioEncoding": "MP3", "pitch": pitch, "speakingRate": 1.2},
         }).encode("utf-8")
@@ -1334,6 +1342,29 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame.compact h1 {{ font-size: 32px; margin-bottom: 12px; }}
 .frame.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
 .frame.compact li::before {{ width: 7px; height: 7px; }}
+.content.dense-grid ul {{
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start; gap: 8px 12px; text-align: left;
+}}
+.content.dense-grid li {{ margin: 0; padding: 8px 12px; font-size: 22px; }}
+.frame.fit-compact {{ padding: 18px 24px; }}
+.frame.fit-compact h1 {{ margin-bottom: 12px; font-size: 30px; }}
+.frame.fit-compact .content {{ row-gap: 10px; column-gap: 12px; }}
+.frame.fit-tight {{ padding: 10px 14px; }}
+.frame.fit-tight h1 {{ margin-bottom: 6px; font-size: 26px; }}
+.frame.fit-tight .chart-layout, .frame.fit-tight .compare-layout {{ gap: 8px; }}
+.frame.fit-tight .compare-panel {{ padding: 12px; }}
+.frame.fit-tight .compare-panel h2 {{ margin-bottom: 8px; font-size: 18px; }}
+.frame.fit-tight .content.dense-grid ul {{ gap: 8px; }}
+.frame.fit-tight .content.dense-grid li {{ padding: 8px 10px; }}
+.frame.fit-min {{ padding: 4px 8px; }}
+.frame.fit-min h1 {{ margin-bottom: 3px; font-size: 20px; }}
+.frame.fit-min .chart-layout, .frame.fit-min .compare-layout {{ gap: 4px; }}
+.frame.fit-min .compare-panel {{ padding: 6px; }}
+.frame.fit-min .compare-panel h2 {{ margin-bottom: 4px; font-size: 15px; }}
+.frame.fit-min li {{ margin-bottom: 1px; padding-left: 10px; font-size: 18px; line-height: 1.05; }}
+.frame.fit-min .content.dense-grid ul {{ gap: 4px; }}
+.frame.fit-min .content.dense-grid li {{ padding: 4px 6px; }}
 @keyframes fadeInUp {{
   from {{ opacity: 0; transform: translateY(24px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -1411,19 +1442,59 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
       const contentBox = content.getBoundingClientRect();
       return content.scrollHeight > content.clientHeight + 1 ||
         items.some(item => item.scrollWidth > item.clientWidth + 1 ||
+          item.getBoundingClientRect().top < contentBox.top - 1 ||
           item.getBoundingClientRect().bottom > contentBox.bottom + 1) ||
+        title.scrollWidth > title.clientWidth + 1 ||
         title.getBoundingClientRect().bottom > contentBox.top - 8 ||
         frame.scrollHeight > frame.clientHeight + 1;
     }};
-    for (let attempt = 0; attempt < 18 && overflows(); attempt++) {{
+    if (items.length >= 6) {{
+      content.classList.add("dense-grid");
+    }}
+    for (let attempt = 0; attempt < 12 && overflows(); attempt++) {{
+      if (attempt === 0) frame.classList.add("fit-compact");
+      if (attempt === 3) frame.classList.add("fit-tight");
+      if (attempt === 6) frame.classList.add("fit-min");
       const titleSize = parseFloat(getComputedStyle(title).fontSize);
-      if (titleSize > 28) title.style.fontSize = `${{titleSize - 1}}px`;
+      if (titleSize > 20) title.style.fontSize = `${{Math.max(20, titleSize - 2)}}px`;
       for (const item of items) {{
         const bodySize = parseFloat(getComputedStyle(item).fontSize);
-        if (bodySize > 17) item.style.fontSize = `${{bodySize - 1}}px`;
+        if (bodySize > 18) item.style.fontSize = `${{Math.max(18, bodySize - 2)}}px`;
       }}
     }}
-    return !overflows();
+    if (!overflows()) return true;
+
+    document.querySelectorAll(".compare-panel").forEach(panel => {{
+      panel.style.overflow = "visible";
+    }});
+    frame.style.overflow = "visible";
+    const frameBox = frame.getBoundingClientRect();
+    const contentBox = content.getBoundingClientRect();
+    const itemRects = items.map(item => item.getBoundingClientRect());
+    const minLeft = Math.min(0, ...itemRects.map(rect => rect.left - frameBox.left));
+    const minTop = Math.min(0, ...itemRects.map(rect => rect.top - frameBox.top));
+    const maxRight = Math.max(
+      frame.clientWidth,
+      contentBox.right - frameBox.left,
+      contentBox.left - frameBox.left + content.scrollWidth,
+      ...itemRects.map((rect, index) =>
+        rect.right - frameBox.left + Math.max(0, items[index].scrollWidth - items[index].clientWidth)
+      )
+    );
+    const maxBottom = Math.max(
+      frame.clientHeight,
+      contentBox.bottom - frameBox.top,
+      contentBox.top - frameBox.top + content.scrollHeight,
+      ...itemRects.map(rect => rect.bottom - frameBox.top)
+    );
+    const scale = Math.min(
+      1,
+      frame.clientWidth / Math.max(1, maxRight - minLeft),
+      frame.clientHeight / Math.max(1, maxBottom - minTop)
+    );
+    frame.style.transformOrigin = "top left";
+    frame.style.transform = `translate(${{-minLeft * scale}}px, ${{-minTop * scale}}px) scale(${{scale}})`;
+    return false;
   }};
   </script>
 </body>
@@ -1442,7 +1513,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
             page.set_content(html_doc, wait_until="load")
             page.evaluate("() => document.fonts.ready.then(() => true)")
             if not page.evaluate("() => window.fitSlideLayout()"):
-                raise ValueError(f"Slide {idx} content exceeds its safe area.")
+                print(f"Slide {idx} required final auto-fit scaling to stay inside its safe area.")
             page.wait_for_timeout(max(1, round(record_seconds * 1000)))
         finally:
             context.close()
