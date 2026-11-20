@@ -3984,6 +3984,98 @@ t_img.save("thumb.jpg", "JPEG", quality=92)
 youtube.thumbnails().set(videoId=res["id"], media_body=MediaFileUpload("thumb.jpg")).execute()
 print("Custom thumbnail uploaded successfully!")
 
+# ── 功能 1：章節時間軸已在 v_desc 中組裝完成（chapter_lines），無需再操作 ──
+# （章節格式符合 YouTube 規範：首條必須為 00:00，各條間距 ≥ 10 秒）
+
+# ── 功能 2：自動發佈互動投票留言 ──────────────────────────────────────────
+def _build_engagement_comment():
+    """根據當日行情產生一則互動二選一留言文字。"""
+    if show_dca:
+        return (
+            f"🐾 今天 BTC 站在 ${cur_p:,}，DCA 帳本繼續紀律執行中！\n"
+            "你這個月選擇「繼續定期定額、不管短線波動」還是「暫停一個月先觀望」？\n"
+            "留言告訴比特汪與以太喵，讓我們一起追蹤你的策略！👇"
+        )
+    direction = "強勢上漲" if btc_pct >= 1.5 else ("明顯回落" if btc_pct <= -1.5 else "橫盤震盪")
+    return (
+        f"🐾 今天 BTC {direction}（{btc_pct:+.2f}%），恐慌貪婪指數 "
+        f"{fng_num if fng_num is not None else '資料未取得'}！\n"
+        "你現在的策略是「繼續紀律定投、逢低加碼」還是「空手觀望、等待更明確訊號」？\n"
+        "留言告訴比特汪與以太喵！👇 #幣看趨勢"
+    )
+
+_main_video_id = res["id"]
+if not is_test:
+    try:
+        _comment_body = _build_engagement_comment()
+        youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": _main_video_id,
+                    "topLevelComment": {
+                        "snippet": {"textOriginal": _comment_body}
+                    },
+                }
+            },
+        ).execute()
+        print(
+            "互動留言已發佈成功！\n"
+            "💡 提示：YouTube Data API v3 不支援程式自動置頂留言，"
+            "請至 YouTube Studio 後台手動點選「置頂」。"
+        )
+    except Exception as _comment_err:
+        print(f"互動留言發佈失敗（不影響主程式）：{_comment_err}")
+else:
+    print(f"[TEST_MODE] 互動留言預覽（未實際發佈）：\n{_build_engagement_comment()}")
+
+# ── 功能 3：自動歸入播放清單 ───────────────────────────────────────────────
+def _resolve_playlist_id():
+    """優先讀環境變數；若未設定則查詢頻道內含「幣看趨勢」的播放清單。"""
+    env_id = os.environ.get("YOUTUBE_PLAYLIST_ID", "").strip()
+    if env_id:
+        return env_id
+    try:
+        channel_resp = youtube.channels().list(part="id", mine=True).execute()
+        channel_id = (channel_resp.get("items") or [{}])[0].get("id", "")
+        if not channel_id:
+            return None
+        pl_resp = youtube.playlists().list(
+            part="snippet",
+            channelId=channel_id,
+            maxResults=50,
+        ).execute()
+        for item in pl_resp.get("items", []):
+            if "幣看趨勢" in item["snippet"].get("title", ""):
+                return item["id"]
+    except Exception as _pl_lookup_err:
+        print(f"查詢播放清單時發生錯誤（不影響主程式）：{_pl_lookup_err}")
+    return None
+
+try:
+    _playlist_id = _resolve_playlist_id()
+    if _playlist_id:
+        youtube.playlistItems().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": _playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": _main_video_id,
+                    },
+                }
+            },
+        ).execute()
+        print(f"影片已成功加入播放清單：{_playlist_id}")
+    else:
+        print(
+            "未設定 YOUTUBE_PLAYLIST_ID 且頻道內找不到含「幣看趨勢」的播放清單，"
+            "略過自動歸類。"
+        )
+except Exception as _pl_err:
+    print(f"加入播放清單失敗（不影響主程式）：{_pl_err}")
+
 
 def build_and_upload_short():
     short_target_chars = 45 if is_test else 230
