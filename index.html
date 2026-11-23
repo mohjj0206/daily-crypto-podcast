@@ -5,422 +5,311 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>幣看趨勢｜比特汪 BTC 定期定額實戰公開帳本</title>
   <link rel="icon" type="image/png" href="./avatar.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background-color: #0b0f19;
-      color: #f1f5f9;
-      font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0b0f19;
+      color: #e2e8f0;
+      font-family: "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
       min-height: 100vh;
-      padding: 24px 16px 48px;
+      padding: 28px 16px 56px;
     }
-    .container {
-      max-width: 1080px;
-      margin: 0 auto;
-    }
-    /* Header */
+    .wrap { max-width: 1080px; margin: 0 auto; }
     header {
-      background: #131a2a;
-      border: 1px solid #1f293d;
-      border-radius: 18px;
-      padding: 24px;
-      margin-bottom: 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 20px;
       flex-wrap: wrap;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      background: #111827;
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      border-radius: 18px;
+      padding: 22px 24px;
+      margin-bottom: 22px;
     }
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 18px;
-    }
-    .avatar {
+    .brand { display: flex; align-items: center; gap: 16px; }
+    .brand img {
       width: 72px;
       height: 72px;
       border-radius: 50%;
-      border: 2px solid #f59e0b;
       object-fit: cover;
-      box-shadow: 0 0 16px rgba(245, 158, 11, 0.25);
+      border: 2px solid #f59e0b;
+      box-shadow: 0 0 18px rgba(245, 158, 11, 0.35);
     }
-    .header-info h1 {
+    h1 {
       font-size: 1.35rem;
-      font-weight: 700;
+      line-height: 1.35;
       color: #f59e0b;
-      margin-bottom: 6px;
-      line-height: 1.3;
+      font-weight: 800;
     }
-    .header-info p {
-      color: #94a3b8;
-      font-size: 0.9rem;
-    }
-    .yt-btn {
+    .sub { margin-top: 6px; color: #94a3b8; font-size: 0.92rem; }
+    .yt {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      background: #dc2626;
-      color: #ffffff;
+      background: #f59e0b;
+      color: #0b0f19;
       text-decoration: none;
-      padding: 10px 20px;
-      border-radius: 10px;
-      font-size: 0.92rem;
-      font-weight: 600;
-      transition: background 0.2s, transform 0.1s;
+      font-weight: 800;
+      padding: 12px 18px;
+      border-radius: 12px;
     }
-    .yt-btn:hover {
-      background: #b91c1c;
-      transform: translateY(-1px);
-    }
-    /* Stats Grid */
+    .yt:hover { filter: brightness(1.08); }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
     }
-    .card {
-      background: #131a2a;
-      border: 1px solid #1f293d;
+    .card, .panel {
+      background: #111827;
+      border: 1px solid #1e293b;
       border-radius: 16px;
-      padding: 20px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-      transition: transform 0.2s, border-color 0.2s;
+      padding: 18px 18px 16px;
     }
-    .card:hover {
-      border-color: rgba(245, 158, 11, 0.4);
-      transform: translateY(-2px);
-    }
-    .card-title {
-      font-size: 0.85rem;
-      color: #94a3b8;
-      margin-bottom: 8px;
-    }
-    .card-val {
-      font-size: 1.55rem;
-      font-weight: 700;
-      color: #f8fafc;
-      letter-spacing: -0.5px;
-    }
-    .card-sub {
-      font-size: 0.88rem;
-      margin-top: 6px;
-      font-weight: 500;
-    }
-    .pos { color: #10b981; }
-    .neg { color: #ef4444; }
-    /* Section Block */
-    .section-card {
-      background: #131a2a;
-      border: 1px solid #1f293d;
-      border-radius: 18px;
-      padding: 22px;
-      margin-bottom: 24px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-    }
-    .section-title {
-      font-size: 1.15rem;
-      font-weight: 700;
+    .card { border-top: 3px solid #f59e0b; }
+    .label { color: #94a3b8; font-size: 0.84rem; margin-bottom: 8px; }
+    .value { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; }
+    .hint { margin-top: 6px; font-size: 0.86rem; color: #94a3b8; }
+    .up { color: #34d399; }
+    .down { color: #f87171; }
+    .panel { margin-bottom: 22px; padding: 20px; }
+    .panel h2 {
       color: #f59e0b;
-      margin-bottom: 18px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      font-size: 1.05rem;
+      margin-bottom: 14px;
     }
-    .chart-container {
-      position: relative;
-      height: 350px;
-      width: 100%;
+    .chart-box { position: relative; height: 360px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 11px 12px; text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      color: #f59e0b;
+      font-weight: 700;
+      border-bottom: 1px solid rgba(245, 158, 11, 0.35);
     }
-    /* Table */
-    .table-responsive {
-      overflow-x: auto;
-      border-radius: 10px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-      text-align: left;
-    }
-    thead th {
-      background: #0f1523;
+    td { border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+    tbody tr:hover { background: rgba(245, 158, 11, 0.06); }
+    .status, footer {
       color: #94a3b8;
-      font-weight: 600;
-      padding: 12px 14px;
-      border-bottom: 1px solid #1f293d;
-      white-space: nowrap;
-    }
-    tbody td {
-      padding: 12px 14px;
-      border-bottom: 1px solid #172033;
-      color: #cbd5e1;
-      white-space: nowrap;
-    }
-    tbody tr:hover {
-      background: #172033;
-    }
-    tbody tr:last-child td {
-      border-bottom: none;
-    }
-    .footer-note {
-      text-align: center;
-      color: #64748b;
-      font-size: 0.8rem;
-      margin-top: 32px;
+      font-size: 0.82rem;
       line-height: 1.6;
     }
+    footer { text-align: center; margin-top: 8px; }
+    #error { color: #f87171; margin-bottom: 14px; display: none; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <!-- Header -->
+  <div class="wrap">
     <header>
-      <div class="header-left">
-        <img src="./avatar.png" alt="比特汪頭像" class="avatar">
-        <div class="header-info">
+      <div class="brand">
+        <img src="./avatar.png" alt="比特汪頭像">
+        <div>
           <h1>幣看趨勢｜比特汪 BTC 定期定額實戰公開帳本</h1>
-          <p>紀律定投每月 25 號執行・完全公開真實對帳單數據</p>
+          <p class="sub">資料僅讀取同目錄 dca_portfolio.json，不呼叫外部行情 API</p>
         </div>
       </div>
-      <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" class="yt-btn">
-        <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-        </svg>
-        前往 YouTube 頻道
-      </a>
+      <a class="yt" href="https://www.youtube.com/@%E5%B9%A3%E7%9C%8B%E8%B6%A8%E5%8B%A2" target="_blank" rel="noopener noreferrer">前往 YouTube 頻道</a>
     </header>
 
-    <!-- 4 數據卡片 -->
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">累計總投入台幣</div>
-        <div class="card-val" id="stat-total-twd">載入中...</div>
-        <div class="card-sub" style="color:#94a3b8">紀律累積本金</div>
-      </div>
-      <div class="card">
-        <div class="card-title">累計持有 BTC</div>
-        <div class="card-val" id="stat-total-btc" style="color:#f59e0b">載入中...</div>
-        <div class="card-sub" style="color:#94a3b8">已實現累積顆數</div>
-      </div>
-      <div class="card">
-        <div class="card-title">平均買進成本 USD</div>
-        <div class="card-val" id="stat-avg-usd">載入中...</div>
-        <div class="card-sub" style="color:#94a3b8">持倉成本均價</div>
-      </div>
-      <div class="card">
-        <div class="card-title">目前總市值與未實現損益</div>
-        <div class="card-val" id="stat-market-val">載入中...</div>
-        <div class="card-sub" id="stat-pnl">-</div>
-      </div>
-    </div>
+    <p id="error"></p>
+    <section class="grid">
+      <article class="card">
+        <div class="label">累計總投入台幣</div>
+        <div class="value" id="total-twd">—</div>
+        <div class="hint">total_twd</div>
+      </article>
+      <article class="card">
+        <div class="label">累計持有 BTC</div>
+        <div class="value" id="total-btc">—</div>
+        <div class="hint">total_btc</div>
+      </article>
+      <article class="card">
+        <div class="label">平均買進成本 USD</div>
+        <div class="value" id="avg-usd">—</div>
+        <div class="hint">avg_buy_price_usd</div>
+      </article>
+      <article class="card">
+        <div class="label">目前總市值與未實現損益</div>
+        <div class="value" id="market-twd">—</div>
+        <div class="hint" id="pnl">—</div>
+      </article>
+    </section>
 
-    <!-- 走勢圖 -->
-    <div class="section-card">
-      <div class="section-title">
-        📈 資產成長走勢圖（累計本金 vs 總市值）
-      </div>
-      <div class="chart-container">
-        <canvas id="dcaChart"></canvas>
-      </div>
-    </div>
+    <section class="panel">
+      <h2>累計本金 vs 總市值</h2>
+      <div class="chart-box"><canvas id="trend"></canvas></div>
+    </section>
 
-    <!-- 歷史明細表格 -->
-    <div class="section-card">
-      <div class="section-title">
-        📋 歷史扣款明細清單
-      </div>
-      <div class="table-responsive">
+    <section class="panel">
+      <h2>歷史扣款明細</h2>
+      <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>扣款日期</th>
-              <th>扣款金額 (TWD)</th>
-              <th>買進價格 (USD)</th>
-              <th>取得數量 (BTC)</th>
-              <th>累計持有 (BTC)</th>
+              <th>日期</th>
+              <th>扣款 (TWD)</th>
+              <th>BTC 價格 (USD)</th>
+              <th>匯率</th>
+              <th>買入 BTC</th>
+              <th>累計本金</th>
+              <th>累計 BTC</th>
+              <th>當下市值 (TWD)</th>
             </tr>
           </thead>
-          <tbody id="ledger-body">
-            <tr>
-              <td colspan="5" style="text-align: center; color: #94a3b8;">資料載入中...</td>
-            </tr>
+          <tbody id="rows">
+            <tr><td colspan="8">讀取帳本中…</td></tr>
           </tbody>
         </table>
       </div>
-    </div>
-
-    <div class="footer-note">
-      本儀表板資料源自頻道公開對帳紀錄，僅作策略執行紀錄與交流，不構成任何投資建議。<br>
-      © 幣看趨勢｜比特汪 BTC 定期定額實戰公開帳本
-    </div>
+    </section>
+    <footer>市值＝持有 BTC × current_btc_usd × current_twd_rate。本頁僅供公開紀錄，不構成投資建議。</footer>
   </div>
 
   <script>
-    async function loadDashboard() {
-      try {
-        const res = await fetch('./dca_portfolio.json?t=' + Date.now());
-        if (!res.ok) throw new Error('無法讀取 dca_portfolio.json');
-        const ledger = await res.json();
+    const n = (v) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : 0;
+    };
+    const twd = (v) => "NT$ " + Math.round(n(v)).toLocaleString("zh-TW");
+    const usd = (v) => "$" + n(v).toLocaleString("zh-TW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const btc = (v) => n(v).toLocaleString("zh-TW", { minimumFractionDigits: 8, maximumFractionDigits: 8 });
 
-        const records = Array.isArray(ledger.records) ? ledger.records : [];
-        const totalTwd = Number(ledger.total_twd || 0);
-        const totalBtc = Number(ledger.total_btc || 0);
-        const avgBuyUsd = Number(ledger.avg_buy_price_usd || 0);
-        const currentBtcUsd = Number(ledger.current_btc_usd || 0);
-        const currentTwdRate = Number(ledger.current_twd_rate || 32.5);
+    function showError(msg) {
+      const el = document.getElementById("error");
+      el.style.display = "block";
+      el.textContent = msg;
+    }
 
-        // 市值與損益計算
-        const currentValTwd = Math.round(Number(ledger.current_market_value_twd !== undefined ? ledger.current_market_value_twd : (totalBtc * currentBtcUsd * currentTwdRate)));
-        const pnlTwd = Math.round(Number(ledger.unrealized_pnl_twd !== undefined ? ledger.unrealized_pnl_twd : (currentValTwd - totalTwd)));
-        const pnlPct = ledger.total_return_pct !== undefined ? Number(ledger.total_return_pct).toFixed(2) : (totalTwd > 0 ? ((pnlTwd / totalTwd) * 100).toFixed(2) : '0.00');
+    async function main() {
+      const res = await fetch("./dca_portfolio.json");
+      if (!res.ok) throw new Error("無法讀取 ./dca_portfolio.json（HTTP " + res.status + "）");
+      const data = await res.json();
+      const records = Array.isArray(data.records) ? data.records.slice() : [];
+      records.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 
-        // 渲染 4 張數據卡片
-        document.getElementById('stat-total-twd').textContent = `NT$ ${totalTwd.toLocaleString()}`;
-        document.getElementById('stat-total-btc').textContent = `${totalBtc.toFixed(8)} BTC`;
-        document.getElementById('stat-avg-usd').textContent = `$${avgBuyUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const totalTwd = n(data.total_twd);
+      const totalBtc = n(data.total_btc);
+      const avgUsd = n(data.avg_buy_price_usd);
+      const px = n(data.current_btc_usd);
+      const fx = n(data.current_twd_rate);
+      const marketTwd = totalBtc * px * fx;
+      const pnlTwd = marketTwd - totalTwd;
+      const pnlPct = totalTwd ? (pnlTwd / totalTwd) * 100 : 0;
+      const sign = pnlTwd >= 0 ? "+" : "";
 
-        const isProfit = pnlTwd >= 0;
-        const sign = isProfit ? '+' : '';
-        const pnlClass = isProfit ? 'pos' : 'neg';
-        document.getElementById('stat-market-val').textContent = `NT$ ${currentValTwd.toLocaleString()}`;
-        const pnlEl = document.getElementById('stat-pnl');
-        pnlEl.className = `card-sub ${pnlClass}`;
-        pnlEl.textContent = `${sign}NT$ ${pnlTwd.toLocaleString()} (${sign}${pnlPct}%)`;
+      document.getElementById("total-twd").textContent = twd(totalTwd);
+      document.getElementById("total-btc").textContent = btc(totalBtc) + " BTC";
+      document.getElementById("avg-usd").textContent = usd(avgUsd);
+      document.getElementById("market-twd").textContent = twd(marketTwd);
+      const pnlEl = document.getElementById("pnl");
+      const pnlLabel = (pnlTwd > 0 ? "+" : "") + twd(pnlTwd);
+      pnlEl.textContent = "未實現損益 " + pnlLabel + "（" + sign + pnlPct.toFixed(2) + "%）｜BTC " + usd(px) + " × 匯率 " + fx.toLocaleString("zh-TW");
+      pnlEl.className = "hint " + (pnlTwd >= 0 ? "up" : "down");
 
-        // 歷史明細表格與圖表數據處理
-        const labels = [];
-        const costSeries = [];
-        const valSeries = [];
-        let cumTwd = 0;
-        let cumBtc = 0;
-        const tbody = document.getElementById('ledger-body');
-        tbody.innerHTML = '';
+      const labels = [];
+      const principal = [];
+      const market = [];
+      let cumTwd = 0;
+      let cumBtc = 0;
+      const body = document.getElementById("rows");
+      body.innerHTML = "";
 
-        records.forEach(item => {
-          const date = item.date || '-';
-          const twd = Number(item.twd_invested || 0);
-          const usdPrice = Number(item.btc_price_usd || 0);
-          const btc = Number(item.btc_bought || 0);
-          const twdPrice = Number(item.btc_price_twd || (usdPrice * (item.twd_rate || currentTwdRate)));
+      records.forEach((row) => {
+        const invested = n(row.twd_invested);
+        const bought = n(row.btc_bought);
+        const priceUsd = n(row.btc_price_usd);
+        const rate = n(row.twd_rate) || fx;
+        const priceTwd = n(row.btc_price_twd) || priceUsd * rate;
+        cumTwd += invested;
+        cumBtc += bought;
+        const mark = cumBtc * priceTwd;
+        labels.push(row.date || "");
+        principal.push(Math.round(cumTwd));
+        market.push(Math.round(mark));
 
-          cumTwd += twd;
-          cumBtc += btc;
+        const tr = document.createElement("tr");
+        [row.date || "—", twd(invested), usd(priceUsd), rate ? rate.toLocaleString("zh-TW") : "—", btc(bought), twd(cumTwd), btc(cumBtc), twd(mark)]
+          .forEach((text, i) => {
+            const td = document.createElement("td");
+            td.textContent = text;
+            tr.appendChild(td);
+          });
+        body.appendChild(tr);
+      });
 
-          labels.push(date);
-          costSeries.push(cumTwd);
-          valSeries.push(Math.round(cumBtc * twdPrice));
+      if (!records.length) {
+        body.innerHTML = "<tr><td colspan=\"8\">帳本尚無扣款紀錄</td></tr>";
+      }
 
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>${date}</td>
-            <td>NT$ ${twd.toLocaleString()}</td>
-            <td>$${usdPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-            <td>${btc.toFixed(8)} BTC</td>
-            <td>${cumBtc.toFixed(8)} BTC</td>
-          `;
-          tbody.appendChild(tr);
-        });
+      labels.push("目前");
+      principal.push(Math.round(totalTwd));
+      market.push(Math.round(marketTwd));
 
-        // 圖表加入目前最新點
-        if (records.length > 0) {
-          labels.push('目前最新');
-          costSeries.push(totalTwd);
-          valSeries.push(currentValTwd);
-        }
-
-        // Chart.js 雙線走勢圖
-        const ctx = document.getElementById('dcaChart');
-        if (ctx && typeof Chart !== 'undefined') {
-          new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: labels,
-              datasets: [
-                {
-                  label: '總資產市值 (TWD)',
-                  data: valSeries,
-                  borderColor: '#f59e0b',
-                  backgroundColor: 'rgba(245, 158, 11, 0.12)',
-                  borderWidth: 2.5,
-                  fill: true,
-                  tension: 0.3,
-                  pointBackgroundColor: '#f59e0b',
-                  pointRadius: 4,
-                  pointHoverRadius: 6
-                },
-                {
-                  label: '累計投入本金 (TWD)',
-                  data: costSeries,
-                  borderColor: '#38bdf8',
-                  backgroundColor: 'transparent',
-                  borderWidth: 2,
-                  borderDash: [5, 5],
-                  fill: false,
-                  tension: 0.1,
-                  pointBackgroundColor: '#38bdf8',
-                  pointRadius: 3,
-                  pointHoverRadius: 5
-                }
-              ]
+      const canvas = document.getElementById("trend");
+      if (typeof Chart === "undefined") {
+        showError("Chart.js 未能載入，數據卡片與明細仍可閱讀。");
+        return;
+      }
+      new Chart(canvas, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "累計本金 (TWD)",
+              data: principal,
+              borderColor: "#94a3b8",
+              backgroundColor: "transparent",
+              borderDash: [6, 4],
+              borderWidth: 2,
+              pointRadius: 3,
+              tension: 0.15
             },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              interaction: {
-                mode: 'index',
-                intersect: false
-              },
-              plugins: {
-                legend: {
-                  labels: {
-                    color: '#e2e8f0',
-                    font: { family: "'Noto Sans TC', sans-serif", size: 12 }
-                  }
-                },
-                tooltip: {
-                  callbacks: {
-                    label: function(context) {
-                      return ` ${context.dataset.label}: NT$ ${context.parsed.y.toLocaleString()}`;
-                    }
-                  }
-                }
-              },
-              scales: {
-                x: {
-                  ticks: { color: '#94a3b8', font: { size: 11 } },
-                  grid: { color: 'rgba(148, 163, 184, 0.08)' }
-                },
-                y: {
-                  ticks: {
-                    color: '#94a3b8',
-                    font: { size: 11 },
-                    callback: function(value) {
-                      return 'NT$ ' + (value >= 10000 ? (value / 10000) + '萬' : value.toLocaleString());
-                    }
-                  },
-                  grid: { color: 'rgba(148, 163, 184, 0.08)' }
-                }
+            {
+              label: "總市值 (TWD)",
+              data: market,
+              borderColor: "#f59e0b",
+              backgroundColor: "rgba(245, 158, 11, 0.12)",
+              borderWidth: 2.5,
+              fill: true,
+              pointRadius: 3,
+              tension: 0.25
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { labels: { color: "#e2e8f0" } },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ctx.dataset.label + "：" + twd(ctx.parsed.y)
               }
             }
-          });
+          },
+          scales: {
+            x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,0.08)" } },
+            y: {
+              ticks: {
+                color: "#94a3b8",
+                callback: (v) => "NT$ " + Number(v).toLocaleString("zh-TW")
+              },
+              grid: { color: "rgba(148,163,184,0.08)" }
+            }
+          }
         }
-      } catch (err) {
-        console.error(err);
-        const errEl = document.getElementById('stat-total-twd');
-        if (errEl) errEl.textContent = '載入錯誤';
-      }
+      });
     }
-    loadDashboard();
+
+    main().catch((err) => {
+      showError(err && err.message ? err.message : "帳本載入失敗");
+      document.getElementById("rows").innerHTML = "<tr><td colspan=\"8\">載入失敗</td></tr>";
+    });
   </script>
 </body>
 </html>

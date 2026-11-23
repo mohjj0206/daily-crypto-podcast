@@ -76,7 +76,7 @@ def main():
         video_path=main_render["output_path"],
         thumb_path=main_render["thumb_path"],
         title=main_render["video_title"],
-        description=f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://github.io\n\n{main_render['v_desc']}",
+        description=f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://mohjj0206.github.io/daily-crypto-podcast/\n\n{main_render['v_desc']}",
         tags=["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
         show_dca=show_dca,
         cur_p=mdata["cur_p"],
