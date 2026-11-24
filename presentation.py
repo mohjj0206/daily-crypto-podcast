@@ -57,6 +57,59 @@ def tutorial_badge(ep_id):
     return f"【幣看深潛｜系統教學】{ep_id}"
 
 
+TUTORIAL_LAYOUTS = ("impact", "compare", "steps", "chart")
+
+
+def build_tutorial_cards(sections, lesson=None):
+    """把五段口播切成約 25 到 35 張圖卡，每張 2 到 4 句。"""
+    spoken = []
+    for section_index, section in enumerate(sections or []):
+        for line in section.get("lines") or []:
+            spoken.append({
+                "section_index": section_index,
+                "role": line.get("role") or "男",
+                "text": line.get("text") or "",
+                "title": section.get("title") or "",
+                "bullets": list(section.get("bullets") or []),
+            })
+    total = len(spoken)
+    if total == 0:
+        return []
+    size = 3
+    count = (total + size - 1) // size
+    if count > 35:
+        size = 4
+    elif count < 25 and total >= 50:
+        size = 2
+    if (total + size - 1) // size > 35:
+        size = max(4, (total + 34) // 35)
+    lesson = lesson or {}
+    myths = list(lesson.get("common_misconceptions") or ["把示意區間當成今天的買點"])
+    concepts = list(lesson.get("core_concepts") or ["先看結構，再談價格"])
+    cards = []
+    for start in range(0, total, size):
+        chunk = spoken[start:start + size]
+        layout = TUTORIAL_LAYOUTS[len(cards) % 4]
+        if len(cards) == 12:
+            layout = "chart"
+        headline = (chunk[0]["text"] or chunk[0]["title"] or "先看結構")[:22]
+        myth = myths[len(cards) % len(myths)]
+        truth = concepts[len(cards) % len(concepts)]
+        steps = (chunk[0]["bullets"] or concepts)[:3]
+        while len(steps) < 3:
+            steps.append(truth)
+        cards.append({
+            "layout": layout,
+            "title": chunk[0]["title"] or f"分鏡 {len(cards) + 1}",
+            "headline": headline,
+            "myth": myth,
+            "truth": truth,
+            "steps": steps[:3],
+            "lines": [{"role": item["role"], "text": item["text"]} for item in chunk],
+        })
+    return cards
+
+
 def format_usd(value):
     """具體美元金額四捨五入到整數，並加上千分位。負號放在錢字符號前面。"""
     rounded = round_usd(value)

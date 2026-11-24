@@ -73,5 +73,6 @@ jobs:
           if [ -n "$(git status --porcelain dca_portfolio.json history_db)" ]; then
             git add dca_portfolio.json history_db
             git commit -m "chore: update BTC DCA portfolio ledger and learning history"
+            git pull --rebase origin main
             git push
           fi

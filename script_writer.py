@@ -9,7 +9,7 @@ from itertools import permutations
 from zoneinfo import ZoneInfo
 from opencc import OpenCC
 
-from presentation import EXCLUDED_PLATFORMS, format_usd, sanitize_text
+from presentation import EXCLUDED_PLATFORMS, build_tutorial_cards, format_usd, sanitize_text
 
 
 # ── 文字清理與格式工具 ──────────────────────────────────────────
@@ -991,6 +991,7 @@ def _normalize_tutorial(payload, lesson):
         "short_script": short_script,
         "short_lines": short_lines,
         "char_count": _tutorial_char_count(sections),
+        "cards": build_tutorial_cards(sections, lesson),
     }
 
 
@@ -1036,6 +1037,7 @@ def generate_tutorial_script(lesson, reference_note, config):
 資料邊界：{reference_note}
 {length_rule}
 五段順序必須是：1 好奇提問與痛點鉤子；2 生活化白話比喻；3 鏈上或指標原理拆解；4 歷史週期實證；5 實戰啟示與三大誤區。
+每段寫成很多短對白，正式版每段 16 到 22 句，整集大約 90 到 120 句，讓後製能每 2 到 4 句切一張圖卡，合計約 25 到 35 張。
 第 1 段第一句就要丟出這集最反直覺的問題，前兩句不要客套，也不要先講免責。一句「本集是公開資訊整理，不構成投資建議」放在鉤子之後、開始拆原理之前。
 鐵律：繁體中文。角色只有比特汪與以太喵，台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤不要念出來。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：

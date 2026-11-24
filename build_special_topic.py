@@ -1400,7 +1400,9 @@ def main():
     tutorial = script_writer.generate_tutorial_script(
         lesson, reference, {"is_test": is_test}
     )
-    rendered = media_engine.render_tutorial_episode(tutorial, chart_path)
+    rendered = media_engine.render_tutorial_episode(
+        tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5,
+    )
     youtube = youtube_uploader.build_youtube_client()
     video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
     if not is_test and video_id and not str(video_id).startswith(("TEST", "UPLOAD")):

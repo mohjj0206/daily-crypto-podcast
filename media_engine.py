@@ -283,7 +283,9 @@ def short_subtitle_visual_width(text):
     )
 
 
-def split_short_subtitle_text(text):
+def split_short_subtitle_text(text, max_width=None, shrink_limit=None):
+    width_limit = SHORT_SUBTITLE_MAX_WIDTH if max_width is None else max_width
+    shrink_at = SHORT_SUBTITLE_SHRINK_LIMIT if shrink_limit is None else shrink_limit
     def trim_edges(value):
         return SHORT_SUBTITLE_EDGE_PUNCTUATION.sub("", value).strip()
 
@@ -360,10 +362,10 @@ def split_short_subtitle_text(text):
         width = short_subtitle_visual_width(clause)
         if not clause:
             return []
-        if width <= SHORT_SUBTITLE_SHRINK_LIMIT:
+        if width <= shrink_at:
             scale = (
                 SHORT_SUBTITLE_SHRINK_PERCENT
-                if width > SHORT_SUBTITLE_MAX_WIDTH
+                if width > width_limit
                 else 100
             )
             return [(clause, scale)]
@@ -2354,6 +2356,202 @@ def _write_tutorial_thumb(tutorial):
     return "thumb_tutorial.jpg"
 
 
+def _tutorial_intro_and_outro(intro_seconds, outro_seconds, outro_pause):
+    create_outro_audio(outro_seconds, outro_pause)
+    create_outro_frame()
+    create_outro_video(outro_seconds)
+    has_intro = os.path.exists("info.mp4") and os.path.exists("info.mp3")
+    intro_dur = 0.0
+    if not has_intro:
+        print("找不到 info.mp4 或 info.mp3，教學片頭改為略過。")
+        return intro_dur, has_intro
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", "info.mp3", "-t", f"{intro_seconds:g}",
+            "-af", "afade=t=out:st=13.5:d=1.5,apad=whole_dur=15",
+            "-ar", "24000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k",
+            "intro_cut.mp3",
+        ],
+        check=True,
+    )
+    intro_dur = float(subprocess.check_output(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", "intro_cut.mp3"]
+    ).decode().strip())
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", "info.mp4", "-t", f"{intro_seconds:g}",
+            "-vf", f"scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,fps={VIDEO_FPS},format=yuv420p",
+            "-an", "-r", str(VIDEO_FPS), "-c:v", "libx264", "-preset", "medium",
+            "-crf", VIDEO_CRF, "-pix_fmt", "yuv420p", "intro.mp4",
+        ],
+        check=True,
+    )
+    return intro_dur, has_intro
+
+
+def _tutorial_card_html(card, chart_markup):
+    layout = card.get("layout") or "impact"
+    title = html.escape(str(card.get("title") or ""))
+    headline = html.escape(str(card.get("headline") or ""))
+    myth = html.escape(str(card.get("myth") or ""))
+    truth = html.escape(str(card.get("truth") or ""))
+    steps = "".join(
+        f'<li><b>{index}</b><span>{html.escape(str(step))}</span></li>'
+        for index, step in enumerate(card.get("steps") or [], 1)
+    )
+    if layout == "compare":
+        body = (
+            '<div class="split"><article class="bad"><small>迷思</small>'
+            f'<p>{myth}</p></article><article class="good"><small>真相</small>'
+            f'<p>{truth}</p></article></div>'
+        )
+    elif layout == "steps":
+        body = f'<ol class="steps">{steps}</ol>'
+    elif layout == "chart" and chart_markup:
+        body = f'<div class="chart-row">{chart_markup}<aside><p>{truth}</p></aside></div>'
+    else:
+        body = f'<p class="giant">{headline}</p><p class="sub">{truth}</p>'
+    return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<style>
+html,body {{ margin:0; width:1920px; height:1080px; overflow:hidden; background:#070b14; color:#f8fafc;
+  font-family:'Noto Sans CJK TC',sans-serif; }}
+.safe {{ position:absolute; left:300px; right:300px; top:70px; bottom:290px; }}
+.kicker {{ color:#f59e0b; font-size:34px; font-weight:800; }}
+h1 {{ margin:12px 0 24px; font-size:54px; line-height:1.25; }}
+.giant {{ margin:20px 0; font-size:92px; font-weight:900; line-height:1.15; color:#fff7ed;
+  text-shadow:0 0 28px rgba(245,158,11,.45); animation:glow 2.8s ease-in-out infinite; }}
+.sub {{ font-size:36px; color:#cbd5e1; }}
+.split {{ display:grid; grid-template-columns:1fr 1fr; gap:28px; height:72%; }}
+article {{ border-radius:28px; padding:36px; }}
+.bad {{ background:#3f1218; border:4px solid #ef4444; }}
+.good {{ background:#052e1a; border:4px solid #22c55e; }}
+small {{ font-size:32px; font-weight:800; }}
+p {{ font-size:40px; line-height:1.35; }}
+.steps {{ list-style:none; margin:0; padding:0; }}
+.steps li {{ display:flex; gap:22px; align-items:center; margin:18px 0; font-size:36px;
+  animation:pop .45s ease-out both; }}
+.steps li:nth-child(2) {{ animation-delay:.15s; }}
+.steps li:nth-child(3) {{ animation-delay:.3s; }}
+.steps b {{ width:72px; height:72px; border-radius:50%; display:grid; place-items:center;
+  background:#f59e0b; color:#111827; }}
+.chart-row {{ display:grid; grid-template-columns:1.3fr .7fr; gap:24px; height:100%; }}
+.chart-row img {{ width:100%; height:620px; object-fit:contain; }}
+aside {{ border:4px solid #38bdf8; border-radius:24px; padding:28px; background:#0f172a; }}
+@keyframes glow {{ 50% {{ text-shadow:0 0 42px rgba(245,158,11,.8); }} }}
+@keyframes pop {{ from {{ opacity:0; transform:translateY(16px); }} to {{ opacity:1; transform:none; }} }}
+</style></head><body><div class="safe"><div class="kicker">{title}</div><h1>{headline}</h1>{body}</div></body></html>"""
+
+
+def _record_tutorial_card(browser, index, card, duration, chart_markup):
+    record_seconds = min(float(duration), 4.0)
+    remaining = max(0.0, float(duration) - record_seconds)
+    tpad = f",tpad=stop_mode=clone:stop_duration={remaining:.6f}" if remaining else ""
+    with tempfile.TemporaryDirectory(prefix=f"tcard_{index}_") as record_dir:
+        context = browser.new_context(
+            viewport={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
+            record_video_dir=record_dir,
+            record_video_size={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
+        )
+        page = context.new_page()
+        video = page.video
+        try:
+            page.set_content(_tutorial_card_html(card, chart_markup), wait_until="load")
+            page.wait_for_timeout(max(1, round(record_seconds * 1000)))
+        finally:
+            context.close()
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", video.path(),
+                "-vf", (
+                    f"fps={VIDEO_FPS},scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
+                    f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS{tpad},format=yuv420p"
+                ),
+                "-t", f"{duration:.6f}", "-an", "-r", str(VIDEO_FPS),
+                "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+                "-pix_fmt", "yuv420p", f"tutorial_p{index}.mp4",
+            ],
+            check=True,
+        )
+
+
+def _mux_tutorial_avatars(video_path, audio_path, output_path, speaker_intervals, intro_dur, speech_end):
+    talk_videos = {
+        "cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
+        "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None,
+    }
+    assets = create_speaker_avatars(talk_videos)
+    cat_speaking = "+".join(
+        f"between(t,{start:.6f},{end:.6f})" for start, end in speaker_intervals["F"]
+    ) or "0"
+    dog_speaking = "+".join(
+        f"between(t,{start:.6f},{end:.6f})" for start, end in speaker_intervals["M"]
+    ) or "0"
+    speech_window = f"between(t,{intro_dur:.6f},{speech_end:.6f})"
+    command = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path]
+    indexes = {}
+
+    def add_input(name, path, is_video=False):
+        indexes[name] = len(indexes) + 2
+        if is_video:
+            command.extend(["-stream_loop", "-1", "-i", path])
+        else:
+            command.extend(["-loop", "1", "-framerate", str(VIDEO_FPS), "-i", path])
+
+    add_input("cat_idle", assets["cat_idle"])
+    add_input("cat_talk", talk_videos["cat"] or assets["cat_speaking"], bool(talk_videos["cat"]))
+    add_input("dog_idle", assets["dog_idle"])
+    add_input("dog_talk", talk_videos["dog"] or assets["dog_speaking"], bool(talk_videos["dog"]))
+    if any(talk_videos.values()):
+        add_input("circle_mask", assets["circle_mask"])
+    for speaker in ("cat", "dog"):
+        if talk_videos[speaker]:
+            add_input(f"{speaker}_ring", assets[f"{speaker}_ring"])
+    filters = ["[0:v]null[v_sub]"]
+    active = [speaker for speaker in ("cat", "dog") if talk_videos[speaker]]
+    if len(active) == 2:
+        filters.append(f"[{indexes['circle_mask']}:v]format=gray,split=2[cat_mask][dog_mask]")
+    elif active:
+        filters.append(f"[{indexes['circle_mask']}:v]format=gray[{active[0]}_mask]")
+    for speaker in active:
+        filters.append(
+            f"[{indexes[f'{speaker}_talk']}:v]fps={VIDEO_FPS},"
+            "scale=252:252:force_original_aspect_ratio=increase,crop=252:252,setsar=1,format=rgba"
+            f"[{speaker}_square];[{speaker}_square][{speaker}_mask]alphamerge[{speaker}_talk_circle]"
+        )
+    cat_talk = "[cat_talk_circle]" if talk_videos["cat"] else f"[{indexes['cat_talk']}:v]"
+    dog_talk = "[dog_talk_circle]" if talk_videos["dog"] else f"[{indexes['dog_talk']}:v]"
+    filters.extend([
+        f"[v_sub][{indexes['cat_idle']}:v]overlay=x=42:y=817.5:enable='{speech_window}*not({cat_speaking})'[v_cat_idle]",
+        f"[v_cat_idle]{cat_talk}overlay=x=42:y='804+6*sin(t*14)':eval=frame:enable='{cat_speaking}'[v_cat_talk]",
+    ])
+    stage = "v_cat_talk"
+    if talk_videos["cat"]:
+        filters.append(
+            f"[{stage}][{indexes['cat_ring']}:v]overlay=x=42:y='804+6*sin(t*14)':eval=frame:enable='{cat_speaking}'[v_cat_speaking]"
+        )
+        stage = "v_cat_speaking"
+    filters.extend([
+        f"[{stage}][{indexes['dog_idle']}:v]overlay=x=1653:y=817.5:enable='{speech_window}*not({dog_speaking})'[v_dog_idle]",
+        f"[v_dog_idle]{dog_talk}overlay=x=1653:y='804+6*sin(t*16)':eval=frame:enable='{dog_speaking}'[v_dog_talk]",
+    ])
+    stage = "v_dog_talk"
+    if talk_videos["dog"]:
+        filters.append(
+            f"[{stage}][{indexes['dog_ring']}:v]overlay=x=1653:y='804+6*sin(t*16)':eval=frame:enable='{dog_speaking}'[v_dog_speaking]"
+        )
+        stage = "v_dog_speaking"
+    filters.append(f"[{stage}]null[v_out]")
+    command.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "[v_out]", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+        "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-shortest", output_path,
+    ])
+    subprocess.run(command, check=True)
+
+
 def _render_tutorial_short(tutorial):
     lines = tutorial.get("short_lines") or []
     if len(lines) < 2:
@@ -2372,130 +2570,179 @@ def _render_tutorial_short(tutorial):
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", "tutorial_short.mp3"]
     ).decode().strip())
-    font_path = get_system_font_path()
-    frame = Image.new("RGB", (1080, 1920), "#090d16")
-    draw = ImageDraw.Draw(frame)
-    draw.rectangle((36, 36, 1044, 1884), outline="#f59e0b", width=8)
-    badge_font = ImageFont.truetype(font_path, 42)
-    body_font = ImageFont.truetype(font_path, 54)
-    draw.text((72, 120), presentation.tutorial_badge(tutorial.get("ep_id", "EP")), fill="#f59e0b", font=badge_font)
-    y = 280
-    for line in lines[:4]:
-        text = presentation.display_text(line["text"])[:42]
-        draw.text((72, y), text, fill="#f8fafc", font=body_font)
-        y += 120
-    draw.text((72, 1680), "完整教學與公開帳本見說明欄", fill="#fbbf24", font=badge_font)
-    frame.save("tutorial_short_frame.png")
+    events = []
+    clock = 0.0
+    for _, _, spoken, segment_duration in results:
+        clean = re.sub(r"[{}\\]", "", spoken).strip()
+        chunks = split_short_subtitle_text(clean, max_width=11, shrink_limit=11)
+        total_width = sum(short_subtitle_visual_width(chunk) for chunk, _ in chunks) or 1
+        segment_time = clock
+        for index, (chunk, scale_percent) in enumerate(chunks):
+            end = clock + segment_duration if index == len(chunks) - 1 else segment_time + segment_duration * short_subtitle_visual_width(chunk) / total_width
+            text = chunk if scale_percent == 100 else f"{{\\fscx{scale_percent}\\fscy{scale_percent}}}{chunk}"
+            events.append(
+                f"Dialogue: 0,{fmt_ass_t(segment_time)},{fmt_ass_t(end)},Default,,110,110,0,,{text}"
+            )
+            segment_time = end
+        clock += segment_duration
+    ass = (
+        "[Script Info]\nScriptType: v4.00+\nWrapStyle: 2\n"
+        "PlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Noto Sans CJK TC,62,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,0,0,1,4,0,2,110,110,420,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        + "\n".join(events)
+    )
+    with open("tutorial_short.ass", "w", encoding="utf-8") as handle:
+        handle.write(ass)
+    hook = html.escape(_fit_cjk_hook(tutorial.get("title") or "", "成本帶怎麼看"))
+    badge = html.escape(presentation.tutorial_badge(tutorial.get("ep_id", "EP")))
+    cards = []
+    for index, line in enumerate(lines[:4]):
+        cards.append(
+            f'<article style="animation-delay:{index * duration / 4:.2f}s">{html.escape(str(line.get("text") or "")[:28])}</article>'
+        )
+    avatars = ""
+    if os.path.exists("avatar.png"):
+        with Image.open("avatar.png") as avatar:
+            buffer = io.BytesIO()
+            avatar.convert("RGBA").resize((420, 220), Image.LANCZOS).save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        avatars = f'<img class="hosts" alt="" src="data:image/png;base64,{encoded}">'
+    short_html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><style>
+html,body {{ margin:0; width:1080px; height:1920px; overflow:hidden; color:#f8fafc; font-family:'Noto Sans CJK TC',sans-serif; }}
+body {{ background:#070b14; }}
+body::before {{ content:""; position:absolute; inset:-8%;
+  background:radial-gradient(circle at 50% 30%,rgba(56,189,248,.25),transparent 42%),
+  linear-gradient(rgba(56,189,248,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.08) 1px,transparent 1px);
+  background-size:auto,48px 48px,48px 48px; animation:flow 14s linear infinite; }}
+@keyframes flow {{ to {{ transform:translate3d(48px,24px,0); }} }}
+.badge {{ position:absolute; top:70px; left:70px; right:70px; color:#f59e0b; font-size:40px; font-weight:800; }}
+h1 {{ position:absolute; top:160px; left:70px; right:70px; font-size:78px; line-height:1.2; }}
+.deck {{ position:absolute; left:80px; right:80px; top:460px; height:900px; }}
+article {{ position:absolute; inset:0; display:grid; place-items:center; padding:48px; border-radius:36px;
+  background:rgba(15,23,42,.92); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
+  opacity:0; animation:card {duration:.2f}s linear forwards; }}
+@keyframes card {{ 4%,22% {{ opacity:1; transform:scale(1); }} 0%,28%,100% {{ opacity:0; transform:scale(.94); }} }}
+.hosts {{ position:absolute; left:250px; bottom:80px; width:580px; height:280px; object-fit:contain;
+  border:6px solid #f59e0b; border-radius:40px; background:#111827; }}
+</style></head><body><div class="badge">{badge}</div><h1>{hook}</h1><div class="deck">{''.join(cards)}</div>{avatars}</body></html>"""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            with tempfile.TemporaryDirectory(prefix="tshort_") as video_dir:
+                context = browser.new_context(
+                    viewport={"width": 1080, "height": 1920},
+                    record_video_dir=video_dir,
+                    record_video_size={"width": 1080, "height": 1920},
+                )
+                page = context.new_page()
+                video = page.video
+                try:
+                    page.set_content(short_html, wait_until="load")
+                    page.wait_for_timeout(max(1, round(duration * 1000)))
+                finally:
+                    context.close()
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-i", video.path(),
+                        "-vf", f"fps={VIDEO_FPS},scale=1080:1920:flags=lanczos,format=yuv420p",
+                        "-t", f"{duration:.6f}", "-an", "-r", str(VIDEO_FPS),
+                        "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+                        "-pix_fmt", "yuv420p", "tutorial_short_visual.mp4",
+                    ],
+                    check=True,
+                )
+        finally:
+            browser.close()
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loop", "1", "-framerate", str(VIDEO_FPS),
-            "-i", "tutorial_short_frame.png", "-i", "tutorial_short.mp3",
-            "-vf", f"scale=1080:1920:flags=lanczos,fps={VIDEO_FPS},format=yuv420p",
-            "-r", str(VIDEO_FPS), "-c:v", "libx264", "-preset", "medium",
-            "-crf", VIDEO_CRF, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-            "-shortest", "tutorial_short.mp4",
+            "ffmpeg", "-y", "-i", "tutorial_short_visual.mp4", "-i", "tutorial_short.mp3",
+            "-vf", "ass=tutorial_short.ass",
+            "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+            "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-shortest", "tutorial_short.mp4",
         ],
         check=True,
     )
     return "tutorial_short.mp4", duration
 
 
-def render_tutorial_episode(tutorial, chart_path):
-    """用每日簡報的 1920×1080 動畫層，合成五段教學長片與一支精華 Shorts。"""
+def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5):
+    """教學長片：15 秒片頭、25 到 35 張快切圖卡、雙頭像、1.5 秒停頓與 12 秒片尾。"""
     sections = tutorial.get("sections") or []
     if len(sections) != 5:
         raise RuntimeError("Tutorial render requires 5 sections.")
-    flat = []
-    for section_index, section in enumerate(sections):
-        for line in section.get("lines") or []:
-            flat.append((section_index, line["role"], line["text"]))
-    if not flat:
+    cards = tutorial.get("cards") or presentation.build_tutorial_cards(sections, tutorial)
+    if not cards:
         raise RuntimeError("Tutorial script has no spoken lines.")
+    print(f"教學分鏡 {len(cards)} 張。")
+    flat = []
+    for card in cards:
+        for line in card.get("lines") or []:
+            flat.append((line.get("role") or "男", line.get("text") or ""))
     with ThreadPoolExecutor(max_workers=5) as pool:
         results = list(pool.map(
-            lambda item: synth_audio_segment((item[0], (item[1][1], item[1][2])), "tseg"),
+            lambda item: synth_audio_segment((item[0], item[1]), "tseg"),
             list(enumerate(flat)),
         ))
     results.sort(key=lambda item: item[0])
-    section_duration = [0.0] * 5
+    intro_dur, has_intro = _tutorial_intro_and_outro(intro_seconds, outro_seconds, outro_pause)
+    cursor = intro_dur
+    speaker_intervals = {"F": [], "M": []}
+    card_starts = []
+    line_cursor = 0
+    card_durations = []
+    for card in cards:
+        card_starts.append(cursor)
+        card_duration = 0.0
+        for line in card.get("lines") or []:
+            duration = results[line_cursor][3]
+            speaker = "F" if line.get("role") == "女" else "M"
+            speaker_intervals[speaker].append((cursor, cursor + duration))
+            cursor += duration
+            card_duration += duration
+            line_cursor += 1
+        card_durations.append(max(1.0, card_duration))
+    speech_end = cursor
     with open("tutorial_audio.txt", "w", encoding="utf-8") as handle:
-        for index, (_, filename, _, duration) in enumerate(results):
-            section_duration[flat[index][0]] += duration
+        if has_intro:
+            handle.write("file 'intro_cut.mp3'\n")
+        for _, filename, _, _ in results:
             handle.write(f"file '{filename}'\n")
+        handle.write("file 'outro_pause.mp3'\n")
+        handle.write("file 'outro_music.mp3'\n")
     _concat_media("tutorial_audio.txt", "tutorial.mp3")
-    section_marks = []
-    section_cursor = 0.0
-    for duration in section_duration:
-        if section_cursor >= 0.05:
-            section_marks.append(section_cursor)
-        section_cursor += duration
-    mix_voice_with_bed("tutorial.mp3", "tutorial_bed.mp3", section_marks)
-    badge = presentation.tutorial_badge(tutorial.get("ep_id", "EP"))
-    ticker_items = [
-        {"label": "課程", "value": tutorial.get("ep_id", "EP"), "detail": tutorial.get("series", ""), "tone": "neutral"},
-        {"label": "形式", "value": "結構示意", "detail": "不是即時報價", "tone": "neutral"},
-        {"label": "主持人", "value": "比特汪", "detail": "以太喵", "tone": "neutral"},
-        {"label": "帳本", "value": "模擬定投", "detail": "公開頁可追蹤", "tone": "neutral"},
-    ]
-    insights = {
-        "mvrv": tutorial.get("ep_id", "EP"),
-        "zone": tutorial.get("series", ""),
-        "mvrv_pct": 35,
-        "support": "結構示意",
-        "resistance": "不是即時普查",
-        "rsi": "教學",
-        "sma": "不承諾獲利",
-        "headline": "先懂結構",
-        "detail": "價格帶是區間示意",
-    }
-    labels = {
-        "mvrv": "課號",
-        "level": "圖表性質",
-        "indicator": "系列提醒",
-        "conclusion": "本集結論",
-    }
+    mix_voice_with_bed("tutorial.mp3", "tutorial_bed.mp3", card_starts)
+    chart_markup = ""
+    if chart_path and os.path.exists(chart_path):
+        with open(chart_path, "rb") as chart_file:
+            encoded = base64.b64encode(chart_file.read()).decode("ascii")
+        chart_markup = f'<img alt="" src="data:image/png;base64,{encoded}">'
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
-            for index, section in enumerate(sections, 1):
-                use_chart = index == 3 and chart_path and os.path.exists(chart_path)
-                slide = {
-                    "label": badge,
-                    "title": section["title"],
-                    "highlights": section.get("bullets") or [section["title"]],
-                    "chart_path": chart_path if use_chart else None,
-                    "layout": "chart" if use_chart else "hero",
-                    "accent": "#f59e0b",
-                    "caption": "結構示意，不是即時持倉或收益保證" if use_chart else "",
-                    "ticker_items": ticker_items,
-                    "insights": insights,
-                    "insight_labels": labels,
-                }
-                render_animated_slide(
-                    index, slide, max(1.0, section_duration[index - 1]), f"tutorial_p{index}.mp4", browser
-                )
+            for index, card in enumerate(cards, 1):
+                markup = chart_markup if card.get("layout") == "chart" else ""
+                _record_tutorial_card(browser, index, card, card_durations[index - 1], markup)
         finally:
             browser.close()
     with open("tutorial_video.txt", "w", encoding="utf-8") as handle:
-        for index in range(1, 6):
+        if has_intro:
+            handle.write("file 'intro.mp4'\n")
+        for index in range(1, len(cards) + 1):
             handle.write(f"file 'tutorial_p{index}.mp4'\n")
+        handle.write("file 'outro.mp4'\n")
     _concat_media("tutorial_video.txt", "tutorial_visual.mp4")
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-i", "tutorial_visual.mp4", "-i", "tutorial_bed.mp3",
-            "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
-            "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-shortest", "tutorial_main.mp4",
-        ],
-        check=True,
+    _mux_tutorial_avatars(
+        "tutorial_visual.mp4", "tutorial_bed.mp3", "tutorial_main.mp4",
+        speaker_intervals, intro_dur, speech_end,
     )
     short_path, short_duration = _render_tutorial_short(tutorial)
     thumb_path = _write_tutorial_thumb(tutorial)
-    chapters = []
-    cursor = 0.0
-    for section, duration in zip(sections, section_duration):
-        chapters.append(f"{int(cursor) // 60:02d}:{int(cursor) % 60:02d} {section['title']}")
-        cursor += duration
+    chapters = [f"00:00 片頭"] if has_intro else []
+    for start, card in zip(card_starts, cards):
+        chapters.append(f"{int(start) // 60:02d}:{int(start) % 60:02d} {card['title']}")
     return {
         "output_path": "tutorial_main.mp4",
         "short_path": short_path,

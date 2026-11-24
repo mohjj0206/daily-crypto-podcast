@@ -1,5 +1,11 @@
 {
-  "completed": [],
-  "next_ep_id": "EP01",
-  "updated_at": null
+  "completed": [
+    {
+      "ep_id": "EP01",
+      "date": "2026-11-24",
+      "title": "鏈上大解密：現在還有成本低於 $1 的比特幣嗎？還是經過多年換手，大家成本都差不多了？"
+    }
+  ],
+  "next_ep_id": "EP02",
+  "updated_at": "2026-11-24"
 }
