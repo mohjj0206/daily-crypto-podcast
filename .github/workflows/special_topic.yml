@@ -53,6 +53,7 @@ jobs:
 
       - name: Render evergreen tutorial
         env:
+          MODE: evergreen
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
           REUSE_SCRIPT: ${{ inputs.reuse_script || 'false' }}
           TARGET_EP_ID: ${{ inputs.target_ep_id || '' }}

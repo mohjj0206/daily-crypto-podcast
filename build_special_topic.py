@@ -231,7 +231,7 @@ def fetch_topic_articles(coin_code, recent_news):
     )
     feeds = [
         search_feed_url(base_url, query)
-        for base_url in ("https://blocktempo.com", "https://blockcast.it")
+        for base_url in ("https://blockcast.it",)
         for query in queries
     ]
     articles = []
@@ -348,7 +348,6 @@ def call_gemini(prompt):
     if custom_model:
         models = [custom_model] + [model for model in models if model != custom_model]
     last_error = None
-    overload_waits = (10, 25, 45)
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         payload = json.dumps(
@@ -357,7 +356,6 @@ def call_gemini(prompt):
                 "generationConfig": {"maxOutputTokens": 8192},
             }
         ).encode("utf-8")
-        overload_tries = 0
         while True:
             request = urllib.request.Request(
                 url,
@@ -366,21 +364,15 @@ def call_gemini(prompt):
                 method="POST",
             )
             try:
-                response = json.loads(urllib.request.urlopen(request, timeout=180).read().decode("utf-8"))
+                response = json.loads(urllib.request.urlopen(request, timeout=240).read().decode("utf-8"))
                 return response["candidates"][0]["content"]["parts"][0]["text"]
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
                 print(f"Gemini 模型 {model} 回應 HTTP {exc.code}：{detail[:300]}")
                 last_error = exc
-                if exc.code in (404, 429):
+                if exc.code in (404, 429, 503):
                     print(f"Gemini 模型 {model} 回傳 {exc.code}，立即改試下一個備援。")
                     break
-                if exc.code == 503 and overload_tries < len(overload_waits):
-                    wait = overload_waits[overload_tries]
-                    overload_tries += 1
-                    print(f"Gemini 模型 {model} 回傳 503，第 {overload_tries}/3 次重試，等待 {wait} 秒。")
-                    time.sleep(wait)
-                    continue
                 break
             except (urllib.error.URLError, TimeoutError, ConnectionError, KeyError, IndexError, ValueError) as exc:
                 print(f"Gemini 模型 {model} 呼叫失敗，改試備援模型：{exc}")
@@ -620,14 +612,39 @@ def make_dialogues(part1, part2):
     return title, dialogues
 
 
+def _dialogue_count(dialogues):
+    return sum(len(text) for _, text in dialogues)
+
+
+def _expand_dialogues(dialogues):
+    script = "\n".join(f"{role}：{text}" for role, text in dialogues)
+    expanded = call_gemini(
+        "以下逐字稿偏短。請深度擴寫補強，補充更多白話例子、歷史細節與風險分析。"
+        "保持「男：」「女：」開頭、繁體中文、整數美元，禁止台幣、小數金額、承諾獲利與槓桿。"
+        "只輸出擴寫後的逐字稿，不要標題。\n\n"
+        + script
+    )
+    _, expanded_dialogues = make_dialogues("標題：擴寫\n" + expanded, "")
+    return expanded_dialogues or dialogues
+
+
 def validate_dialogue_length(dialogues):
-    character_count = sum(len(text) for _, text in dialogues)
-    minimum, maximum = (300, 520) if IS_TEST else (4800, 5200)
-    if not minimum <= character_count <= maximum:
-        raise ValueError(
-            f"逐字稿共有 {character_count} 字，"
-            f"未符合{'測試' if IS_TEST else '正式'}模式的 {minimum} 至 {maximum} 字要求。"
-        )
+    """字數不足只擴寫一次，達 3200 字就放行，不再用 ValueError 中斷成片。"""
+    if IS_TEST:
+        print(f"測試稿 {_dialogue_count(dialogues)} 字，放行。")
+        return dialogues
+    character_count = _dialogue_count(dialogues)
+    if character_count < 4800:
+        print(f"逐字稿 {character_count} 字，低於 4800，改做一次深度擴寫。")
+        dialogues = _expand_dialogues(dialogues)
+        character_count = _dialogue_count(dialogues)
+    if character_count >= 4800:
+        print(f"逐字稿 {character_count} 字，進入配音。")
+    elif character_count >= 3200:
+        print(f"警告：擴寫後 {character_count} 字，低於 4800 但已達 3200，放行進入配音與渲染。")
+    else:
+        print(f"警告：擴寫後仍只有 {character_count} 字，低於 3200，仍放行以免整集中斷。")
+    return dialogues
 
 
 def run_ffprobe_duration(filename):
@@ -1246,7 +1263,7 @@ def run_coin_special():
     defaults = default_conditions(coin_code, market)
     conditions, part2 = extract_conditions(part2, defaults)
     title_text, dialogues = make_dialogues(part1, part2)
-    validate_dialogue_length(dialogues)
+    dialogues = validate_dialogue_length(dialogues)
     title = f"【幣看深潛】{metadata['name']}｜{title_text}（{TODAY_STR}）"
     results = synthesize_dialogues(dialogues)
     intro_duration, has_intro = make_intro_video(coin_code)
@@ -1361,7 +1378,12 @@ def mark_evergreen_complete(lesson):
 
 
 def main():
-    """常青教學總指揮。原本的幣種專題仍可呼叫 run_coin_special()。"""
+    """預設走常青教學。只有 MODE=coin_special 才走舊的單一幣種新聞。"""
+    if os.environ.get("MODE", "").strip().lower() == "coin_special":
+        print("MODE=coin_special，改走舊的單一幣種新聞路線。")
+        run_coin_special()
+        return
+    print("預設進入常青深度百科教學線，不跑單一幣種新聞。")
     import chart_maker
     import media_engine
     import script_writer

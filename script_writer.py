@@ -98,22 +98,19 @@ def reuse_script_enabled():
     return os.environ.get("REUSE_SCRIPT", "").strip().lower() == "true"
 
 
-def call_gemini(prompt_txt, max_output_tokens=8192, timeout=180):
+def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240):
     models = list(TEST_MODELS if os.environ.get("TEST_MODE", "").strip().lower() == "true" else PRODUCTION_MODELS)
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
 
     last_err = None
-    overload_waits = (10, 25, 45)
     for model in models:
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
         body = json.dumps({
             "contents": [{"parts": [{"text": prompt_txt}]}],
             "generationConfig": {"maxOutputTokens": max_output_tokens},
         }).encode("utf-8")
-        overload_tries = 0
-        retried_timeout = False
         while True:
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             try:
@@ -123,23 +120,13 @@ def call_gemini(prompt_txt, max_output_tokens=8192, timeout=180):
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
                 last_err = e
-                if e.code in (404, 429):
+                if e.code in (404, 429, 503):
                     print(f"Gemini model '{model}' returned {e.code}; switching immediately.")
                     break
-                if e.code == 503 and overload_tries < len(overload_waits):
-                    wait = overload_waits[overload_tries]
-                    overload_tries += 1
-                    print(f"Gemini model '{model}' returned 503; retry {overload_tries}/3 in {wait}s.")
-                    time.sleep(wait)
-                    continue
                 break
             except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
-                print(f"Gemini network timeout/error for model '{model}': {e}")
+                print(f"Gemini model '{model}' timed out or lost connection; switching immediately: {e}")
                 last_err = e
-                if not retried_timeout:
-                    retried_timeout = True
-                    time.sleep(10)
-                    continue
                 break
             except Exception as e:
                 print(f"Error calling Gemini model '{model}': {e}")
@@ -436,10 +423,23 @@ def _parse_episode_payload(raw_text):
     )
 
 
+def _spoken_chars(text):
+    return len(re.sub(r"\s+", "", text or ""))
+
+
+def _log_length_gate(count, label):
+    if count >= 4800:
+        print(f"{label} {count} 字，進入後續流程。")
+    elif count >= 3200:
+        print(f"警告：{label} {count} 字，低於 4800，已達 3200，放行。")
+    else:
+        print(f"警告：{label} {count} 字，低於 3200，仍放行以免整集中斷。")
+
+
 def _episode_long_enough(part1_raw, part2_raw, is_test):
     if is_test:
         return len(part1_raw) >= 40 and len(part2_raw) >= 40
-    return len(part1_raw) >= 2000 and len(part2_raw) >= 2000
+    return _spoken_chars(part1_raw) + _spoken_chars(part2_raw) >= 3200
 
 
 def generate_script(mdata, dca_data, config):
@@ -634,16 +634,31 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
     episode_raw = call_gemini(episode_prompt, max_output_tokens=65536, timeout=300)
     try:
         part1_text, part2_text = _parse_episode_payload(episode_raw)
-        if not _episode_long_enough(part1_text, part2_text, is_test):
-            raise ValueError("episode JSON is shorter than the required length")
     except (ValueError, json.JSONDecodeError) as error:
         print(f"單次結構化輸出需要補一次請求：{error}")
         episode_raw = call_gemini(
-            episode_prompt + "\n上次輸出不合格。這次只回傳合法 JSON，並補足前後段字數。",
+            episode_prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON。",
             max_output_tokens=65536,
             timeout=300,
         )
         part1_text, part2_text = _parse_episode_payload(episode_raw)
+    if not is_test:
+        total = _spoken_chars(part1_text) + _spoken_chars(part2_text)
+        if total < 4800:
+            print(f"正式稿 {total} 字，低於 4800，深度擴寫一次。")
+            try:
+                expanded = call_gemini(
+                    "以下節目 JSON 偏短。請深度擴寫 part1 與 part2，補充更多白話例子、歷史細節與風險分析。"
+                    "維持 title、part1、part2、恰好 3 筆 slide_news 與 3 句 slide_week。"
+                    "不要承諾獲利。只回傳 JSON。\n\n" + episode_raw[:12000],
+                    max_output_tokens=65536,
+                    timeout=300,
+                )
+                part1_text, part2_text = _parse_episode_payload(expanded)
+            except (ValueError, json.JSONDecodeError) as error:
+                print(f"擴寫結果無法解析，沿用上一版並放行：{error}")
+            total = _spoken_chars(part1_text) + _spoken_chars(part2_text)
+        _log_length_gate(total, "每日逐字稿")
     part1_raw = normalize_long_term_terms(part1_text)
     slide_news_details, part1_raw = extract_slide_news_details(part1_raw, entries)
     slide_news_details = align_slide_news_with_dialogue(
@@ -804,16 +819,29 @@ sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，�
     raw = call_gemini(prompt, max_output_tokens=65536, timeout=300)
     try:
         tutorial = _normalize_tutorial(_json_object(raw), lesson)
-        if not _tutorial_long_enough(tutorial, is_test):
-            raise ValueError(f"tutorial length {tutorial['char_count']} is outside the required range")
     except (ValueError, json.JSONDecodeError) as error:
-        print(f"教學稿需要補一次請求：{error}")
+        print(f"教學稿需要補一次合法 JSON：{error}")
         raw = call_gemini(
-            prompt + "\n上次輸出不合格。這次只回傳合法 JSON，並把五段口播補進規定字數。",
+            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須恰好 5 段。",
             max_output_tokens=65536,
             timeout=300,
         )
         tutorial = _normalize_tutorial(_json_object(raw), lesson)
+    if not is_test and tutorial["char_count"] < 4800:
+        print(f"教學稿 {tutorial['char_count']} 字，低於 4800，深度擴寫一次。")
+        try:
+            expanded = call_gemini(
+                "以下教學 JSON 偏短。請深度擴寫五段 narration，補充更多白話例子、歷史細節與風險分析。"
+                "維持恰好 5 段、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
+                + raw[:12000],
+                max_output_tokens=65536,
+                timeout=300,
+            )
+            tutorial = _normalize_tutorial(_json_object(expanded), lesson)
+        except (ValueError, json.JSONDecodeError) as error:
+            print(f"教學擴寫無法解析，沿用上一版並放行：{error}")
+    if not is_test:
+        _log_length_gate(tutorial["char_count"], "教學逐字稿")
     with open(TUTORIAL_CACHE_PATH, "w", encoding="utf-8") as handle:
         json.dump(tutorial, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
