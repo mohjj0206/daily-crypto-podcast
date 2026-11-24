@@ -254,15 +254,188 @@ def _learning_prompt_line():
         with open("learning_insights.json", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError, json.JSONDecodeError):
-        return "尚無近 14 日歷史，依今日數據開題即可。"
+        return "尚無近 7 日主軸，依今日數據開題即可。禁止使用「開場｜盤勢觀察與投資風險提醒」。"
     avoid = "、".join(data.get("avoid_angles") or []) or "無"
     keywords = "、".join(data.get("recent_title_keywords") or []) or "無"
     warnings = "；".join(data.get("previous_warnings") or []) or "無"
+    leads = "；".join(data.get("recent_editorial_leads") or []) or "無"
+    hooks = "；".join(data.get("recent_opening_hooks") or []) or "無"
+    titles = "；".join(data.get("recent_slide_titles") or []) or "無"
     return (
         f"今日避開這些切入角度：{avoid}。"
+        f"近 7 日已經用過的主軸，今天禁止再用相似視角或句型：{leads}。"
+        f"近 7 日開場鉤子，禁止沿用同樣句型：{hooks}。"
+        f"近 7 日投影片標題，禁止再用相似標題結構：{titles}。"
         f"近 7 日標題已用過的關鍵詞不要再當主標：{keywords}。"
         f"上一集品質警告：{warnings}。"
+        "禁止出現「開場｜盤勢觀察與投資風險提醒」。"
     )
+
+
+BANNED_SLIDE_TITLES = (
+    "開場｜盤勢觀察與投資風險提醒",
+    "開場與風險提醒",
+    "盤勢觀察與投資風險提醒",
+)
+CATCHPHRASE_CATEGORIES = (
+    "opening_reactions",
+    "analytical_transitions",
+    "skeptical_pushback",
+    "closing_encouragement",
+    "banter_pairs",
+)
+
+
+def _clean_dynamic_title(title, fallback):
+    cleaned = clean_slide_title(silence_gap_leaks(sanitize_text(title)))
+    if not cleaned or any(banned in cleaned for banned in BANNED_SLIDE_TITLES):
+        cleaned = clean_slide_title(fallback)
+    if not cleaned or any(banned in cleaned for banned in BANNED_SLIDE_TITLES):
+        cleaned = "今天先看這組衝突數字"
+    return cleaned[:36]
+
+
+def suggest_editorial_lead(mdata):
+    """從今日漲跌、恐慌與均線裡挑波動最大的一條當主軸提示。"""
+    mdata = mdata or {}
+    scored = []
+    fear = mdata.get("fng_num")
+    if isinstance(fear, (int, float)):
+        scored.append((max(0, 50 - fear), f"恐慌指數 {int(fear)} 和價格是否背離"))
+    btc_pct = mdata.get("btc_pct")
+    eth_pct = mdata.get("eth_pct")
+    if isinstance(btc_pct, (int, float)) and isinstance(eth_pct, (int, float)) and abs(btc_pct - eth_pct) >= 2:
+        scored.append((abs(btc_pct - eth_pct) + 3, f"比特幣 {btc_pct:+.1f}% 與以太坊 {eth_pct:+.1f}% 不同步"))
+    if isinstance(btc_pct, (int, float)) and abs(btc_pct) >= 3:
+        scored.append((abs(btc_pct) + 2, f"比特幣 24 小時 {btc_pct:+.1f}%"))
+    for name, payload in (mdata.get("cdata") or {}).items():
+        if not isinstance(payload, (list, tuple)) or len(payload) < 2:
+            continue
+        pct = payload[1]
+        if isinstance(pct, (int, float)) and abs(pct) >= 3:
+            scored.append((abs(pct), f"{name} 24 小時 {pct:+.1f}%"))
+    try:
+        if float(str(mdata.get("cur_p")).replace(",", "")) < float(str(mdata.get("ma200d")).replace(",", "")):
+            scored.append((8, f"比特幣 {format_usd(mdata.get('cur_p'))} 仍在 200 日均線下方"))
+    except (TypeError, ValueError):
+        pass
+    if not scored:
+        return "今天已取得數據裡最反常的那一項"
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored[0][1]
+
+
+def fallback_slide_titles(mdata, show_dca, news_details, week_lines):
+    """沒有模型標題時，用今日數字組標題，不用固定公版。"""
+    mdata = mdata or {}
+    price = format_usd(mdata.get("cur_p")) if mdata.get("cur_p") not in (None, "") else "比特幣"
+    pct = mdata.get("btc_pct")
+    move = f"{float(pct):+.1f}%" if isinstance(pct, (int, float)) else "今天的波動"
+    fear = mdata.get("fng_num")
+    fear_title = (
+        f"恐慌指數 {int(fear)}，價格有跟著怕嗎？"
+        if isinstance(fear, (int, float)) else "情緒和價格今天站在哪一邊？"
+    )
+    titles = [f"比特幣 {price} {move}，盤面先看這組衝突"]
+    if show_dca:
+        titles.append(f"模擬帳本對上 {price}，成本還守得住嗎？")
+    titles.extend([
+        fear_title,
+        f"均線與 RSI：{price} 是跌深還是半山腰？",
+        "以太坊今天是跟著走，還是被甩開？",
+    ])
+    details = list(news_details or [])
+    for index in range(3):
+        raw = details[index].get("slide_title") if index < len(details) and isinstance(details[index], dict) else ""
+        titles.append(_clean_dynamic_title(raw, f"這則消息，{price} 有沒有跟著走？"))
+    titles.extend([
+        f"六幣掃描：{move} 裡誰才是今天的主角？",
+        "24 小時漲跌，資金站在誰那邊？",
+        f"攻防價位：{price} 先測支撐還是壓力？",
+    ])
+    weeks = [str(item) for item in (week_lines or [])]
+    for index in range(3):
+        raw = weeks[index] if index < len(weeks) else ""
+        titles.append(_clean_dynamic_title(raw, f"未來 24 小時先核對條件 {index + 1}"))
+    titles.append(f"收束：{price} 先驗證，再談動作")
+    return [_clean_dynamic_title(title, f"今日數字 {index + 1}") for index, title in enumerate(titles)]
+
+
+def align_slide_titles(raw_titles, mdata, show_dca, news_details, week_lines):
+    fallback = fallback_slide_titles(mdata, show_dca, news_details, week_lines)
+    raw = list(raw_titles or [])
+    return [
+        _clean_dynamic_title(raw[index] if index < len(raw) else "", backup)
+        for index, backup in enumerate(fallback)
+    ]
+
+
+def _opening_hook(part1):
+    for line in str(part1 or "").splitlines():
+        match = re.match(r"^(?:男|女)[：:]\s*(.+)", line.strip())
+        if not match:
+            continue
+        text = re.sub(r"^\[(?:excited|serious|analytical|debate)\]\s*", "", match.group(1)).strip()
+        if text:
+            return text[:80]
+    return ""
+
+
+def sample_host_catchphrases():
+    """從 host_catchphrases.json 抽樣，並避開昨天與今天已用過的句子。"""
+    path = os.path.join("knowledge_base", "host_catchphrases.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return "口頭禪資料庫暫時讀不到，仍用比特汪與以太喵的既有性格說話。", []
+    blocked = set()
+    try:
+        with open("learning_insights.json", encoding="utf-8") as handle:
+            insights = json.load(handle)
+        blocked = {str(item) for item in (insights.get("recent_catchphrases") or [])}
+    except (OSError, ValueError, json.JSONDecodeError):
+        blocked = set()
+    hosts = data.get("hosts") if isinstance(data.get("hosts"), dict) else data
+    seed = datetime.now(ZoneInfo("Asia/Taipei")).toordinal()
+    picked = []
+    lines = []
+    for host in ("以太喵", "比特汪"):
+        block = hosts.get(host) if isinstance(hosts, dict) and isinstance(hosts.get(host), dict) else {}
+        for category in CATCHPHRASE_CATEGORIES:
+            options = [str(item).strip() for item in (block.get(category) or []) if str(item).strip()]
+            if not options:
+                continue
+            start = seed % len(options)
+            ordered = options[start:] + options[:start]
+            choice = next((item for item in ordered if item not in blocked and item not in picked), ordered[0])
+            picked.append(choice)
+            lines.append(f"{host}／{category}：{choice}")
+    if not lines:
+        return "口頭禪資料庫沒有可用句子，仍用比特汪與以太喵的既有性格說話。", []
+    return "本次可自然穿插的口頭禪，不要每句都用，也不要連續重複：\n" + "\n".join(lines), picked
+
+
+def _slide_slot_names(show_dca):
+    names = ["開場鉤子，標題必須帶今日最衝突的數字"]
+    if show_dca:
+        names.append("模擬定投帳本，標題要帶出本期美元結果")
+    names.extend([
+        "恐慌與貪婪，標題要帶指數",
+        "比特幣均線與 RSI，標題要帶價格或 RSI",
+        "以太坊相對比特幣",
+        "第一則新聞，標題就是該則事件",
+        "第二則新聞，標題就是該則事件",
+        "第三則新聞，標題就是該則事件",
+        "六幣裡今天真正在動的那一個，安靜的幣不要做成標題主角",
+        "24 小時漲跌對照",
+        "比特幣支撐與壓力",
+        "未來 24 小時條件一",
+        "未來 24 小時條件二",
+        "未來 24 小時條件三",
+        "收束，仍要帶一個今日數字",
+    ])
+    return names
 
 
 def dca_performance_guidance(unrealized_pnl_usd):
@@ -590,9 +763,16 @@ def _parse_episode_payload(raw_text, mdata=None):
         f"SLIDE_WEEK{index}:{item}"
         for index, item in enumerate(week, 1)
     ]
+    raw_titles = payload.get("slide_titles") if isinstance(payload.get("slide_titles"), list) else []
+    meta = {
+        "editorial_lead": silence_gap_leaks(sanitize_text(payload.get("editorial_lead") or "")).strip(),
+        "slide_titles": [str(item).strip() for item in raw_titles if str(item).strip()],
+        "opening_hook": _opening_hook(part1),
+    }
     return (
         f"標題：{title}\n{part1}\n" + "\n".join(news_lines),
         part2 + "\n" + "\n".join(week_lines),
+        meta,
     )
 
 
@@ -618,6 +798,9 @@ def _episode_long_enough(part1_raw, part2_raw, is_test):
 def generate_script(mdata, dca_data, config):
     cached = load_cached_script()
     if cached is not None:
+        if not config["is_test"]:
+            import daily_learner
+            daily_learner.remember_catchphrases(cached.get("catchphrases"), is_test=False)
         return cached
     is_test = config["is_test"]
     show_dca = config["show_dca"]
@@ -767,7 +950,7 @@ def generate_script(mdata, dca_data, config):
     p2_length_guidance = (
         "測試模式仍須為後半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
         if is_test else
-        "正式版本段必須達2,600至2,900字：六大主流幣報價、24H漲跌與14日RSI逐幣分析1,050至1,150字；BTC近90日價格結構與支撐壓力圖解讀100至150字；未來24小時（今日至明晨）三個觀察條件各450至500字，涵蓋關鍵價位、美股開盤連動與短線清算風險；總結與風險提醒100字。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+        "正式版本段必須達2,600至2,900字。六大幣不要平均念完：沒動靜的幣一句話帶過，約 60% 篇幅留給今日核心主軸與真正有波動的幣。BTC近90日價格結構與支撐壓力仍要解讀。未來24小時（今日至明晨）三個觀察條件涵蓋關鍵價位、美股開盤連動與短線清算風險。總結與風險提醒收束。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
     )
     host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；熟悉以太坊技術升級、Layer 2、DeFi與RWA。她負責精準拆解價格結構圖與RSI圖，報出回撤天數與幅度、30日支撐壓力、相對100日及200日線乖離、歷史超賣區段，以及穩定幣總市值變化；籌碼面則客觀對照公開交易所的全體帳戶、前列交易者帳戶與持倉多空比、近30日現貨成交額，以及公開鏈上統計的估算交易量與筆數。說明多空比是平台倉位代理、鏈上統計不能辨識地址身分或交易所淨流向；只依本次數據判讀短線成交量與情緒，不將「散戶割肉」或「巨鯨吸籌」說成已證實事實。市場劇本須分別說明站穩壓力或跌破支撐後可驗證的條件，不把指標當成必然預測，並替激動的比特汪踩煞車。
 男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；重視BTC長期週期與紀律定投。接住以太喵的數據，用白話說明短線交易者可能退場、長期參與者可能較不活躍，但不得宣稱巨鯨必然吸籌或敦促觀眾把便宜籌碼交給特定族群。以不猜最低點、不追短線、不碰高槓桿為原則，提醒按個人預算與風險承受能力維持或調整分批計畫；不得保證獲利、回本或週期必然翻正。節目角色設定中的每月定投帳本是模擬紀錄，並非真實成交。
@@ -776,6 +959,12 @@ def generate_script(mdata, dca_data, config):
 
     angle_title, vocab_line, recent_angles, angle_id = load_show_angle()
     learning_line = _learning_prompt_line()
+    editorial_hint = suggest_editorial_lead(mdata)
+    catchphrase_line, catchphrases = sample_host_catchphrases()
+    slide_slots = "；".join(
+        f"{index}.{name}" for index, name in enumerate(_slide_slot_names(show_dca), 1)
+    )
+    slide_title_count = 15 if show_dca else 14
     banned_terms = "、".join(EXCLUDED_PLATFORMS)
     mvrv_line = present_metric((mdata.get("mvrv") or {}).get("report"))
     mvrv_prompt = (
@@ -784,7 +973,9 @@ def generate_script(mdata, dca_data, config):
     )
     p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 【今日切入視角】{angle_title}。近 7 日已用視角（今日必須避開）：{recent_angles}。
+【今日核心主軸】寫稿前先決定 editorial_lead。資料提示：{editorial_hint}。你必須依資料區裡波動最大、最反常的訊號改寫成今天專屬主軸，例如股幣背離、大額資金進出、某主流幣逆勢、鏈上異動或總經事件。整集 60% 篇幅圍繞這個主軸，不要把六個幣平均念完；當天沒動靜的幣種一句話帶過。
 【自檢差異化】{learning_line}
+【雙主播口頭禪】{catchphrase_line}
 【可自然帶入的術語】{vocab_line}
 {mvrv_prompt}【幣別】所有價格、市值、成交量、定投投入、總值與損益只准使用美元，禁止台幣、NT$、TWD。直接以美元報出的金額一律四捨五入到整數並加千分位，例如 $95,421、-$836，禁止 $95,420.50 這類小數金額。百分比、MVRV、RSI 與 BTC 顆數維持原有小數。
 【情緒標記】每一句以「男：」或「女：」開頭的口播，在角色名後可先放一個標籤 [excited]、[serious]、[analytical] 或 [debate]，標籤本身不要念出來。暴跌與風險用 serious，突破與強勢用 excited，拆數字用 analytical，兩人交鋒用 debate。
@@ -820,13 +1011,15 @@ def generate_script(mdata, dca_data, config):
 {p2_length_guidance}
 後半段標記對應：{p2_slide_anchors}
 後半段不得重複前半段的開場、風險提醒、均線結論、恐慌指數結論或同一則新聞。依序寫六大幣報價與 RSI、24H 漲跌、BTC 價格結構、三個未來 24 小時觀察條件，最後提醒控管倉位並道別。
+【動態投影片標題】slide_titles 必須恰好 {slide_title_count} 句，順序對應：{slide_slots}。每一句都是新聞級標題，要含當日具體數字或事件，例如「美股狂飆 6% 幣市卻凍僵？揭開股幣背離真相」。禁止「開場｜盤勢觀察與投資風險提醒」，也禁止任何每天都能套用的公版標題。
 【輸出覆蓋規則】不要另起「標題：」純文字行。只輸出一個 JSON 物件，不要 Markdown。字數配額維持上面的前半段與後半段要求，不可縮水。格式：
-{{"title":"32字內標題","part1":"前半段男：女：逐字稿","part2":"後半段男：女：逐字稿","slide_news":[{{"source_news_number":1,"slide_title":"","positive":"","risk":""}}],"slide_week":["條件1","條件2","條件3"]}}
-slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
+{{"title":"32字內標題","editorial_lead":"今日主軸","part1":"前半段男：女：逐字稿","part2":"後半段男：女：逐字稿","slide_titles":["標題1"],"slide_news":[{{"source_news_number":1,"slide_title":"","positive":"","risk":""}}],"slide_week":["條件1","條件2","條件3"]}}
+slide_titles 必須恰好 {slide_title_count} 句，slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
 
+    episode_meta = {}
     episode_raw = call_gemini(episode_prompt, max_output_tokens=65536, timeout=300, json_mode=True)
     try:
-        part1_text, part2_text = _parse_episode_payload(episode_raw, mdata)
+        part1_text, part2_text, episode_meta = _parse_episode_payload(episode_raw, mdata)
     except (ValueError, json.JSONDecodeError) as error:
         print(f"單次結構化輸出需要補一次請求：{error}")
         episode_raw = call_gemini(
@@ -835,7 +1028,7 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
             timeout=300,
             json_mode=True,
         )
-        part1_text, part2_text = _parse_episode_payload(episode_raw, mdata)
+        part1_text, part2_text, episode_meta = _parse_episode_payload(episode_raw, mdata)
     if not is_test:
         total = _spoken_chars(part1_text) + _spoken_chars(part2_text)
         if total < 4800:
@@ -843,13 +1036,13 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
             try:
                 expanded = call_gemini(
                     "以下節目 JSON 偏短。請深度擴寫 part1 與 part2，補充更多白話例子、歷史細節與風險分析。"
-                    "維持 title、part1、part2、恰好 3 筆 slide_news 與 3 句 slide_week。"
+                    "維持 title、editorial_lead、part1、part2、slide_titles、恰好 3 筆 slide_news 與 3 句 slide_week。"
                     "不要承諾獲利。只回傳 JSON。\n\n" + episode_raw[:12000],
                     max_output_tokens=65536,
                     timeout=300,
                     json_mode=True,
                 )
-                part1_text, part2_text = _parse_episode_payload(expanded, mdata)
+                part1_text, part2_text, episode_meta = _parse_episode_payload(expanded, mdata)
             except (ValueError, json.JSONDecodeError) as error:
                 print(f"擴寫結果無法解析，沿用上一版並放行：{error}")
             total = _spoken_chars(part1_text) + _spoken_chars(part2_text)
@@ -895,6 +1088,17 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
 
     full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
 
+    editorial_lead = episode_meta.get("editorial_lead") or editorial_hint
+    if any(banned in editorial_lead for banned in BANNED_SLIDE_TITLES):
+        editorial_lead = editorial_hint
+    slide_titles = align_slide_titles(
+        episode_meta.get("slide_titles"),
+        mdata,
+        show_dca,
+        slide_news_details,
+        slide_24h_conditions,
+    )
+    opening_hook = episode_meta.get("opening_hook") or _opening_hook(part1_raw)
     result = {
         "part1_raw": part1_raw,
         "part2_raw": part2_raw,
@@ -908,8 +1112,15 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
         "dca_slide_body": dca_slide_body,
         "angle_id": angle_id,
         "angle_title": angle_title,
+        "editorial_lead": editorial_lead,
+        "slide_titles": slide_titles,
+        "opening_hook": opening_hook,
+        "catchphrases": catchphrases,
     }
     save_cached_script(result)
+    if not is_test:
+        import daily_learner
+        daily_learner.remember_catchphrases(catchphrases, is_test=False)
     return result
 
 
@@ -992,6 +1203,7 @@ def _normalize_tutorial(payload, lesson):
         "short_lines": short_lines,
         "char_count": _tutorial_char_count(sections),
         "cards": build_tutorial_cards(sections, lesson),
+        "catchphrases": list(payload.get("catchphrases") or []),
     }
 
 
@@ -1019,6 +1231,9 @@ def generate_tutorial_script(lesson, reference_note, config):
     """五段式常青教學稿。快取命中時不呼叫 Gemini。"""
     cached = _load_tutorial_cache()
     if cached is not None:
+        if not bool(config.get("is_test")):
+            import daily_learner
+            daily_learner.remember_catchphrases(cached.get("catchphrases"), is_test=False)
         return cached
     is_test = bool(config.get("is_test"))
     concepts = "；".join(lesson.get("core_concepts") or [])
@@ -1028,7 +1243,9 @@ def generate_tutorial_script(lesson, reference_note, config):
         if is_test else
         "正式版五段口播合計 5,800 到 6,500 字，約 16 到 20 分鐘。Shorts 口播 45 到 55 秒，約 180 到 230 字。"
     )
+    catchphrase_line, catchphrases = sample_host_catchphrases()
     prompt = f"""你是【幣看深潛｜系統教學】主編。請為比特汪與以太喵寫一集常青教學，不要寫成每日新聞。
+【雙主播口頭禪】{catchphrase_line}
 課號：{lesson.get("ep_id")}
 系列：{lesson.get("series")}
 題目：{lesson.get("title")}
@@ -1078,6 +1295,10 @@ sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，�
             print(f"教學擴寫無法解析，沿用上一版並放行：{error}")
     if not is_test:
         _log_length_gate(tutorial["char_count"], "教學逐字稿")
+    tutorial["catchphrases"] = catchphrases
+    if not is_test:
+        import daily_learner
+        daily_learner.remember_catchphrases(catchphrases, is_test=False)
     with open(TUTORIAL_CACHE_PATH, "w", encoding="utf-8") as handle:
         json.dump(tutorial, handle, ensure_ascii=False, indent=2)
         handle.write("\n")

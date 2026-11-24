@@ -154,6 +154,31 @@ def classify_mvrv(value):
     return zone
 
 
+def _as_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(str(value).replace(",", "").replace("$", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def refine_market_zone(zone, mvrv_value, is_estimate, fear_value, price, sma200):
+    """大跌或跌破年線時，不用「健康多頭」形容低位或估算 MVRV。"""
+    ratio = _as_float(mvrv_value)
+    fear = _as_float(fear_value)
+    spot = _as_float(price)
+    average = _as_float(sma200)
+    low_mvrv = ratio is not None and ratio < 2.4
+    extreme_fear = fear is not None and fear < 25
+    below_sma = spot is not None and average is not None and spot < average
+    if (extreme_fear or below_sma) and (bool(is_estimate) or low_mvrv):
+        if extreme_fear:
+            return "極度恐懼觀望區"
+        return "長線低估蓄勢區"
+    return zone or "—"
+
+
 def sanitize_text(text):
     """腳本、字幕、簡報共用的後處理：角色名、禁忌詞、台幣字樣。"""
     cleaned = str(text or "")

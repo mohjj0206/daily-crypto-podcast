@@ -1810,6 +1810,24 @@ def fetch_all_market_data(now_tw, is_test):
     )
 
     mvrv = fetch_btc_mvrv(btc_metrics.get("current_drawdown_pct"))
+    mvrv_zone = presentation.refine_market_zone(
+        mvrv.get("zone"),
+        mvrv.get("value"),
+        mvrv.get("is_estimate"),
+        fng_num,
+        spot_prices.get("BTC"),
+        btc_metrics.get("sma_200"),
+    )
+    mvrv["zone"] = mvrv_zone
+    if mvrv.get("value") is not None:
+        mvrv["report"] = (
+            f"MVRV {presentation.format_metric(mvrv['value'], 'ratio')}，判讀為{mvrv_zone}"
+            + (
+                "（備援估算，不是鏈上原值）"
+                if mvrv.get("is_estimate")
+                else f"（{mvrv.get('source') or '已取得'}）"
+            )
+        )
     dca_snapshot = load_dca_usd_snapshot(spot_prices["BTC"])
     custom_references = fetch_custom_sources(tw_tz)
 

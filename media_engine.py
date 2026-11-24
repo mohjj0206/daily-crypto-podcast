@@ -617,7 +617,7 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 48px; right: 48px; top: 100px; bottom: 28px;
+  position: absolute; left: 48px; right: 48px; top: 100px; bottom: 145px;
   padding: 28px 40px; border: 2px solid rgba(251,191,36,.78);
   border-radius: 18px; background: rgba(15,23,42,.86);
   box-shadow: 0 0 34px rgba(56,189,248,.12), inset 0 0 34px rgba(251,191,36,.035);
@@ -635,7 +635,7 @@ h1 {{
 }}
 .content {{
   min-height: 0; flex: 1 1 auto; display: grid;
-  grid-template-columns: minmax(0, 1fr); align-items: center;
+  grid-template-columns: minmax(0, 1fr); align-items: stretch;
 }}
 .chart-layout {{ grid-template-columns: minmax(0, 54fr) minmax(0, 46fr); gap: 18px; }}
 .compare-layout {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }}
@@ -728,7 +728,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 }}
 .insight-dock {{
   flex: 0 0 auto; display: grid; grid-template-columns: 1.15fr 1fr 1.15fr 1.2fr;
-  gap: 12px; margin-top: 14px;
+  gap: 12px; margin-top: 8px;
 }}
 .insight-dock article {{
   border: 1px solid rgba(245, 158, 11, .45); border-radius: 12px; padding: 12px 14px;
@@ -778,12 +778,13 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 .compare-panel li::before {{ width: 7px; height: 7px; }}
 @keyframes compareLeft {{ from {{ opacity: 0; transform: translateX(-36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
 @keyframes compareRight {{ from {{ opacity: 0; transform: translateX(36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
-.hero-layout ul {{ width: 100%; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }}
+.hero-layout ul {{ width: 100%; height: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 10px; text-align: center; }}
 .hero-layout li {{
-  max-width: 100%; margin: 0; padding: 16px 28px; border: 1px solid rgba(251,191,36,.38);
+  flex: 1 1 auto; max-width: 100%; margin: 0; padding: 18px 28px; border: 1px solid rgba(251,191,36,.38);
   border-radius: 14px; background: rgba(15,23,42,.72);
   box-shadow: 0 0 24px rgba(251,191,36,.08);
-  font-size: 42px; font-weight: 750; line-height: 1.28;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 48px; font-weight: 750; line-height: 1.28;
   animation: heroPop .75s cubic-bezier(.16,1,.3,1) both;
 }}
 .hero-layout li::before {{ display: none; }}
@@ -1603,7 +1604,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         for index, condition in enumerate(sdata["slide_24h_conditions"])
     ]
     slides_cfg = [
-        ("開場｜盤勢觀察與投資風險提醒", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
+        ("今日主軸", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
     ]
     if show_dca:
         slides_cfg.append(
@@ -1629,6 +1630,17 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         ),
     ] + condition_slides + [
         ("24小時策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
+    ]
+    dynamic_titles = script_writer.align_slide_titles(
+        sdata.get("slide_titles"),
+        mdata,
+        show_dca,
+        sdata.get("slide_news_details"),
+        sdata.get("slide_24h_conditions"),
+    )
+    slides_cfg = [
+        (dynamic_titles[index] if index < len(dynamic_titles) else title, color, body, ctype)
+        for index, (title, color, body, ctype) in enumerate(slides_cfg)
     ]
 
     # 5. Playwright 渲染動畫投影片
@@ -1679,9 +1691,17 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             ),
         })
     mvrv_info = mdata.get("mvrv") or {}
+    market_zone = presentation.refine_market_zone(
+        mvrv_info.get("zone"),
+        mvrv_info.get("value"),
+        mvrv_info.get("is_estimate"),
+        fng_num,
+        mdata.get("cur_p"),
+        mdata.get("ma200d"),
+    )
     slide_insights = {
         "mvrv": presentation.format_metric(mvrv_info["value"], "ratio") if mvrv_info.get("value") is not None else "—",
-        "zone": mvrv_info.get("zone") or "—",
+        "zone": market_zone,
         "mvrv_pct": mvrv_info.get("bar_pct", 40),
         "support": presentation.format_metric(mdata["btc_metrics"]["support"], "price"),
         "resistance": presentation.format_metric(mdata["btc_metrics"]["resistance"], "price"),
@@ -1690,7 +1710,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             f"100日 {presentation.format_metric(float(mdata['ma100d']), 'price')} / "
             f"200日 {presentation.format_metric(float(mdata['ma200d']), 'price')}"
         ),
-        "headline": mvrv_info.get("zone", "先看價格確認"),
+        "headline": market_zone if market_zone and market_zone != "—" else "先看價格確認",
         "detail": (
             f"帳本 {presentation.format_metric(dca_return_pct, 'percent')}"
             if dca_return_pct is not None else "部位沿用最近一筆有效紀錄"

@@ -51,6 +51,10 @@ def _read_history(today):
             "angle_title": data.get("angle_title") or "",
             "title": data.get("title") or "",
             "core_point": data.get("core_point") or "",
+            "editorial_lead": data.get("editorial_lead") or "",
+            "slide_titles": [str(item) for item in (data.get("slide_titles") or []) if str(item).strip()],
+            "opening_hook": data.get("opening_hook") or "",
+            "catchphrases": [str(item) for item in (data.get("catchphrases") or []) if str(item).strip()],
             "score": audit.get("score"),
             "warnings": list(audit.get("warnings") or []),
         })
@@ -84,11 +88,37 @@ def prepare_learning_insights():
         if label and label not in avoid_angles:
             avoid_angles.append(label)
     previous = rows[-1]["warnings"] if rows else []
+    recent_leads = []
+    recent_hooks = []
+    recent_slide_titles = []
+    for row in recent:
+        lead = row.get("editorial_lead") or ""
+        if lead and lead not in recent_leads:
+            recent_leads.append(lead)
+        hook = row.get("opening_hook") or ""
+        if hook and hook not in recent_hooks:
+            recent_hooks.append(hook)
+        for slide_title in row.get("slide_titles") or []:
+            if slide_title not in recent_slide_titles:
+                recent_slide_titles.append(slide_title)
+    recent_catchphrases = []
+    for row in rows:
+        if _today_delta(today, row["date"]) > 1:
+            continue
+        for phrase in row.get("catchphrases") or []:
+            if phrase not in recent_catchphrases:
+                recent_catchphrases.append(phrase)
     insights = {
         "as_of": today.isoformat(),
         "avoid_angle_ids": avoid_ids,
         "avoid_angles": avoid_angles,
-        "recent_title_keywords": _keywords([row["title"] for row in recent]),
+        "recent_title_keywords": _keywords(
+            [row["title"] for row in recent] + recent_slide_titles + recent_leads
+        ),
+        "recent_editorial_leads": recent_leads,
+        "recent_slide_titles": recent_slide_titles[-60:],
+        "recent_opening_hooks": recent_hooks,
+        "recent_catchphrases": recent_catchphrases,
         "previous_warnings": previous,
         "history_days": len(rows),
     }
@@ -107,6 +137,57 @@ def _today_delta(today, iso_date):
         return (today - datetime.fromisoformat(iso_date).date()).days
     except ValueError:
         return 99
+
+
+def _stored_catchphrases(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    kept = []
+    for phrase in data.get("catchphrases") or []:
+        text = str(phrase).strip()
+        if text and text not in kept:
+            kept.append(text)
+    return kept
+
+
+def remember_catchphrases(phrases, is_test=False):
+    """把今天用過的口頭禪併進當日歷史，避免連續兩天抽到同一句。"""
+    cleaned = []
+    for phrase in phrases or []:
+        text = str(phrase).strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    if is_test or not cleaned:
+        return None
+    today = _today()
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    path = os.path.join(HISTORY_DIR, f"{today.isoformat()}.json")
+    record = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                record = loaded
+        except (OSError, ValueError, json.JSONDecodeError):
+            record = {}
+    kept = _stored_catchphrases(path)
+    for phrase in cleaned:
+        if phrase not in kept:
+            kept.append(phrase)
+    record["date"] = record.get("date") or today.isoformat()
+    record["catchphrases"] = kept
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    return path
 
 
 def _plain_length(script):
@@ -228,16 +309,25 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         return None
     today = _today()
     os.makedirs(HISTORY_DIR, exist_ok=True)
+    path = os.path.join(HISTORY_DIR, f"{today.isoformat()}.json")
+    kept_phrases = _stored_catchphrases(path)
+    for phrase in sdata.get("catchphrases") or []:
+        text = str(phrase).strip()
+        if text and text not in kept_phrases:
+            kept_phrases.append(text)
     record = {
         "date": today.isoformat(),
         "angle_id": sdata.get("angle_id") or "",
         "angle_title": sdata.get("angle_title") or "",
         "title": sdata.get("ai_title") or "",
-        "core_point": sdata.get("angle_title") or sdata.get("ai_title") or "",
+        "core_point": sdata.get("editorial_lead") or sdata.get("angle_title") or sdata.get("ai_title") or "",
+        "editorial_lead": sdata.get("editorial_lead") or "",
+        "slide_titles": [str(item) for item in (sdata.get("slide_titles") or []) if str(item).strip()],
+        "opening_hook": sdata.get("opening_hook") or "",
+        "catchphrases": kept_phrases,
         "market_snapshot": _snapshot(mdata),
         "quality_audit": audit,
     }
-    path = os.path.join(HISTORY_DIR, f"{today.isoformat()}.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
