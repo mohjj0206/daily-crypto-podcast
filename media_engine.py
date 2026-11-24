@@ -175,6 +175,58 @@ def calculate_slide_durations(slide_start_times, speech_duration, video_intro_du
 
 # ── Google TTS 語音合成 ──────────────────────────────────────────
 
+TTS_SSML_BYTE_LIMIT = 4500
+
+
+def _ssml_document(text):
+    return f"<speak>{presentation.build_ssml_inner(text)}</speak>"
+
+
+def _split_tts_text(text):
+    """Google TTS 的 SSML 上限是 5000 bytes。超長口播先按標點切開。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return [raw]
+
+    def fits(chunk):
+        return len(_ssml_document(chunk).encode("utf-8")) <= TTS_SSML_BYTE_LIMIT
+
+    if fits(raw):
+        return [raw]
+
+    pieces = [part for part in re.split(r"(?<=[，。！？、；：…!?;\n])", raw) if part]
+    chunks = []
+    buffer = ""
+    for piece in pieces or [raw]:
+        candidate = f"{buffer}{piece}"
+        if buffer and not fits(candidate):
+            chunks.append(buffer)
+            buffer = piece
+        else:
+            buffer = candidate
+    if buffer:
+        chunks.append(buffer)
+
+    fitted = []
+    for chunk in chunks:
+        if fits(chunk):
+            fitted.append(chunk)
+            continue
+        start = 0
+        while start < len(chunk):
+            low, high, best = 1, len(chunk) - start, 1
+            while low <= high:
+                mid = (low + high) // 2
+                if fits(chunk[start:start + mid]):
+                    best = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            fitted.append(chunk[start:start + best])
+            start += best
+    return [part.strip() for part in fitted if part.strip()] or [raw]
+
+
 def synth_audio_segment(item, file_prefix):
     tts_host = "".join(["https", "://", "texttospeech.", "googleapis.", "com"])
     tts_url = f"{tts_host}/v1/text:synthesize?key={os.environ['GOOGLE_TTS_KEY'].strip()}"
@@ -185,11 +237,13 @@ def synth_audio_segment(item, file_prefix):
     v_name = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
     fallback_voice = "cmn-TW-Standard-B" if role == "男" else "cmn-TW-Standard-A"
     pitch = -1.5 if role == "男" else 1.5
-    ssml_say = presentation.build_ssml_inner(txt)
+    chunks = _split_tts_text(txt)
+    if len(chunks) > 1:
+        print(f"口播第 {idx + 1} 句超過 TTS 5000 bytes，已切成 {len(chunks)} 段。")
 
-    def request_tts(voice_name):
+    def request_tts(voice_name, spoken_text):
         payload_tts = json.dumps({
-            "input": {"ssml": f"<speak>{ssml_say}</speak>"},
+            "input": {"ssml": _ssml_document(spoken_text)},
             "voice": {"languageCode": "cmn-TW", "name": voice_name},
             "audioConfig": {"audioEncoding": "MP3", "pitch": pitch, "speakingRate": 1.2},
         }).encode("utf-8")
@@ -201,28 +255,43 @@ def synth_audio_segment(item, file_prefix):
         )
         return json.loads(urllib.request.urlopen(req, timeout=30).read().decode("utf-8"))
 
-    try:
-        res = request_tts(v_name)
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="replace")
+    def synthesize_chunk(spoken_text):
         try:
-            error_message = json.loads(error_body).get("error", {}).get("message", error_body)
-        except json.JSONDecodeError:
-            error_message = error_body
-        error_text = str(error_message).lower()
-        unsupported_voice = e.code in (400, 404) and "voice" in error_text and any(
-            phrase in error_text
-            for phrase in ("not supported", "unsupported", "not available", "unavailable", "does not exist", "not valid", "invalid")
-        )
-        if not unsupported_voice:
-            print(f"Google TTS API error ({e.code}) for voice '{v_name}': {error_message}")
-            raise
-        print(f"Google TTS voice '{v_name}' is unavailable; retrying with '{fallback_voice}'.")
-        res = request_tts(fallback_voice)
+            return request_tts(v_name, spoken_text)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            try:
+                error_message = json.loads(error_body).get("error", {}).get("message", error_body)
+            except json.JSONDecodeError:
+                error_message = error_body
+            error_text = str(error_message).lower()
+            unsupported_voice = e.code in (400, 404) and "voice" in error_text and any(
+                phrase in error_text
+                for phrase in ("not supported", "unsupported", "not available", "unavailable", "does not exist", "not valid", "invalid")
+            )
+            if not unsupported_voice:
+                print(f"Google TTS API error ({e.code}) for voice '{v_name}': {error_message}")
+                raise
+            print(f"Google TTS voice '{v_name}' is unavailable; retrying with '{fallback_voice}'.")
+            return request_tts(fallback_voice, spoken_text)
 
     fn = f"{file_prefix}_{idx:04d}.mp3"
-    with open(fn, "wb") as f:
-        f.write(base64.b64decode(res["audioContent"]))
+    part_names = []
+    for part_index, chunk in enumerate(chunks):
+        part_name = fn if len(chunks) == 1 else f"{file_prefix}_{idx:04d}_p{part_index:02d}.mp3"
+        response = synthesize_chunk(chunk)
+        with open(part_name, "wb") as handle:
+            handle.write(base64.b64decode(response["audioContent"]))
+        part_names.append(part_name)
+    if len(part_names) > 1:
+        list_name = f"{file_prefix}_{idx:04d}_parts.txt"
+        with open(list_name, "w", encoding="utf-8") as handle:
+            for part_name in part_names:
+                handle.write(f"file '{part_name}'\n")
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_name, "-c", "copy", fn],
+            check=True,
+        )
     dur = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", fn]).decode().strip())
     return idx, fn, display_line, dur
 
