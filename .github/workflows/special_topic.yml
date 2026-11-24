@@ -86,6 +86,8 @@ jobs:
           if [ -n "$(git status --porcelain evergreen_progress.json knowledge_base/evergreen_curriculum.json)" ]; then
             git add evergreen_progress.json knowledge_base/evergreen_curriculum.json
             git commit -m "chore: update evergreen tutorial progress"
+            git checkout -- .
+            git clean -fd
             git pull --rebase origin main
-            git push
+            git push origin main
           fi

@@ -54,6 +54,8 @@ def _read_history(today):
             "editorial_lead": data.get("editorial_lead") or "",
             "slide_titles": [str(item) for item in (data.get("slide_titles") or []) if str(item).strip()],
             "opening_hook": data.get("opening_hook") or "",
+            "format_id": data.get("format_id") or "",
+            "format_title": data.get("format_title") or "",
             "catchphrases": [str(item) for item in (data.get("catchphrases") or []) if str(item).strip()],
             "score": audit.get("score"),
             "warnings": list(audit.get("warnings") or []),
@@ -119,6 +121,9 @@ def prepare_learning_insights():
         "recent_slide_titles": recent_slide_titles[-60:],
         "recent_opening_hooks": recent_hooks,
         "recent_catchphrases": recent_catchphrases,
+        "recent_format_ids": [
+            row["format_id"] for row in rows if row.get("format_id")
+        ][-3:],
         "previous_warnings": previous,
         "history_days": len(rows),
     }
@@ -324,6 +329,8 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         "editorial_lead": sdata.get("editorial_lead") or "",
         "slide_titles": [str(item) for item in (sdata.get("slide_titles") or []) if str(item).strip()],
         "opening_hook": sdata.get("opening_hook") or "",
+        "format_id": sdata.get("format_id") or "",
+        "format_title": sdata.get("format_title") or "",
         "catchphrases": kept_phrases,
         "market_snapshot": _snapshot(mdata),
         "quality_audit": audit,

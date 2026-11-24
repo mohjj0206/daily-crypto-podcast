@@ -12,8 +12,10 @@ from opencc import OpenCC
 from presentation import (
     EXCLUDED_PLATFORMS,
     build_tutorial_cards,
+    fill_story_slide_bodies,
     fit_complete_phrase,
     format_usd,
+    plan_daily_slides,
     sanitize_text,
     strip_bracket_tags,
 )
@@ -371,8 +373,11 @@ def fallback_slide_titles(mdata, show_dca, news_details, week_lines):
     return [_clean_dynamic_title(title, f"今日數字 {index + 1}") for index, title in enumerate(titles)]
 
 
-def align_slide_titles(raw_titles, mdata, show_dca, news_details, week_lines):
-    fallback = fallback_slide_titles(mdata, show_dca, news_details, week_lines)
+def align_slide_titles(raw_titles, mdata, show_dca=None, news_details=None, week_lines=None):
+    if isinstance(mdata, list):
+        fallback = mdata
+    else:
+        fallback = fallback_slide_titles(mdata, show_dca, news_details, week_lines)
     raw = list(raw_titles or [])
     return [
         _clean_dynamic_title(raw[index] if index < len(raw) else "", backup)
@@ -424,6 +429,24 @@ def sample_host_catchphrases():
     if not lines:
         return "口頭禪資料庫沒有可用句子，仍用比特汪與以太喵的既有性格說話。", []
     return "本次可自然穿插的口頭禪，不要每句都用，也不要連續重複：\n" + "\n".join(lines), picked
+
+
+def choose_show_format():
+    """連續四集不重複：避開最近三集用過的模式。"""
+    path = os.path.join("knowledge_base", "show_formats.json")
+    with open(path, encoding="utf-8") as handle:
+        formats = json.load(handle)["formats"]
+    used = []
+    try:
+        with open("learning_insights.json", encoding="utf-8") as handle:
+            used = [str(item) for item in (json.load(handle).get("recent_format_ids") or []) if str(item).strip()]
+    except (OSError, ValueError, json.JSONDecodeError):
+        used = []
+    blocked = set(used[-3:])
+    for item in formats:
+        if item.get("id") not in blocked:
+            return item
+    return formats[0]
 
 
 def _slide_slot_names(show_dca):
@@ -878,22 +901,22 @@ def generate_script(mdata, dca_data, config):
             dca_performance_guidance(pnl_usd)
         )
 
+    show_format = choose_show_format()
+    visual_plan = plan_daily_slides(mdata, show_dca, show_format, dca_slide_body)
+    slide_title_count = len(visual_plan)
+    thermo_count = sum(1 for slide in visual_plan if slide["role"] == "thermometer")
     target_words = "約200字繁中（精簡測試版，各圖卡保留一句重點對話）" if is_test else "嚴格要求 2,600 至 2,900 字繁中（兩段合計約 5,200 字以上，確保 1.2 倍速下整集片長仍達 15 至 18 分鐘）"
+    mid = (slide_title_count + 1) // 2
+    p1_part_slide_count = mid
+    story_numbers = [index for index, slide in enumerate(visual_plan, 1) if slide["role"] == "story"]
+    news_slide_numbers = tuple(story_numbers[:3] or (1, 2, 3))
+    p1_slide_anchors = "；".join(
+        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan[:mid], 1)
+    )
+    p2_slide_anchors = "；".join(
+        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan[mid:], mid + 1)
+    )
     if show_dca:
-        p1_part_slide_count = 8
-        news_slide_numbers = (6, 7, 8)
-        p1_slide_anchors = (
-            "[SLIDE_1]開場與風險提醒；[SLIDE_2]BTC長期定投（DCA）實戰帳本；"
-            "[SLIDE_3]恐慌與貪婪指數；[SLIDE_4]BTC四大均線、RSI與歷史超賣圖；"
-            "[SLIDE_5]ETH日線均線與RSI；[SLIDE_6]第一則市場焦點；"
-            "[SLIDE_7]第二則市場焦點；[SLIDE_8]第三則市場焦點。"
-        )
-        p2_slide_anchors = (
-            "[SLIDE_9]六大主流幣報價與指標總表；[SLIDE_10]六大主流幣24H漲跌；"
-            "[SLIDE_11]BTC價格結構與關鍵多空攻防圖；[SLIDE_12]關鍵價位攻防；"
-            "[SLIDE_13]美股開盤連動；[SLIDE_14]短線清算風險；"
-            "[SLIDE_15]總結行動策略。"
-        )
         dca_prompt_section = (
             "風險提醒後由比特汪以第一人稱播報「比特汪的 BTC 定期定額模擬帳本」，"
             "清楚說明自2025年10月25日起，按節目設定每月25日模擬投入一筆固定美元部位，"
@@ -907,49 +930,22 @@ def generate_script(mdata, dca_data, config):
             "帳本數字如下：\n"
             f"{dca_report}"
         )
-        p1_content_guidance = (
-            "先以[SLIDE_1]第一句直接丟出今日最衝突的數據或反直覺提問，前兩句禁止客套與免責；"
-            "鉤子講完後用一句話帶過「本節目僅供市場數據整理，不構成投資建議」，"
-            "再由比特汪以第一人稱播報[SLIDE_2]節目模擬DCA帳本；"
-            "接續依序以[SLIDE_3]分析恐慌貪婪指數、[SLIDE_4]分析BTC均線與RSI歷史超賣圖、"
-            "[SLIDE_5]分析ETH，再以[SLIDE_6]至[SLIDE_8]逐一深入解析三大市場焦點。"
-        )
-        p1_formal_length = (
-            "正式版本段必須達2,600至2,900字：開場鉤子約70至90字，免責聲明延到鉤子之後約25字；DCA帳本播報約220至250字；"
-            "BTC均線、RSI歷史超賣、恐慌貪婪指數與ETH均線RSI合計700至800字；三大市場焦點各450至500字，"
-            "逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。"
-        )
     else:
-        p1_part_slide_count = 7
-        news_slide_numbers = (5, 6, 7)
-        p1_slide_anchors = (
-            "[SLIDE_1]開場與風險提醒；[SLIDE_2]恐慌與貪婪指數；"
-            "[SLIDE_3]BTC四大均線、RSI與歷史超賣圖；[SLIDE_4]ETH日線均線與RSI；"
-            "[SLIDE_5]第一則市場焦點；[SLIDE_6]第二則市場焦點；"
-            "[SLIDE_7]第三則市場焦點。"
-        )
-        p2_slide_anchors = (
-            "[SLIDE_8]六大主流幣報價與指標總表；[SLIDE_9]六大主流幣24H漲跌；"
-            "[SLIDE_10]BTC價格結構與關鍵多空攻防圖；[SLIDE_11]關鍵價位攻防；"
-            "[SLIDE_12]美股開盤連動；[SLIDE_13]短線清算風險；"
-            "[SLIDE_14]總結行動策略。"
-        )
         dca_prompt_section = (
             "今日不是DCA帳本播報日，逐字稿不得提及帳本數據或插入獨立的DCA播報段落；"
             "仍可自然維持長期持有與紀律投資的頻道精神。"
         )
-        p1_content_guidance = (
-            "以[SLIDE_1]第一句直接丟出今日最衝突的數據或反直覺提問，前兩句禁止客套與免責；"
-            "鉤子講完後用一句話帶過「本節目僅供市場數據整理，不構成投資建議」，"
-            "接續依序以[SLIDE_2]分析恐慌貪婪指數、"
-            "[SLIDE_3]分析BTC均線與RSI歷史超賣圖、[SLIDE_4]分析ETH，"
-            "再以[SLIDE_5]至[SLIDE_7]逐一深入解析三大市場焦點。"
-        )
-        p1_formal_length = (
-            "正式版本段必須達2,600至2,900字：開場鉤子約70至90字，免責聲明延到鉤子之後約25字；"
-            "BTC均線、RSI歷史超賣、恐慌貪婪指數與ETH均線RSI合計900至1,000字；"
-            "三大市場焦點各500至550字，逐一說明正面邏輯、風險折價與可驗證訊號；段落銜接約100字。"
-        )
+    p1_content_guidance = (
+        f"先用前 {thermo_count} 頁在約 3 分鐘內做完市場溫度計：恐慌、比特幣與以太坊、六幣快篩放在一起，"
+        "安靜的幣種一句話帶過，不要每種幣各做一頁。"
+        + ("溫度計之後用一頁講完模擬帳本。" if show_dca else "")
+        + "剩下約七成篇幅只追今天這一個主軸，依照本日節目模式推進，不要再回到固定報表順序。"
+    )
+    p1_formal_length = (
+        f"正式版本段必須達2,600至2,900字。開頭溫度計合計不要超過 900 字。"
+        + ("帳本只用約 220 到 250 字。" if show_dca else "")
+        + "其餘字數全部留給今日模式的深度拆解。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+    )
 
     p1_length_guidance = (
         f"測試模式仍須為前半段{p1_part_slide_count}個投影片錨點各輸出一段極短口播，"
@@ -960,7 +956,7 @@ def generate_script(mdata, dca_data, config):
     p2_length_guidance = (
         "測試模式仍須為後半段7個投影片錨點各輸出一段極短口播，總長約200字以內，不套用正式版字數配額。"
         if is_test else
-        "正式版本段必須達2,600至2,900字。六大幣不要平均念完：沒動靜的幣一句話帶過，約 60% 篇幅留給今日核心主軸與真正有波動的幣。BTC近90日價格結構與支撐壓力仍要解讀。未來24小時（今日至明晨）三個觀察條件涵蓋關鍵價位、美股開盤連動與短線清算風險。總結與風險提醒收束。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
+        "正式版本段必須達2,600至2,900字，而且幾乎全部用在今日主軸。不要把六幣、均線、RSI 再各念一遍。未來 24 小時的三個觀察條件收進同一個錨點。兩段合計至少5,200字，目標5,200至5,600字，禁止灌水或重複。"
     )
     host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；熟悉以太坊技術升級、Layer 2、DeFi與RWA。她負責精準拆解價格結構圖與RSI圖，報出回撤天數與幅度、30日支撐壓力、相對100日及200日線乖離、歷史超賣區段，以及穩定幣總市值變化；籌碼面則客觀對照公開交易所的全體帳戶、前列交易者帳戶與持倉多空比、近30日現貨成交額，以及公開鏈上統計的估算交易量與筆數。說明多空比是平台倉位代理、鏈上統計不能辨識地址身分或交易所淨流向；只依本次數據判讀短線成交量與情緒，不將「散戶割肉」或「巨鯨吸籌」說成已證實事實。市場劇本須分別說明站穩壓力或跌破支撐後可驗證的條件，不把指標當成必然預測，並替激動的比特汪踩煞車。
 男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；重視BTC長期週期與紀律定投。接住以太喵的數據，用白話說明短線交易者可能退場、長期參與者可能較不活躍，但不得宣稱巨鯨必然吸籌或敦促觀眾把便宜籌碼交給特定族群。以不猜最低點、不追短線、不碰高槓桿為原則，提醒按個人預算與風險承受能力維持或調整分批計畫；不得保證獲利、回本或週期必然翻正。節目角色設定中的每月定投帳本是模擬紀錄，並非真實成交。
@@ -972,9 +968,8 @@ def generate_script(mdata, dca_data, config):
     editorial_hint = suggest_editorial_lead(mdata)
     catchphrase_line, catchphrases = sample_host_catchphrases()
     slide_slots = "；".join(
-        f"{index}.{name}" for index, name in enumerate(_slide_slot_names(show_dca), 1)
+        f"{index}.{slide['title']}" for index, slide in enumerate(visual_plan, 1)
     )
-    slide_title_count = 15 if show_dca else 14
     banned_terms = "、".join(EXCLUDED_PLATFORMS)
     mvrv_line = present_metric((mdata.get("mvrv") or {}).get("report"))
     mvrv_prompt = (
@@ -983,7 +978,9 @@ def generate_script(mdata, dca_data, config):
     )
     p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 【今日切入視角】{angle_title}。近 7 日已用視角（今日必須避開）：{recent_angles}。
-【今日核心主軸】寫稿前先決定 editorial_lead。資料提示：{editorial_hint}。你必須依資料區裡波動最大、最反常的訊號改寫成今天專屬主軸，例如股幣背離、大額資金進出、某主流幣逆勢、鏈上異動或總經事件。整集 60% 篇幅圍繞這個主軸，不要把六個幣平均念完；當天沒動靜的幣種一句話帶過。
+【今日節目模式】{show_format.get("title")}（{show_format.get("id")}）。{show_format.get("instruction")}
+【今日核心主軸】寫稿前先決定 editorial_lead。資料提示：{editorial_hint}。整集約七成篇幅只圍繞這個主軸。開頭 {thermo_count} 頁是市場溫度計，約 3 分鐘內講完；不要再把恐慌、均線、以太坊、六幣報價、六幣漲跌拆成各自一頁。
+【禁止報表流水帳】嚴禁連續兩句以上只報價格、漲跌幅或 RSI。每一個關鍵數字後面都要接白話生活比喻、反直覺提問，或對投資人行為的心理影響。每 2 到 3 分鐘設置一個認知反轉或懸念提問。
 【自檢差異化】{learning_line}
 【雙主播口頭禪】{catchphrase_line}
 【可自然帶入的術語】{vocab_line}
@@ -1000,18 +997,7 @@ def generate_script(mdata, dca_data, config):
 【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止重複同一個數字結論或同一句論點。
 【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。前半段標記對應：{p1_slide_anchors}
 【篇幅配額】{p1_length_guidance}
-【新聞選題與投影片嚴格一致性（最高優先級）】
-1. 純幣圈選題禁令：只可從「近36小時新聞」清單中挑選三則不同新聞，且必須是加密貨幣、區塊鏈、Web3 或總體經濟相關新聞；嚴格禁止挑選無關幣圈的純 AI 科技新聞（如 ChatGPT、Gemini、OpenAI、Claude、AI 晶片等純 AI 領域話題）。
-2. 口播、投影片大標題、中間內容三位一體完全一致：
-   - 第一則口播（錨點 [SLIDE_{news_slide_numbers[0]}]）、SLIDE_NEWS1 的 slide_title、positive、risk 必須【全部來自同一則新聞事件】！
-   - 第二則口播（錨點 [SLIDE_{news_slide_numbers[1]}]）、SLIDE_NEWS2 的 slide_title、positive、risk 必須【全部來自同一則新聞事件】！
-   - 第三則口播（錨點 [SLIDE_{news_slide_numbers[2]}]）、SLIDE_NEWS3 的 slide_title、positive、risk 必須【全部來自同一則新聞事件】！
-   每個新聞錨點後的第一句話，主持人必須清楚點出該新聞的主題事件。SLIDE_NEWS1/2/3 必須嚴格按照口播出場順序排列，不可依照清單原本序號排序。
-3. 標題與畫面時間標籤絕對禁令：
-   - slide_title 必須是精煉的新聞核心主標題（25字內），中間內容 positive（利多）與 risk（以太喵理性打折與隱藏風險）必須完全呼應此標題。
-   - 投影片畫面與逐字稿中【絕對嚴禁出現】「[發布時間:...]」、「來源時間」、「發布時間」、「CST」、「UTC」或任何時間戳記標籤！不可把發布時間印在標題或內容上。
-每則摘要行格式：SLIDE_NEWS1:{{"source_news_number": <序號>, "slide_title": "<精簡大標題>", "positive": "<正面利多敘事>", "risk": "<以太喵理性打折與風險>"}}。三則摘要行不是口播內容，禁止 Markdown 與媒體名稱。
-【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，依上述格式輸出恰好三行新聞圖卡 JSON 摘要。
+【新聞】只深挖一則與今日主軸有關的幣圈或總經事件，其餘一句話。禁止純 AI 科技題。投影片與口播不要印出發布時間、CST、UTC。slide_news 仍輸出 3 筆備用，但畫面只服務今天這一個故事。
 【黃金前 15 秒】第一句必須是當日最震撼的數據衝突、反直覺現象或懸疑問句，並用上資料區裡的具體數字。例如漲跌互相打架、恐慌指數極低但價格沒跟上、或支撐就在腳邊。前兩句禁止早安、自我介紹、節目名稱報幕，也禁止先說「本節目僅供市場數據整理，不構成投資建議」。這句免責要留到鉤子講完、準備拆大盤之前，大約開場第 20 到 30 秒自然帶過，不可刪掉。
 【內容】{p1_content_guidance}結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 
@@ -1020,7 +1006,7 @@ def generate_script(mdata, dca_data, config):
 【同一回合寫完後半段，禁止拆成第二次主腳本請求】
 {p2_length_guidance}
 後半段標記對應：{p2_slide_anchors}
-後半段不得重複前半段的開場、風險提醒、均線結論、恐慌指數結論或同一則新聞。依序寫六大幣報價與 RSI、24H 漲跌、BTC 價格結構、三個未來 24 小時觀察條件，最後提醒控管倉位並道別。
+後半段繼續同一個主軸，不要回頭把六幣、均線、RSI 再報一遍。未來 24 小時三個條件收在「未來一天只看三點」那一頁，最後提醒控管倉位並道別。
 【動態投影片標題】slide_titles 必須恰好 {slide_title_count} 句，順序對應：{slide_slots}。每一句都是新聞級標題，要含當日具體數字或事件，例如「美股狂飆 6% 幣市卻凍僵？揭開股幣背離真相」。禁止「開場｜盤勢觀察與投資風險提醒」，也禁止任何每天都能套用的公版標題。
 【輸出覆蓋規則】不要另起「標題：」純文字行。只輸出一個 JSON 物件，不要 Markdown。字數配額維持上面的前半段與後半段要求，不可縮水。格式：
 {{"title":"32字內標題","editorial_lead":"今日主軸","part1":"前半段男：女：逐字稿","part2":"後半段男：女：逐字稿","slide_titles":["標題1"],"slide_news":[{{"source_news_number":1,"slide_title":"","positive":"","risk":""}}],"slide_week":["條件1","條件2","條件3"]}}
@@ -1103,11 +1089,11 @@ slide_titles 必須恰好 {slide_title_count} 句，slide_news 必須恰好 3 �
         editorial_lead = editorial_hint
     slide_titles = align_slide_titles(
         episode_meta.get("slide_titles"),
-        mdata,
-        show_dca,
-        slide_news_details,
-        slide_24h_conditions,
+        [slide["title"] for slide in visual_plan],
     )
+    for slide, title in zip(visual_plan, slide_titles):
+        slide["title"] = title
+    fill_story_slide_bodies(visual_plan, editorial_lead, slide_news_details, slide_24h_conditions)
     opening_hook = episode_meta.get("opening_hook") or _opening_hook(part1_raw)
     result = {
         "part1_raw": part1_raw,
@@ -1124,6 +1110,10 @@ slide_titles 必須恰好 {slide_title_count} 句，slide_news 必須恰好 3 �
         "angle_title": angle_title,
         "editorial_lead": editorial_lead,
         "slide_titles": slide_titles,
+        "visual_slides": visual_plan,
+        "slide_count": len(visual_plan),
+        "format_id": show_format.get("id") or "",
+        "format_title": show_format.get("title") or "",
         "opening_hook": opening_hook,
         "catchphrases": catchphrases,
     }

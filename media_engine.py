@@ -1469,7 +1469,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     today_str = config["today_str"]
     outro_duration = config["OUTRO_DURATION"]
     outro_pause = config["OUTRO_PAUSE"]
-    slide_count = config["SLIDE_COUNT"]
+    slide_count = len(sdata.get("visual_slides") or []) or config["SLIDE_COUNT"]
 
     full_script = sdata["full_script"]
     dialogues, slide_anchor_positions = extract_dialogues_and_slide_anchors(full_script, slide_count)
@@ -1657,60 +1657,72 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     else:
         sentiment_slide = ""
 
-    slide_news_details = sdata["slide_news_details"]
-    slide_news = sdata["slide_news"]
-    news_slides = [
+    planned_slides = sdata.get("visual_slides") or []
+    if planned_slides:
+        slides_cfg = [
             (
-            presentation.display_text(script_writer.clean_slide_title(slide_news_details[index]["slide_title"])),
-            "#fbbf24",
-            slide_news[index],
-            "compare",
+                item.get("title") or f"分鏡 {index}",
+                item.get("accent") or "#fbbf24",
+                item.get("body") or "",
+                item.get("chart"),
+            )
+            for index, item in enumerate(planned_slides, 1)
+        ]
+    if not planned_slides:
+        slide_news_details = sdata["slide_news_details"]
+        slide_news = sdata["slide_news"]
+        news_slides = [
+            (
+                presentation.display_text(script_writer.clean_slide_title(slide_news_details[index]["slide_title"])),
+                "#fbbf24",
+                slide_news[index],
+                "compare",
+            )
+            for index in range(3)
+        ]
+        condition_slides = [
+            (f"未來 24 小時（今日至明晨）觀察條件 {index + 1}", "#f472b6", condition, "focus")
+            for index, condition in enumerate(sdata["slide_24h_conditions"])
+        ]
+        slides_cfg = [
+            ("今日主軸", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
+        ]
+        if show_dca:
+            slides_cfg.append(
+                ("BTC 長期定投（DCA）模擬帳本成績單", "#fbbf24", sdata["dca_slide_body"], "dca")
+            )
+        slides_cfg += [
+            ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
+            (
+                "BTC 動態｜均線、RSI 與歷史超賣",
+                "#38bdf8",
+                f"{mdata['s1']}\n{mdata['btc_oversold_report']}",
+                "btc_rsi",
+            ),
+            ("ETH 動態｜日線均線與 RSI", "#a78bfa", mdata["eth_slide"], "dual"),
+        ] + news_slides + [
+            ("六大主流幣｜報價與指標總表", "#34d399", cc.convert(mdata["coins_summary"]), None),
+            ("六大主流幣｜24H 漲跌幅", "#34d399", "即時報價、漲跌幅與 RSI 對照", "bars"),
+            (
+                "BTC 價格結構與關鍵攻防",
+                "#a78bfa",
+                f"{mdata['btc_technical_report']}\n{mdata['eth_technical_report']}",
+                "btc_structure",
+            ),
+        ] + condition_slides + [
+            ("24小時策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
+        ]
+        dynamic_titles = script_writer.align_slide_titles(
+            sdata.get("slide_titles"),
+            mdata,
+            show_dca,
+            sdata.get("slide_news_details"),
+            sdata.get("slide_24h_conditions"),
         )
-        for index in range(3)
-    ]
-    condition_slides = [
-        (f"未來 24 小時（今日至明晨）觀察條件 {index + 1}", "#f472b6", condition, "focus")
-        for index, condition in enumerate(sdata["slide_24h_conditions"])
-    ]
-    slides_cfg = [
-        ("今日主軸", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
-    ]
-    if show_dca:
-        slides_cfg.append(
-            ("BTC 長期定投（DCA）模擬帳本成績單", "#fbbf24", sdata["dca_slide_body"], "dca")
-        )
-    slides_cfg += [
-        ("市場情緒｜恐慌與貪婪指數", "#38bdf8", sentiment_slide, "gauge"),
-        (
-            "BTC 動態｜均線、RSI 與歷史超賣",
-            "#38bdf8",
-            f"{mdata['s1']}\n{mdata['btc_oversold_report']}",
-            "btc_rsi",
-        ),
-        ("ETH 動態｜日線均線與 RSI", "#a78bfa", mdata["eth_slide"], "dual"),
-    ] + news_slides + [
-        ("六大主流幣｜報價與指標總表", "#34d399", cc.convert(mdata["coins_summary"]), None),
-        ("六大主流幣｜24H 漲跌幅", "#34d399", "即時報價、漲跌幅與 RSI 對照", "bars"),
-        (
-            "BTC 價格結構與關鍵攻防",
-            "#a78bfa",
-            f"{mdata['btc_technical_report']}\n{mdata['eth_technical_report']}",
-            "btc_structure",
-        ),
-    ] + condition_slides + [
-        ("24小時策略｜先驗證、再行動", "#fbbf24", "核對價格與均線、量能結構及市場情緒。\n依可驗證訊號控管部位，避免追高殺低。", "focus"),
-    ]
-    dynamic_titles = script_writer.align_slide_titles(
-        sdata.get("slide_titles"),
-        mdata,
-        show_dca,
-        sdata.get("slide_news_details"),
-        sdata.get("slide_24h_conditions"),
-    )
-    slides_cfg = [
-        (dynamic_titles[index] if index < len(dynamic_titles) else title, color, body, ctype)
-        for index, (title, color, body, ctype) in enumerate(slides_cfg)
-    ]
+        slides_cfg = [
+            (dynamic_titles[index] if index < len(dynamic_titles) else title, color, body, ctype)
+            for index, (title, color, body, ctype) in enumerate(slides_cfg)
+        ]
 
     # 5. Playwright 渲染動畫投影片
     slide_durations = calculate_slide_durations(

@@ -59,6 +59,128 @@ def tutorial_badge(ep_id):
 
 TUTORIAL_LAYOUTS = ("impact", "compare", "steps", "chart")
 
+DAILY_STORY_BEATS = {
+    "debate": [
+        ("多頭先把話說完", "focus"),
+        ("以太喵逐條反駁", "focus"),
+        ("分歧落在這個價", "btc_structure"),
+        ("誰的條件先被驗證", "focus"),
+        ("空頭看到的風險", "compare"),
+        ("多頭還缺哪一個確認", "focus"),
+        ("未來一天只看三點", "focus"),
+        ("交鋒之後留下的紀律", "focus"),
+    ],
+    "history_mirror": [
+        ("今天的結構長得像哪一段", "btc_structure"),
+        ("對上哪一個歷史階段", "focus"),
+        ("當時籌碼怎麼換手", "focus"),
+        ("相似結構裡的陷阱", "compare"),
+        ("這次明顯不同的地方", "focus"),
+        ("價格要怎麼確認", "focus"),
+        ("未來一天只看三點", "focus"),
+        ("鏡像之後的紀律", "focus"),
+    ],
+    "deep_story": [
+        ("事件表面先看懂", "compare"),
+        ("背後的資金動機", "focus"),
+        ("連鎖效應會碰到誰", "focus"),
+        ("數據有沒有對上故事", "btc_structure"),
+        ("反例與被忽略的風險", "focus"),
+        ("安靜的幣不用展開", "bars"),
+        ("未來一天只看三點", "focus"),
+        ("調查收到哪裡", "focus"),
+    ],
+    "psychology_flow": [
+        ("追高的人在想什麼", "focus"),
+        ("恐慌賣出的人在想什麼", "focus"),
+        ("觀望資金站在哪裡", "compare"),
+        ("換手可能發生在這個價", "btc_structure"),
+        ("情緒和價格為什麼分開", "focus"),
+        ("這個行為陷阱", "focus"),
+        ("未來一天只看三點", "focus"),
+        ("看懂心理之後的紀律", "focus"),
+    ],
+}
+
+
+def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
+    """開頭三頁快篩，其餘八頁留給當日模式。週五或 26 日再加一頁帳本。"""
+    mdata = mdata or {}
+    show_format = show_format or {}
+    beats = DAILY_STORY_BEATS.get(show_format.get("id")) or DAILY_STORY_BEATS["debate"]
+    price = format_usd(mdata.get("cur_p")) if mdata.get("cur_p") not in (None, "") else "比特幣"
+    pct = mdata.get("btc_pct")
+    move = f"{float(pct):+.2f}%" if isinstance(pct, (int, float)) else ""
+    fear = mdata.get("fng_num")
+    fear_name = ""
+    today_fng = mdata.get("today_fng") or {}
+    if isinstance(today_fng, dict):
+        fear_name = str(today_fng.get("value_classification") or "")
+    fear_line = f"恐慌指數 {int(fear)} {fear_name}".strip() if isinstance(fear, (int, float)) else "情緒溫度"
+    slides = [
+        {
+            "role": "thermometer",
+            "title": f"{fear_line}，{price} 有跟著怕嗎？",
+            "accent": "#38bdf8",
+            "body": f"{fear_line}\n比特幣 {price} {move}\n本節目內容為公開資訊整理，不構成投資建議。",
+            "chart": "gauge",
+        },
+        {
+            "role": "thermometer",
+            "title": f"均線快篩：{price} 與以太坊同一頁",
+            "accent": "#a78bfa",
+            "body": f"{mdata.get('s1') or ''}\n{mdata.get('eth_slide') or ''}".strip(),
+            "chart": "dual",
+        },
+        {
+            "role": "thermometer",
+            "title": "六幣快篩：只點名今天真的在動的",
+            "accent": "#34d399",
+            "body": mdata.get("coins_summary") or "安靜的幣種一筆帶過。",
+            "chart": "bars",
+        },
+    ]
+    if show_dca:
+        slides.append({
+            "role": "dca",
+            "title": f"模擬帳本對上 {price}",
+            "accent": "#fbbf24",
+            "body": dca_body or "模擬定期定額帳本。",
+            "chart": "dca",
+        })
+    accents = ["#fbbf24", "#fb7185", "#a78bfa", "#38bdf8", "#f472b6", "#34d399", "#f59e0b", "#e2e8f0"]
+    for index, (title, chart) in enumerate(beats):
+        slides.append({
+            "role": "story",
+            "title": title,
+            "accent": accents[index % len(accents)],
+            "body": show_format.get("title") or title,
+            "chart": chart,
+        })
+    return slides
+
+
+def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
+    """深度頁放主軸、一則新聞與三個觀察條件，不再拆成七頁報表。"""
+    news = [item for item in (news_details or []) if isinstance(item, dict)]
+    weeks = [str(item).strip() for item in (week_lines or []) if str(item).strip()]
+    lead = strip_bracket_tags(editorial) or "今天的主軸"
+    news_body = ""
+    if news:
+        news_body = f"利多：{news[0].get('positive') or lead}；風險：{news[0].get('risk') or '單則消息不是買賣指令。'}"
+    week_body = "\n".join(weeks[:3]) or lead
+    for slide in slides or []:
+        if slide.get("role") != "story":
+            continue
+        title = str(slide.get("title") or "")
+        if slide.get("chart") == "compare" and news_body:
+            slide["body"] = news_body
+        elif "三點" in title or "一天" in title:
+            slide["body"] = week_body
+        else:
+            slide["body"] = f"{lead}\n{title}"
+    return slides
+
 
 def build_tutorial_cards(sections, lesson=None):
     """把五段口播切成約 25 到 35 張圖卡，每張 2 到 4 句。"""

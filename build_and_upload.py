@@ -61,6 +61,8 @@ def main():
     # ── 3. 呼叫 Gemini AI 產製逐字稿與對話腳本 ────────────────
     print("[3/5] 呼叫 Gemini 生成雙人對話腳本與摘要...")
     sdata = script_writer.generate_script(mdata, dca_data, config)
+    if sdata.get("slide_count"):
+        config["SLIDE_COUNT"] = int(sdata["slide_count"])
 
     # ── 4. 語音合成、簡報渲染與 FFmpeg 影音多工合成 ───────────
     print("[4/5] 渲染 1080p 主片與 9:16 Shorts 短片...")
