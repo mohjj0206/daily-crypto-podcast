@@ -1,4 +1,5 @@
 import os
+import re
 import presentation
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -26,14 +27,53 @@ def _playlist_permission_skip(error):
     return False
 
 
+_VIDEO_ID = re.compile(r"^[0-9A-Za-z_-]{11}$")
+
+
+def is_real_video_id(video_id):
+    return bool(_VIDEO_ID.fullmatch(str(video_id or "")))
+
+
+def _safe_title(title):
+    return str(title or "").replace("<", "").replace(">", "").strip()[:95]
+
+
+def _safe_tags(tags):
+    kept = []
+    used = 0
+    for tag in tags or []:
+        text = str(tag).replace("<", "").replace(">", "").strip()
+        if not text:
+            continue
+        extra = len(text) + (1 if kept else 0)
+        if used + extra > 450:
+            break
+        kept.append(text)
+        used += extra
+    return kept
+
+
+def _api_error_text(error):
+    content = getattr(error, "content", b"") or b""
+    if isinstance(content, bytes):
+        content = content.decode("utf-8", errors="replace")
+    return f"{type(error).__name__}: {error}\n{content}".strip()
+
+
 def _record_upload_failure(asset, error):
     with open("UPLOAD_FAILED.flag", "a", encoding="utf-8") as flag_file:
-        flag_file.write(f"{asset}：{type(error).__name__}: {error}\n")
+        flag_file.write(f"{asset}：{_api_error_text(error)}\n")
 
     if "uploadLimitExceeded" in str(error):
         print(f"警告：YouTube 每日上傳數量已達上限，{asset}上傳未完成；成片與中繼資料已保留供下載補發。")
     else:
-        print(f"警告：{asset}上傳失敗（{type(error).__name__}: {error}）；成片與中繼資料已保留供下載補發。")
+        print(f"警告：{asset}上傳失敗；成片與中繼資料已保留供下載補發。")
+
+
+def _fail_upload(asset, error):
+    print(f"{asset} 上傳失敗，完整 API 錯誤：\n{_api_error_text(error)}")
+    _record_upload_failure(asset, error)
+    raise error
 
 
 def build_youtube_client():
@@ -109,31 +149,16 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
         print("=" * 50 + "\n")
         return "TEST_MAIN_VIDEO_ID"
 
-    try:
-        req = youtube.videos().insert(
-            part="snippet,status",
-            body={
-                "snippet": {
-                    "title": title[:95],
-                    "description": description,
-                    "tags": tags or ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
-                    "categoryId": "27",
-                },
-                "status": {"privacyStatus": "unlisted"},
-            },
-            media_body=MediaFileUpload(video_path, chunksize=1024*1024*5, resumable=True),
-        )
-        res = None
-        while res is None:
-            _, res = req.next_chunk()
-        video_id = res["id"]
-        print("Uploaded Video ID:", video_id)
-        _print_studio_links(video_id)
-    except Exception as err:
-        _record_upload_failure("主片", err)
-        if "uploadLimitExceeded" in str(err):
-            return "UPLOAD_LIMIT_EXCEEDED"
-        return "UPLOAD_FAILED_MAIN_VIDEO"
+    video_id = _insert_video(
+        youtube,
+        video_path,
+        title,
+        description,
+        tags or ["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
+        "主片",
+    )
+    print("Uploaded Video ID:", video_id)
+    _print_studio_links(video_id)
 
     # 上傳封面圖
     if thumb_path and os.path.exists(thumb_path):
@@ -220,38 +245,21 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         print("=" * 50 + "\n")
         return "TEST_SHORT_VIDEO_ID"
 
-    if main_video_id in ("UPLOAD_LIMIT_EXCEEDED", "UPLOAD_FAILED_MAIN_VIDEO"):
-        print(f"警告：主片未成功上傳，略過 Shorts 上傳；Shorts 成片與中繼資料已保留：{short_path}")
+    if not is_real_video_id(main_video_id):
+        print(f"警告：主片沒有有效 video_id，略過 Shorts 上傳；成片已保留：{short_path}")
         return "UPLOAD_SKIPPED_MAIN_VIDEO_FAILED"
 
-    try:
-        short_request = youtube.videos().insert(
-            part="snippet,status",
-            body={
-                "snippet": {
-                    "title": short_title[:95],
-                    "description": short_description,
-                    "tags": ["Shorts", "比特幣", "BTC", "以太幣", "ETH", "幣看趨勢"],
-                    "categoryId": "27",
-                },
-                "status": {"privacyStatus": "unlisted"},
-            },
-            media_body=MediaFileUpload(
-                short_path, chunksize=1024 * 1024 * 5, resumable=True
-            ),
-        )
-        short_response = None
-        while short_response is None:
-            _, short_response = short_request.next_chunk()
-        short_id = short_response["id"]
-        print("Uploaded YouTube Short:", short_id)
-        _print_studio_links(short_id)
-        return short_id
-    except Exception as err:
-        _record_upload_failure("Shorts", err)
-        if "uploadLimitExceeded" in str(err):
-            return "UPLOAD_LIMIT_EXCEEDED"
-        return "UPLOAD_FAILED_SHORT_VIDEO"
+    short_id = _insert_video(
+        youtube,
+        short_path,
+        short_title,
+        short_description,
+        ["Shorts", "比特幣", "BTC", "以太幣", "ETH", "幣看趨勢"],
+        "Shorts",
+    )
+    print("Uploaded YouTube Short:", short_id)
+    _print_studio_links(short_id)
+    return short_id
 
 
 PLAYLIST_EVERGREEN = "【幣看深潛｜加密貨幣百科】"
@@ -277,24 +285,32 @@ def _playlist_by_title(youtube, title):
     return created.get("id")
 
 
-def _insert_video(youtube, path, title, description, tags):
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body={
-            "snippet": {
-                "title": title[:95],
-                "description": description,
-                "tags": tags,
-                "categoryId": "27",
+def _insert_video(youtube, path, title, description, tags, asset="影片"):
+    safe_title = _safe_title(title)
+    safe_tags = _safe_tags(tags)
+    try:
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": safe_title,
+                    "description": description,
+                    "tags": safe_tags,
+                    "categoryId": "27",
+                },
+                "status": {"privacyStatus": "unlisted"},
             },
-            "status": {"privacyStatus": "unlisted"},
-        },
-        media_body=MediaFileUpload(path, chunksize=1024 * 1024 * 5, resumable=True),
-    )
-    response = None
-    while response is None:
-        _, response = request.next_chunk()
-    return response["id"]
+            media_body=MediaFileUpload(path, chunksize=1024 * 1024 * 5, resumable=True),
+        )
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+        video_id = (response or {}).get("id")
+    except Exception as error:
+        _fail_upload(asset, error)
+    if not is_real_video_id(video_id):
+        _fail_upload(asset, RuntimeError(f"沒有取得 11 碼 video_id：{response!r}"))
+    return video_id
 
 
 def upload_tutorial_video(youtube, rendered, tutorial, is_test):
@@ -318,6 +334,7 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
     video_id = _insert_video(
         youtube, rendered["output_path"], title, description,
         ["幣看深潛", "比特幣", "UTXO", "系統教學", tutorial.get("ep_id", "EP")],
+        "教學長片",
     )
     print("Uploaded Tutorial Video ID:", video_id)
     _print_studio_links(video_id)
@@ -334,14 +351,12 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
         f"📊 公開帳本：{LEDGER_URL}\n\n"
         "結構示意，不構成投資建議。\n#Shorts #幣看深潛 #比特幣"
     )
-    try:
-        short_id = _insert_video(
-            youtube, rendered["short_path"], short_title, short_description, ["Shorts", "幣看深潛"]
-        )
-        print("Uploaded Tutorial Short:", short_id)
-        _print_studio_links(short_id)
-    except Exception as error:
-        _record_upload_failure("教學Shorts", error)
+    short_id = _insert_video(
+        youtube, rendered["short_path"], short_title, short_description, ["Shorts", "幣看深潛"],
+        "教學Shorts",
+    )
+    print("Uploaded Tutorial Short:", short_id)
+    _print_studio_links(short_id)
     try:
         playlist_id = _playlist_by_title(youtube, PLAYLIST_EVERGREEN)
         if playlist_id:

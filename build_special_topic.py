@@ -1409,11 +1409,14 @@ def main():
     else:
         print("TEST_MODE=false，上傳教學長片與教學 Shorts。")
     video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
+    if is_test:
+        print("測試模式，不更新 evergreen_progress.json。")
+        return
+    if not youtube_uploader.is_real_video_id(video_id):
+        print(f"教學長片沒有 11 碼 video_id（{video_id!r}），不更新進度。")
+        raise RuntimeError(f"教學上傳未取得有效 video_id：{video_id!r}")
     youtube_uploader._print_studio_links(video_id)
-    if not is_test and video_id and not str(video_id).startswith(("TEST", "UPLOAD")):
-        mark_evergreen_complete(lesson)
-    else:
-        print("測試模式或上傳未成功，不更新 evergreen_progress.json。")
+    mark_evergreen_complete(lesson)
 
 
 if __name__ == "__main__":

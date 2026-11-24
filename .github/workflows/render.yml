@@ -50,7 +50,7 @@ jobs:
         run: python build_and_upload.py
 
       - name: Upload test preview artifacts
-        if: ${{ inputs.test_mode == true || hashFiles('UPLOAD_FAILED.flag') != '' }}
+        if: ${{ always() && (inputs.test_mode == true || hashFiles('UPLOAD_FAILED.flag') != '') }}
         uses: actions/upload-artifact@v4
         with:
           name: podcast-preview-${{ github.run_number }}
