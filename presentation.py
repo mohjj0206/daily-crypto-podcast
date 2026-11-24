@@ -92,16 +92,23 @@ def build_tutorial_cards(sections, lesson=None):
         layout = TUTORIAL_LAYOUTS[len(cards) % 4]
         if len(cards) == 12:
             layout = "chart"
-        headline = (chunk[0]["text"] or chunk[0]["title"] or "先看結構")[:22]
-        myth = myths[len(cards) % len(myths)]
-        truth = concepts[len(cards) % len(concepts)]
-        steps = (chunk[0]["bullets"] or concepts)[:3]
-        while len(steps) < 3:
+        myth = strip_bracket_tags(myths[len(cards) % len(myths)]) or "不要把示意當成買點"
+        truth = fit_complete_phrase(
+            concepts[len(cards) % len(concepts)], 4, 16, "先看結構再談價格"
+        )
+        steps = []
+        for source in list(chunk[0]["bullets"] or []) + concepts:
+            phrase = fit_complete_phrase(source, 8, 22, "")
+            if phrase and phrase not in steps:
+                steps.append(phrase)
+            if len(steps) == 3:
+                break
+        while len(steps) < 2:
             steps.append(truth)
         cards.append({
             "layout": layout,
-            "title": chunk[0]["title"] or f"分鏡 {len(cards) + 1}",
-            "headline": headline,
+            "title": fit_complete_phrase(chunk[0]["title"], 4, 16, truth),
+            "headline": truth,
             "myth": myth,
             "truth": truth,
             "steps": steps[:3],
@@ -179,10 +186,38 @@ def refine_market_zone(zone, mvrv_value, is_estimate, fear_value, price, sma200)
     return zone or "—"
 
 
+def strip_bracket_tags(text):
+    """畫面、字幕與縮圖不得留下 [serious] 這類控制標籤。"""
+    return re.sub(r"\[[^\]]*\]", "", str(text or "")).strip()
+
+
+def fit_complete_phrase(text, low, high, fallback):
+    """只留下完整短語。不夠或過長時改用備援，不從句子中間硬切。"""
+    cleaned = strip_bracket_tags(sanitize_text(text)).strip(" ，、；：。！？")
+    pieces = []
+    for sentence in re.split(r"[。！？\n]", cleaned):
+        sentence = sentence.strip(" ，、；：")
+        if not sentence:
+            continue
+        pieces.append(sentence)
+        for clause in re.split(r"[，、；：]", sentence):
+            clause = clause.strip()
+            if clause and clause not in pieces:
+                pieces.append(clause)
+    for piece in pieces:
+        if low <= len(piece) <= high:
+            return piece
+    backup = strip_bracket_tags(sanitize_text(fallback)).strip(" ，、；：。！？")
+    if backup and len(backup) <= high:
+        return backup
+    if backup:
+        return backup[:high]
+    return "先看結構"
+
+
 def sanitize_text(text):
     """腳本、字幕、簡報共用的後處理：角色名、禁忌詞、台幣字樣。"""
-    cleaned = str(text or "")
-    cleaned = _EMOTION_TAG.sub("", cleaned)
+    cleaned = strip_bracket_tags(text)
     for wrong, right in (
         ("比特王", "比特汪"),
         ("比特旺", "比特汪"),

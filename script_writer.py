@@ -9,7 +9,14 @@ from itertools import permutations
 from zoneinfo import ZoneInfo
 from opencc import OpenCC
 
-from presentation import EXCLUDED_PLATFORMS, build_tutorial_cards, format_usd, sanitize_text
+from presentation import (
+    EXCLUDED_PLATFORMS,
+    build_tutorial_cards,
+    fit_complete_phrase,
+    format_usd,
+    sanitize_text,
+    strip_bracket_tags,
+)
 
 
 # ── 文字清理與格式工具 ──────────────────────────────────────────
@@ -159,8 +166,11 @@ def reuse_script_enabled():
     return os.environ.get("REUSE_SCRIPT", "").strip().lower() == "true"
 
 
-def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False):
-    models = list(TEST_MODELS if os.environ.get("TEST_MODE", "").strip().lower() == "true" else PRODUCTION_MODELS)
+def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False, models=None):
+    if models:
+        models = list(models)
+    else:
+        models = list(TEST_MODELS if os.environ.get("TEST_MODE", "").strip().lower() == "true" else PRODUCTION_MODELS)
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
@@ -1158,6 +1168,46 @@ def _tutorial_char_count(sections):
     return sum(len(re.sub(r"\s+", "", section.get("narration", ""))) for section in sections)
 
 
+def _structured_tutorial_cards(payload, sections, lesson):
+    """優先用模型給的完整圖卡。欄位不完整才退回口播分組，且不截半句。"""
+    raw_cards = payload.get("cards") if isinstance(payload.get("cards"), list) else []
+    cards = []
+    for item in raw_cards:
+        if not isinstance(item, dict):
+            continue
+        lines = []
+        for line in item.get("lines") or []:
+            if not isinstance(line, dict):
+                continue
+            text = normalize_long_term_terms(str(line.get("text") or "").strip())
+            if not text:
+                continue
+            lines.append({"role": "女" if line.get("role") in ("女", "F") else "男", "text": text})
+        title = fit_complete_phrase(item.get("card_title"), 8, 16, "")
+        hero = fit_complete_phrase(item.get("hero_stat"), 4, 16, "")
+        bullets = []
+        for bullet in item.get("bullet_points") or []:
+            phrase = fit_complete_phrase(bullet, 8, 22, "")
+            if phrase and phrase not in bullets:
+                bullets.append(phrase)
+        if not title or not hero or len(bullets) < 2 or not lines:
+            continue
+        cards.append({
+            "layout": ("impact", "compare", "steps", "chart")[len(cards) % 4],
+            "title": title,
+            "headline": hero,
+            "myth": strip_bracket_tags(str(item.get("myth") or "不要把示意區間當成買點")),
+            "truth": hero,
+            "steps": bullets[:3],
+            "lines": lines,
+        })
+        if len(cards) == 13:
+            cards[-1]["layout"] = "chart"
+    if len(cards) >= 8:
+        return cards[:30]
+    return build_tutorial_cards(sections, lesson)
+
+
 def _normalize_tutorial(payload, lesson):
     raw_sections = payload.get("sections") if isinstance(payload.get("sections"), list) else []
     if len(raw_sections) != 5:
@@ -1202,7 +1252,7 @@ def _normalize_tutorial(payload, lesson):
         "short_script": short_script,
         "short_lines": short_lines,
         "char_count": _tutorial_char_count(sections),
-        "cards": build_tutorial_cards(sections, lesson),
+        "cards": _structured_tutorial_cards(payload, sections, lesson),
         "catchphrases": list(payload.get("catchphrases") or []),
     }
 
@@ -1254,22 +1304,27 @@ def generate_tutorial_script(lesson, reference_note, config):
 資料邊界：{reference_note}
 {length_rule}
 五段順序必須是：1 好奇提問與痛點鉤子；2 生活化白話比喻；3 鏈上或指標原理拆解；4 歷史週期實證；5 實戰啟示與三大誤區。
-每段寫成很多短對白，正式版每段 16 到 22 句，整集大約 90 到 120 句，讓後製能每 2 到 4 句切一張圖卡，合計約 25 到 35 張。
+每段寫成很多短對白，正式版每段 16 到 22 句。另外獨立輸出 25 到 30 張圖卡，每張 2 到 4 句口播。
+每一張圖卡必須自帶完整欄位，禁止拿口播半句當標題：card_title 是 8 到 16 字的完整知識標題；hero_stat 是本頁核心數據或 4 到 10 字金句，例如「170 萬顆遠古沉睡幣」「UTXO 帳本機制」；bullet_points 是 2 到 3 條、每條 12 到 22 字的完整要點。三個欄位都要是完整語意，不能停在「也就是說」這類半截句。
 第 1 段第一句就要丟出這集最反直覺的問題，前兩句不要客套，也不要先講免責。一句「本集是公開資訊整理，不構成投資建議」放在鉤子之後、開始拆原理之前。
-鐵律：繁體中文。角色只有比特汪與以太喵，台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤不要念出來。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
+【知識密度】禁止空泛重複。每一段都要同時有四種內容：具體技術機制，例如 UTXO 的輸入與輸出、公私鑰如何簽名；真實歷史里程碑與年代，例如 2009 年創世區塊、2010 年一萬枚比特幣買披薩、2011 年首度突破 1 美元、歷次減半後的籌碼換手；深度對比，把遺失私鑰的遠古化石幣和現代機構的高成本活躍籌碼分開，說明它們怎麼改變真實流通供給；雙人交鋒，比特汪追問實戰痛點，以太喵用硬核數據回答，並自然用上本次口頭禪。
+鐵律：繁體中文。角色只有比特汪與以太喵，台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤只供配音，不要出現在 card_title、hero_stat、bullet_points。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：
-{{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"short_script":"男：...\\n女：..."}}
-sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
-    raw = call_gemini(prompt, max_output_tokens=65536, timeout=300, json_mode=True)
+{{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"cards":[{{"card_title":"完整標題","hero_stat":"核心金句","bullet_points":["完整要點一","完整要點二"],"lines":[{{"role":"男","text":"不含半截句的口播"}}]}}],"short_script":"男：...\\n女：..."}}
+sections 必須恰好 5 段，cards 必須 25 到 30 張。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
+    raw = call_gemini(
+        prompt, max_output_tokens=65536, timeout=300, json_mode=True, models=PRODUCTION_MODELS,
+    )
     try:
         tutorial = _normalize_tutorial(_json_object(raw), lesson)
     except (ValueError, json.JSONDecodeError) as error:
         print(f"教學稿需要補一次合法 JSON：{error}")
         raw = call_gemini(
-            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須恰好 5 段。",
+            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須恰好 5 段，cards 必須 25 到 30 張。",
             max_output_tokens=65536,
             timeout=300,
             json_mode=True,
+            models=PRODUCTION_MODELS,
         )
         try:
             tutorial = _normalize_tutorial(_json_object(raw), lesson)
@@ -1283,12 +1338,15 @@ sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，�
         print(f"教學稿 {tutorial['char_count']} 字，低於 4800，深度擴寫一次。")
         try:
             expanded = call_gemini(
-                "以下教學 JSON 偏短。請深度擴寫五段 narration，補充更多白話例子、歷史細節與風險分析。"
+                "以下教學 JSON 偏短。請加深五段 narration 與 25 到 30 張 cards："
+                "補上 UTXO 或指標機制、有年代的歷史事件、遠古籌碼與現代活躍籌碼的對比，以及雙人追問。"
+                "card_title、hero_stat、bullet_points 必須是完整短語，不能是口播半句，也不能含括號標籤。"
                 "維持恰好 5 段、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
                 + raw[:12000],
                 max_output_tokens=65536,
                 timeout=300,
                 json_mode=True,
+                models=PRODUCTION_MODELS,
             )
             tutorial = _normalize_tutorial(_json_object(expanded), lesson)
         except (ValueError, json.JSONDecodeError) as error:

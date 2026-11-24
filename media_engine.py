@@ -2433,7 +2433,9 @@ def _concat_media(list_name, output_name):
 
 
 def _write_tutorial_thumb(tutorial):
-    title = str(tutorial.get("title") or tutorial.get("lesson_title") or "成本帶怎麼看")
+    title = presentation.strip_bracket_tags(
+        tutorial.get("title") or tutorial.get("lesson_title") or "成本帶怎麼看"
+    )
     hook = _fit_cjk_hook(title, "成本帶怎麼看")
     image = Image.new("RGB", (1280, 720), "#070b14")
     _draw_impact_thumb(
@@ -2597,7 +2599,7 @@ def _mux_tutorial_avatars(video_path, audio_path, output_path, speaker_intervals
     for speaker in ("cat", "dog"):
         if talk_videos[speaker]:
             add_input(f"{speaker}_ring", assets[f"{speaker}_ring"])
-    filters = ["[0:v]null[v_sub]"]
+    filters = ["[0:v]ass=tutorial_main.ass[v_sub]"]
     active = [speaker for speaker in ("cat", "dog") if talk_videos[speaker]]
     if len(active) == 2:
         filters.append(f"[{indexes['circle_mask']}:v]format=gray,split=2[cat_mask][dog_mask]")
@@ -2663,7 +2665,7 @@ def _render_tutorial_short(tutorial):
     events = []
     clock = 0.0
     for _, _, spoken, segment_duration in results:
-        clean = re.sub(r"[{}\\]", "", spoken).strip()
+        clean = presentation.strip_bracket_tags(re.sub(r"[{}\\]", "", spoken))
         chunks = split_short_subtitle_text(clean, max_width=11, shrink_limit=11)
         total_width = sum(short_subtitle_visual_width(chunk) for chunk, _ in chunks) or 1
         segment_time = clock
@@ -2689,8 +2691,9 @@ def _render_tutorial_short(tutorial):
     badge = html.escape(presentation.tutorial_badge(tutorial.get("ep_id", "EP")))
     cards = []
     for index, line in enumerate(lines[:4]):
+        phrase = presentation.fit_complete_phrase(line.get("text"), 6, 18, "先看結構")
         cards.append(
-            f'<article style="animation-delay:{index * duration / 4:.2f}s">{html.escape(str(line.get("text") or "")[:28])}</article>'
+            f'<article style="animation-delay:{index * duration / 4:.2f}s">{html.escape(phrase)}</article>'
         )
     def png_data(path):
         with Image.open(path) as image:
@@ -2782,6 +2785,59 @@ article {{ position:absolute; inset:0; display:grid; place-items:center; padding
     return "tutorial_short.mp4", duration
 
 
+def _write_broadcast_ass(path, timed_lines, start_time):
+    """66pt 底部字幕，左右讓開頭像，與每日晨報同一套安全區。"""
+    cc = OpenCC("s2twp")
+    events = []
+    clock = start_time
+    for spoken, duration in timed_lines:
+        text = presentation.strip_bracket_tags(presentation.display_text(spoken))
+        segments = [
+            part.strip()
+            for part in re.split(r"[，。！？、；：…!?;\n]+", cc.convert(text))
+            if part.strip()
+        ]
+        pieces = []
+        for segment in segments:
+            if len(segment) > 24:
+                pieces.extend(presentation.split_keeping_numbers(segment, 20))
+            else:
+                pieces.append(segment)
+        pieces = [re.sub(r"\s+", " ", piece).strip() for piece in pieces if piece.strip()]
+        total_chars = sum(len(piece) for piece in pieces)
+        if total_chars == 0 or duration <= 0:
+            clock += max(duration, 0)
+            continue
+        segment_cur = clock
+        for index, piece in enumerate(pieces):
+            sub_txt = re.sub(r"\s+", " ", re.sub(punct_pat, " ", piece)).strip()
+            sub_txt = presentation.strip_bracket_tags(sub_txt)
+            if not sub_txt:
+                continue
+            sub_end = clock + duration if index == len(pieces) - 1 else segment_cur + duration * (len(piece) / total_chars)
+            highlighted = re.sub(kw_pat, r"{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}", sub_txt)
+            events.append(
+                f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,315,315,0,,{highlighted}"
+            )
+            segment_cur = sub_end
+        clock += duration
+    header = (
+        f"[Script Info]\nScriptType: v4.00+\n"
+        f"PlayResX: {MAIN_VIDEO_WIDTH}\nPlayResY: {MAIN_VIDEO_HEIGHT}\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Noto Sans CJK TC,66,&H00FFFFFF,&H000000FF,&H00000000,"
+        "&H99000000,0,0,0,0,100,100,0,0,3,3,0,2,315,315,60,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+    )
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(header + "\n".join(events))
+
+
 def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5):
     """教學長片：15 秒片頭、25 到 35 張快切圖卡、雙頭像、1.5 秒停頓與 12 秒片尾。"""
     sections = tutorial.get("sections") or []
@@ -2848,6 +2904,11 @@ def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_second
             handle.write(f"file 'tutorial_p{index}.mp4'\n")
         handle.write("file 'outro.mp4'\n")
     _concat_media("tutorial_video.txt", "tutorial_visual.mp4")
+    _write_broadcast_ass(
+        "tutorial_main.ass",
+        [(spoken, duration) for _, _, spoken, duration in results],
+        intro_dur,
+    )
     _mux_tutorial_avatars(
         "tutorial_visual.mp4", "tutorial_bed.mp3", "tutorial_main.mp4",
         speaker_intervals, intro_dur, speech_end,
