@@ -1,7 +1,7 @@
 import os
 import tempfile
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -41,7 +41,7 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
         visible_start = max(0, len(btc_history) - 90)
         visible = btc_history[visible_start:]
         dates = [row["date"] for row in visible]
-        fig, ax = plt.subplots(figsize=(13, 7.5), dpi=220)
+        fig, ax = plt.subplots(figsize=(13, 7.5), dpi=300)
         fig.patch.set_facecolor(chart_color)
         ax.set_facecolor(panel_color)
         ax.plot(
@@ -91,7 +91,7 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
             prop=font, fontsize=9,
         )
         fig.tight_layout()
-        fig.savefig(price_path, facecolor=chart_color, dpi=220)
+        fig.savefig(price_path, facecolor=chart_color, dpi=300)
         plt.close(fig)
 
         visible_start = max(0, len(btc_history) - 180)
@@ -102,7 +102,7 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
             if value is not None
         ]
         rsi_values = [value for value in visible_rsi if value is not None]
-        fig, ax = plt.subplots(figsize=(13, 7.5), dpi=220)
+        fig, ax = plt.subplots(figsize=(13, 7.5), dpi=300)
         fig.patch.set_facecolor(chart_color)
         ax.set_facecolor(panel_color)
         ax.axhspan(70, 100, color="#EF4444", alpha=0.14)
@@ -147,7 +147,7 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
             labelcolor="#E2E8F0", prop=font, fontsize=9,
         )
         fig.tight_layout()
-        fig.savefig(rsi_path, facecolor=chart_color, dpi=220)
+        fig.savefig(rsi_path, facecolor=chart_color, dpi=300)
         plt.close(fig)
         return {"price": price_path, "rsi": rsi_path}, chart_dir
     except Exception:
@@ -178,13 +178,6 @@ def generate_dca_chart(portfolio, now_tw):
         else FontProperties(size=14, weight="bold")
     )
     btc_history = market_data.fetch_yahoo_daily_closes("BTC-USD", start_date, today)
-    try:
-        fx_history = market_data.fetch_yahoo_daily_closes(
-            "USDTWD=X", start_date - timedelta(days=7), today
-        )
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
-        print(f"DCA chart FX history unavailable; using 32.5 where needed: {error}")
-        fx_history = {}
 
     month_ends = []
     year, month = start_date.year, start_date.month
@@ -201,33 +194,29 @@ def generate_dca_chart(portfolio, now_tw):
     records = portfolio["records"]
     invested_values = []
     market_values = []
-    fallback_logged = False
     for month_key, valuation_date in month_ends:
         cumulative_records = [
             record for record in records if record["date"] <= valuation_date.isoformat()
         ]
-        invested = sum(float(record["twd_invested"]) for record in cumulative_records)
+        invested = sum(
+            float(record["twd_invested"]) / float(record["twd_rate"])
+            for record in cumulative_records
+            if float(record.get("twd_rate") or 0) > 0
+        )
         accumulated_btc = sum(float(record["btc_bought"]) for record in cumulative_records)
         if month_key == today.strftime("%Y-%m"):
             btc_price = float(portfolio["current_btc_usd"])
-            twd_rate = float(portfolio["current_twd_rate"])
         else:
             btc_price = market_data.latest_close_on_or_before(btc_history, valuation_date)
             if btc_price is None or btc_price <= 0:
                 raise RuntimeError(
                     f"Missing BTC-USD month-end price for {valuation_date.isoformat()}."
                 )
-            twd_rate = market_data.latest_close_on_or_before(fx_history, valuation_date)
-            if twd_rate is None or twd_rate <= 0:
-                if not fallback_logged:
-                    print("DCA chart has no recent month-end USDTWD close; using 32.5.")
-                    fallback_logged = True
-                twd_rate = 32.5
         invested_values.append(invested)
-        market_values.append(accumulated_btc * btc_price * twd_rate)
+        market_values.append(accumulated_btc * btc_price)
 
     months = [m for m, _ in month_ends]
-    fig, axis = plt.subplots(figsize=(7.2, 5.2), dpi=160)
+    fig, axis = plt.subplots(figsize=(7.2, 5.2), dpi=300)
     fig.patch.set_facecolor("#111827")
     axis.set_facecolor("#0f172a")
     bar_colors = [
@@ -237,15 +226,15 @@ def generate_dca_chart(portfolio, now_tw):
     axis.bar(months, market_values, color=bar_colors, alpha=0.58, label="月底資產總市值")
     axis.plot(
         months, invested_values, color="#fbbf24", marker="o",
-        linewidth=2.2, markersize=4, label="累計投入台幣成本",
+        linewidth=2.2, markersize=4, label="累計投入美元成本",
     )
     axis.set_title(
-        "每月投入成本與資產市值",
+        "每月投入美元與資產市值",
         color="white", fontsize=18, fontweight="bold",
         fontproperties=chart_font, pad=12,
     )
     axis.set_ylabel(
-        "TWD", color="#cbd5e1", fontsize=14, fontweight="bold",
+        "USD", color="#cbd5e1", fontsize=14, fontweight="bold",
         fontproperties=chart_font,
     )
     axis.tick_params(axis="x", colors="#cbd5e1", labelrotation=45, labelsize=14, pad=6)
@@ -270,7 +259,7 @@ def generate_dca_chart(portfolio, now_tw):
 
 def generate_dual_chart(cdata, output_path="chart_dual.png"):
     plot_tick_font = FontProperties(size=14, weight="bold")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 5.0), dpi=160)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 5.0), dpi=300)
     fig.patch.set_facecolor("#111827")
     for ax, name, col in [(ax1, "BTC", "#38bdf8"), (ax2, "ETH", "#a78bfa")]:
         cl = cdata[name][0][-100:]
@@ -302,7 +291,7 @@ def generate_dual_chart(cdata, output_path="chart_dual.png"):
 
 def generate_bars_chart(cdata, output_path="chart_bars.png"):
     plot_tick_font = FontProperties(size=14, weight="bold")
-    fig, ax = plt.subplots(figsize=(8.4, 5.0), dpi=160)
+    fig, ax = plt.subplots(figsize=(8.4, 5.0), dpi=300)
     fig.patch.set_facecolor("#111827")
     ax.set_facecolor("#0f172a")
     names = list(cdata.keys())

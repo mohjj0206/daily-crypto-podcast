@@ -2,7 +2,10 @@ name: Render and Upload Podcast
 
 on:
   schedule:
-    - cron: '0 22 * * *'
+    # 原 cron 0 22 * * * 是 UTC 22:00，換算台灣時間為當日 06:00 才開始渲染。
+    # 抓取、1080p 合成與上傳還要數小時，成品常拖到台灣時間上午 11:00 之後。
+    # 改為 UTC 19:15，即台灣時間 03:15 啟動，預留緩衝，目標在 06:00 前發布完成。
+    - cron: '15 19 * * *'
   workflow_dispatch:
     inputs:
       test_mode:

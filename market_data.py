@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 from urllib.parse import quote
 import feedparser
 
+import presentation
+
 # ── 正則關鍵字與常數 ──────────────────────────────────────────
 
 AI_PURE_TITLE_KEYWORDS = re.compile(
@@ -1374,6 +1376,9 @@ def update_dca_portfolio(current_btc_usd, now_tw):
         "current_market_value_twd": round(current_market_value_twd, 2),
         "unrealized_pnl_usd": round(unrealized_pnl_usd, 2),
         "unrealized_pnl_twd": round(unrealized_pnl_twd, 2),
+        "total_invested_usd": round(total_usd_invested, 2),
+        "current_value_usd": round(current_market_value_usd, 2),
+        "roi_pct": round((current_market_value_usd / total_usd_invested - 1) * 100, 2),
         "total_return_pct": round(
             (current_market_value_twd / total_twd - 1) * 100, 2
         ),
@@ -1384,6 +1389,124 @@ def update_dca_portfolio(current_btc_usd, now_tw):
     return portfolio
 
 
+def dca_usd_view(portfolio, current_btc_usd):
+    """歷史 JSON 仍保留台幣入帳欄位；播報只使用這裡換算後的美元視圖。
+
+    週末或非 25 日沒有新成交時，沿用 records 裡最近有效部位，
+    再用當下 BTC 美元現價重算市值與報酬，不因平假日把報酬打成 0。
+    """
+    records = [row for row in portfolio.get("records", []) if isinstance(row, dict)]
+    if not records:
+        return None
+    total_usd = 0.0
+    total_btc = 0.0
+    for record in records:
+        rate = float(record.get("twd_rate") or 0)
+        invested_twd = float(record.get("twd_invested") or 0)
+        if rate <= 0:
+            continue
+        total_usd += invested_twd / rate
+        total_btc += float(record.get("btc_bought") or 0)
+    price = float(current_btc_usd)
+    if total_btc <= 0 or total_usd <= 0 or price <= 0:
+        return None
+    current_value = total_btc * price
+    roi_pct = (current_value / total_usd - 1) * 100
+    latest = max(records, key=lambda row: str(row.get("date") or ""))
+    return {
+        "total_invested": round(total_usd, 2),
+        "current_value": round(current_value, 2),
+        "total_btc": f"{total_btc:.8f}",
+        "roi_pct": round(roi_pct, 2),
+        "avg_buy_price_usd": round(total_usd / total_btc, 2),
+        "latest_date": latest.get("date"),
+        "latest_price_usd": float(latest.get("btc_price_usd") or 0),
+        "monthly_usd": round(float(latest.get("twd_invested") or 0) / float(latest.get("twd_rate") or 1), 2),
+    }
+
+
+def load_dca_usd_snapshot(current_btc_usd):
+    ledger_path = "dca_portfolio.json"
+    if not os.path.exists(ledger_path):
+        return None
+    with open(ledger_path, encoding="utf-8") as ledger_file:
+        portfolio = json.load(ledger_file)
+    if not isinstance(portfolio, dict):
+        return None
+    return dca_usd_view(portfolio, current_btc_usd)
+
+
+def _estimate_mvrv(drawdown_pct):
+    drawdown = -20.0 if drawdown_pct is None else float(drawdown_pct)
+    drawdown = max(-80.0, min(0.0, drawdown))
+    return round(2.8 + (drawdown / 80.0) * 2.0, 2)
+
+
+def fetch_mvrv(drawdown_pct=None):
+    """CoinMetrics 社群 API 的市值／實現市值。失敗時用本地快取，再不行才標成備援估算。"""
+    cache_path = os.path.join("cache", "mvrv_cache.json")
+    url = (
+        "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
+        "?assets=btc&metrics=CapMrktCurUSD,CapRealUSD&frequency=1d&page_size=5"
+    )
+
+    def pack(value, source, is_estimate, market_cap=None, realized=None, as_of=None):
+        zone = presentation.classify_mvrv(value)
+        return {
+            "value": round(float(value), 2),
+            "zone": zone,
+            "source": source,
+            "is_estimate": is_estimate,
+            "market_cap": market_cap,
+            "realized_cap": realized,
+            "as_of": as_of,
+            "bar_pct": max(4, min(100, int(float(value) / 4.0 * 100))),
+            "report": (
+                f"MVRV {presentation.format_metric(value, 'ratio')}，判讀為{zone}"
+                + ("（備援估算，不是鏈上原值）" if is_estimate else f"（{source}）")
+            ),
+        }
+
+    try:
+        payload = fetch_json(url, timeout=20)
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        parsed = None
+        for row in reversed(rows or []):
+            market_cap = float(row.get("CapMrktCurUSD") or 0)
+            realized = float(row.get("CapRealUSD") or 0)
+            if market_cap > 0 and realized > 0:
+                parsed = (market_cap / realized, market_cap, realized, row.get("time"))
+                break
+        if parsed is None:
+            raise ValueError("CoinMetrics returned no MVRV pair.")
+        result = pack(parsed[0], "CoinMetrics", False, parsed[1], parsed[2], parsed[3])
+        os.makedirs("cache", exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as cache_file:
+            json.dump(result, cache_file, ensure_ascii=False, indent=2)
+        return result
+    except Exception as error:
+        print(f"MVRV live fetch failed; trying cache: {error}")
+
+    try:
+        if os.path.exists(cache_path):
+            with open(cache_path, encoding="utf-8") as cache_file:
+                cached = json.load(cache_file)
+            if cached.get("value"):
+                cached["source"] = "local-cache"
+                cached["is_estimate"] = False
+                cached["report"] = (
+                    f"MVRV {presentation.format_metric(cached['value'], 'ratio')}，"
+                    f"判讀為{cached.get('zone') or presentation.classify_mvrv(cached['value'])}"
+                    "（沿用本地快取）"
+                )
+                return cached
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        print(f"MVRV cache unreadable: {error}")
+
+    estimated = _estimate_mvrv(drawdown_pct)
+    return pack(estimated, "drawdown-proxy", True)
+
+
 def fetch_dca_data(current_btc_usd, now_tw):
     portfolio = update_dca_portfolio(current_btc_usd, now_tw)
     latest_record = portfolio["records"][-1]
@@ -1391,20 +1514,23 @@ def fetch_dca_data(current_btc_usd, now_tw):
     latest_month_data = portfolio["monthly_summary"].get(
         latest_month, {"twd_invested": 0, "btc_bought": "0.00000000"}
     )
+    usd_view = dca_usd_view(portfolio, current_btc_usd)
+    if not usd_view:
+        raise RuntimeError("Unable to build a USD view from the latest DCA records.")
     dca_report = (
-        "【BTC 長期定投（DCA）節目模擬帳本】\n"
-        "比特汪在節目設定中自2025年10月起，每月25日模擬投入NT$10,000；此帳本不是實際成交紀錄。\n"
-        f"最近一次買進（{latest_record['date']}）：BTC US${latest_record['btc_price_usd']:,.2f}，"
-        f"約NT${latest_record['btc_price_twd']:,.2f}；"
-        f"該月累計投入NT${latest_month_data['twd_invested']:,}，"
-        f"買入{latest_month_data['btc_bought']} BTC。\n"
-        f"總投入：NT${portfolio['total_twd']:,}；"
-        f"累計持有：{portfolio['total_btc']} BTC。\n"
-        f"平均成本：NT${portfolio['avg_buy_price_twd']:,.2f} / "
-        f"US${portfolio['avg_buy_price_usd']:,.2f} 每BTC。\n"
-        f"目前總價值：NT${portfolio['current_market_value_twd']:,.2f}；"
-        f"帳面賺賠：NT${portfolio['unrealized_pnl_twd']:+,.2f} "
-        f"（{portfolio['total_return_pct']:+.2f}%）。"
+        "【BTC 長期定投（DCA）節目模擬帳本，金額一律為美元】\n"
+        "比特汪在節目設定中自2025年10月起，每月25日模擬投入一筆固定部位；"
+        "歷史檔以當期匯率換算成美元後播報，此帳本不是實際成交紀錄。\n"
+        f"最近一次買進（{latest_record['date']}）："
+        f"BTC {presentation.format_metric(latest_record['btc_price_usd'], 'price')}；"
+        f"該期美元投入 {presentation.format_metric(usd_view['monthly_usd'], 'price')}，"
+        f"買入 {latest_month_data['btc_bought']} BTC。\n"
+        f"累計投入：{presentation.format_metric(usd_view['total_invested'], 'price')}；"
+        f"累計持有：{usd_view['total_btc']} BTC。\n"
+        f"平均成本：{presentation.format_metric(usd_view['avg_buy_price_usd'], 'price')} 每 BTC。\n"
+        f"目前總價值：{presentation.format_metric(usd_view['current_value'], 'price')}；"
+        f"帳面賺賠：{presentation.format_metric(usd_view['current_value'] - usd_view['total_invested'], 'price')} "
+        f"（{presentation.format_metric(usd_view['roi_pct'], 'percent')}）。"
     )
     recent_records = portfolio["records"][-3:]
     lowest_record = min(
@@ -1415,14 +1541,22 @@ def fetch_dca_data(current_btc_usd, now_tw):
     )
     dca_slide_body = "\n".join(
         [
-            f"總投入 NT${portfolio['total_twd']:,}｜累計 {portfolio['total_btc']} BTC",
-            f"平均成本 TWD {portfolio['avg_buy_price_twd']:,.0f} / USD {portfolio['avg_buy_price_usd']:,.0f}",
-            f"總市值 NT${portfolio['current_market_value_twd']:,.0f}｜損益 NT${portfolio['unrealized_pnl_twd']:+,.0f}（{portfolio['total_return_pct']:+.2f}%）",
+            f"累計投入 {presentation.format_metric(usd_view['total_invested'], 'price')}｜累計 {usd_view['total_btc']} BTC",
+            f"平均成本 {presentation.format_metric(usd_view['avg_buy_price_usd'], 'price')}",
+            (
+                f"總市值 {presentation.format_metric(usd_view['current_value'], 'price')}｜"
+                f"損益 {presentation.format_metric(usd_view['roi_pct'], 'percent')}"
+            ),
             "近三次買進：" + "；".join(
-                f"{record['date']} ${record['btc_price_usd']:,.0f}/NT${record['btc_price_twd']:,.0f}"
+                f"{record['date']} {presentation.format_metric(record['btc_price_usd'], 'price')}"
                 for record in recent_records
             ),
-            f"歷史低／高：${lowest_record['btc_price_usd']:,.0f}（{lowest_record['date']}）／${highest_record['btc_price_usd']:,.0f}（{highest_record['date']}）",
+            (
+                f"歷史低／高：{presentation.format_metric(lowest_record['btc_price_usd'], 'price')}"
+                f"（{lowest_record['date']}）／"
+                f"{presentation.format_metric(highest_record['btc_price_usd'], 'price')}"
+                f"（{highest_record['date']}）"
+            ),
         ]
     )
     return {
@@ -1432,6 +1566,7 @@ def fetch_dca_data(current_btc_usd, now_tw):
         "recent_records": recent_records,
         "lowest_record": lowest_record,
         "highest_record": highest_record,
+        "usd_view": usd_view,
     }
 
 
@@ -1519,6 +1654,9 @@ def fetch_all_market_data(now_tw, is_test):
         okx_spot_volume_metrics,
     )
 
+    mvrv = fetch_mvrv(btc_metrics.get("current_drawdown_pct"))
+    dca_snapshot = load_dca_usd_snapshot(spot_prices["BTC"])
+
     coins_lines = []
     for name, (cl, pct, rsi) in cdata.items():
         sgn = "+" if pct >= 0 else ""
@@ -1586,6 +1724,8 @@ def fetch_all_market_data(now_tw, is_test):
         "coins_summary": coins_summary,
         "fear_report": fear_report,
         "data_fetched_at": data_fetched_at,
-        "s1": s1,
+        "s1": s1 + f"\n{mvrv['report']}",
         "eth_slide": eth_slide,
+        "mvrv": mvrv,
+        "dca_snapshot": dca_snapshot,
     }

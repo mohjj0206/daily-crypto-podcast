@@ -1,0 +1,16 @@
+{
+  "angles": [
+    {"id": "mvrv-cycle", "title": "鏈上估值與 MVRV 週期視角"},
+    {"id": "derivatives", "title": "衍生品多空籌碼博弈視角"},
+    {"id": "stablecoin-liquidity", "title": "總經流動性與穩定幣供給變化視角"},
+    {"id": "moving-average", "title": "關鍵均線攻防與歷史回撤對比視角"},
+    {"id": "rsi-oversold", "title": "RSI 超賣歷史對照與動能衰竭視角"},
+    {"id": "spot-vs-leverage", "title": "現貨成交與槓桿擁擠度分離視角"},
+    {"id": "volatility-sweep", "title": "波動擴張與流動性掠奪風險視角"},
+    {"id": "funding-oi", "title": "資金費率與未平倉量擁擠視角"},
+    {"id": "fib-range", "title": "波段高低與斐波那契回撤位置視角"},
+    {"id": "risk-budget", "title": "部位風險預算與紀律再平衡視角"},
+    {"id": "cross-asset", "title": "美股開盤連動與風險資產同向視角"},
+    {"id": "range-compression", "title": "盤整區間壓縮與假突破辨識視角"}
+  ]
+}

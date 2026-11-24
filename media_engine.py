@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 from opencc import OpenCC
 from playwright.sync_api import sync_playwright
 
+import presentation
 import script_writer
 
 
@@ -21,9 +22,11 @@ import script_writer
 
 MAIN_VIDEO_WIDTH = 1920
 MAIN_VIDEO_HEIGHT = 1080
-MAIN_DESIGN_WIDTH = 1280
-MAIN_DESIGN_HEIGHT = 720
-MAIN_OUTPUT_SCALE = 1.5
+MAIN_DESIGN_WIDTH = 1920
+MAIN_DESIGN_HEIGHT = 1080
+MAIN_OUTPUT_SCALE = 1
+VIDEO_FPS = 30
+VIDEO_CRF = "18"
 
 SHORT_VIDEO_WIDTH = 1080
 SHORT_VIDEO_HEIGHT = 1920
@@ -175,18 +178,11 @@ def synth_audio_segment(item, file_prefix):
 
     idx, (role, txt) = item
     txt = script_writer.normalize_long_term_terms(txt)
+    display_line = presentation.display_text(txt)
     v_name = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
     fallback_voice = "cmn-TW-Standard-B" if role == "男" else "cmn-TW-Standard-A"
     pitch = -1.5 if role == "男" else 1.5
-    clean_say = re.sub(r'[*#\[\]()]', '', txt)
-    ssml_say = html.escape(clean_say, quote=False)
-    ssml_say = re.sub(r"([，、,])", r'\1<break time="120ms"/>', ssml_say)
-    ssml_say = re.sub(r"([。！？!?])", r'\1<break time="280ms"/>', ssml_say)
-    for emphasized_phrase in ("請注意", "關鍵是", "風險提醒"):
-        ssml_say = ssml_say.replace(
-            emphasized_phrase,
-            f'<emphasis level="moderate">{emphasized_phrase}</emphasis>',
-        )
+    ssml_say = presentation.build_ssml_inner(txt)
 
     def request_tts(voice_name):
         payload_tts = json.dumps({
@@ -225,7 +221,7 @@ def synth_audio_segment(item, file_prefix):
     with open(fn, "wb") as f:
         f.write(base64.b64decode(res["audioContent"]))
     dur = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", fn]).decode().strip())
-    return idx, fn, txt, dur
+    return idx, fn, display_line, dur
 
 
 def create_outro_audio(outro_duration, outro_pause):
@@ -327,8 +323,17 @@ def split_short_subtitle_text(text):
             _, _, left, right = min(candidates, key=lambda item: item[:2])
             return left, right
 
+        number_spans = [
+            (match.start(), match.end())
+            for match in re.finditer(
+                r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?",
+                value,
+            )
+        ]
         boundaries = []
         for boundary in range(1, len(value)):
+            if any(start < boundary < end for start, end in number_spans):
+                continue
             left = trim_edges(value[:boundary])
             right = trim_edges(value[boundary:])
             if left and right:
@@ -525,6 +530,24 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
     )
     record_seconds = min(float(dur_sec), 6.0)
     remaining = max(0.0, float(dur_sec) - record_seconds)
+    pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
+    insights = slide_data.get("insights") or {}
+    mvrv_pct = int(insights.get("mvrv_pct") or 40)
+    insight_markup = (
+        "<article><small>MVRV 溫度</small>"
+        f"<strong>{html.escape(str(insights.get('mvrv', '—')))}</strong>"
+        f"<em>{html.escape(str(insights.get('zone', '')))}</em>"
+        "<div class=\"mvrv-bar\"><i></i></div></article>"
+        "<article><small>支撐 / 壓力</small>"
+        f"<strong class=\"pulse\">{html.escape(str(insights.get('support', '—')))}</strong>"
+        f"<em>壓力 {html.escape(str(insights.get('resistance', '—')))}</em></article>"
+        "<article><small>RSI / 均線</small>"
+        f"<strong>RSI {html.escape(str(insights.get('rsi', '—')))}</strong>"
+        f"<em>{html.escape(str(insights.get('sma', '')))}</em></article>"
+        "<article><small>今日結論</small>"
+        f"<strong>{html.escape(str(insights.get('headline', '紀律觀察')))}</strong>"
+        f"<em>{html.escape(str(insights.get('detail', '')))}</em></article>"
+    )
     tpad_filter = (
         f",tpad=stop_mode=clone:stop_duration={remaining:.6f}"
         if remaining > 0 else ""
@@ -562,7 +585,7 @@ body {{
   to {{ transform: translate3d(48px, 24px, 0); }}
 }}
 .ticker {{
-  position: absolute; inset: 0 0 auto; z-index: 2; height: 46px;
+  position: absolute; inset: 0 0 auto; z-index: 2; height: 72px;
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center; padding: 0 26px;
   background: rgba(15, 23, 42, .92);
@@ -575,12 +598,12 @@ body {{
   gap: 8px; padding: 0 10px; white-space: nowrap; overflow: hidden;
 }}
 .ticker-item + .ticker-item {{ border-left: 1px solid rgba(148, 163, 184, .22); }}
-.ticker-label {{ color: #94a3b8; font-size: 12px; }}
-.ticker-item strong {{ color: #f8fafc; font-size: 15px; font-variant-numeric: tabular-nums; }}
+.ticker-label {{ color: #94a3b8; font-size: 16px; }}
+.ticker-item strong {{ color: #f8fafc; font-size: 22px; font-variant-numeric: tabular-nums; }}
 .ticker-item strong.positive {{ color: #4ade80; }}
 .ticker-item strong.negative {{ color: #fb7185; }}
 .ticker-item strong.neutral {{ color: #f8fafc; }}
-.ticker-detail {{ font-size: 12px; overflow: hidden; text-overflow: ellipsis; }}
+.ticker-detail {{ font-size: 16px; overflow: hidden; text-overflow: ellipsis; }}
 .ticker-detail.positive {{ color: #4ade80; }}
 .ticker-detail.negative {{ color: #fb7185; }}
 .ticker-detail.neutral {{ color: #cbd5e1; }}
@@ -589,7 +612,7 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 60px; right: 60px; top: 62px; bottom: 118px;
+  position: absolute; left: 48px; right: 48px; top: 88px; bottom: 36px;
   padding: 28px 40px; border: 2px solid rgba(251,191,36,.78);
   border-radius: 18px; background: rgba(15,23,42,.86);
   box-shadow: 0 0 34px rgba(56,189,248,.12), inset 0 0 34px rgba(251,191,36,.035);
@@ -597,7 +620,7 @@ body {{
 }}
 h1 {{
   position: relative; flex: 0 0 auto; max-width: 100%; margin: 0 0 20px;
-  color: var(--accent); font-size: 39px; line-height: 1.2; font-weight: 800;
+  color: var(--accent); font-size: 42px; line-height: 1.2; font-weight: 800;
   animation: titleIn .8s cubic-bezier(.2,.8,.2,1) both;
 }}
 @keyframes titleIn {{
@@ -686,7 +709,39 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
   animation: chartIn .9s cubic-bezier(.2,.8,.2,1) .45s both, breathe 5s ease-in-out 1.4s infinite;
 }}
 .chart-layout .visual {{ min-height: 300px; max-height: none; }}
-.chart img {{ display: block; width: 100%; height: 100%; max-height: 410px; object-fit: contain; }}
+.chart img {{
+  display: block; width: 100%; height: 100%; max-height: 410px; object-fit: contain;
+  animation: revealRight calc(var(--pace) * 5) ease-out both;
+}}
+@keyframes revealRight {{
+  from {{ clip-path: inset(0 100% 0 0); }}
+  to {{ clip-path: inset(0 0 0 0); }}
+}}
+.insight-dock {{
+  flex: 0 0 auto; display: grid; grid-template-columns: 1.15fr 1fr 1.15fr 1.2fr;
+  gap: 12px; margin-top: 14px;
+}}
+.insight-dock article {{
+  border: 1px solid rgba(245, 158, 11, .45); border-radius: 12px; padding: 12px 14px;
+  background: rgba(8, 12, 22, .78); animation: fadeInUp calc(var(--pace) * 2) ease both;
+}}
+.insight-dock article:nth-child(2) {{ animation-delay: calc(var(--pace)); }}
+.insight-dock article:nth-child(3) {{ animation-delay: calc(var(--pace) * 2); }}
+.insight-dock article:nth-child(4) {{ animation-delay: calc(var(--pace) * 3); }}
+.insight-dock small {{ display: block; color: #94a3b8; font-size: 14px; margin-bottom: 4px; }}
+.insight-dock strong {{ display: block; color: #f59e0b; font-size: 26px; line-height: 1.25; }}
+.insight-dock strong.pulse {{ animation: levelPulse 1.6s ease-in-out infinite; }}
+.insight-dock em {{ display: block; margin-top: 4px; color: #e2e8f0; font-style: normal; font-size: 16px; }}
+.mvrv-bar {{ height: 12px; margin-top: 8px; border-radius: 99px; background: #1e293b; overflow: hidden; }}
+.mvrv-bar i {{
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, #34d399, #f59e0b, #f87171);
+  animation: barGrow 1.5s ease forwards;
+}}
+@keyframes barGrow {{ to {{ width: var(--mvrv-pct); }} }}
+@keyframes levelPulse {{
+  50% {{ text-shadow: 0 0 14px rgba(245, 158, 11, .95); }}
+}}
 @keyframes chartIn {{
   from {{ opacity: 0; transform: scale(.88); }}
   to {{ opacity: 1; transform: scale(1); }}
@@ -730,11 +785,12 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 </style>
 </head>
 <body>
-<div class="slide-stage">
+<div class="slide-stage" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
   {content_markup}
+  <aside class="insight-dock">{insight_markup}</aside>
 </main>
 </div>
   <script>
@@ -761,7 +817,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
       if (attempt === 3) frame.classList.add("fit-tight");
       if (attempt === 6) frame.classList.add("fit-min");
       const titleSize = parseFloat(getComputedStyle(title).fontSize);
-      if (titleSize > 20) title.style.fontSize = `${{Math.max(20, titleSize - 2)}}px`;
+      if (titleSize > 36) title.style.fontSize = `${{Math.max(36, titleSize - 2)}}px`;
       const minBodySize = content.classList.contains("chart-layout") ? 22 : 18;
       for (const item of items) {{
         const bodySize = parseFloat(getComputedStyle(item).fontSize);
@@ -816,7 +872,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
     with tempfile.TemporaryDirectory(prefix=f"slide_{idx}_") as record_dir:
         context = browser.new_context(
             viewport={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
-            device_scale_factor=1,
+            device_scale_factor=2,
             record_video_dir=record_dir,
             record_video_size={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
         )
@@ -832,7 +888,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
             context.close()
         recording_path = video.path()
         filters = (
-            f"fps=24,scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
+            f"fps={VIDEO_FPS},scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
             f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS"
             f"{tpad_filter},format=yuv420p"
         )
@@ -840,8 +896,8 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
             [
                 "ffmpeg", "-y", "-i", recording_path,
                 "-vf", filters, "-t", f"{dur_sec:.6f}",
-                "-an", "-r", "24", "-c:v", "libx264",
-                "-preset", "ultrafast", "-pix_fmt", "yuv420p", out_mp4,
+                "-an", "-r", str(VIDEO_FPS), "-c:v", "libx264",
+                "-preset", "medium", "-crf", VIDEO_CRF, "-pix_fmt", "yuv420p", out_mp4,
             ],
             check=True,
         )
@@ -1102,11 +1158,11 @@ def create_speaker_avatars(talk_videos):
 def create_outro_video(outro_duration):
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
+            "ffmpeg", "-y", "-loop", "1", "-framerate", str(VIDEO_FPS),
             "-i", "outro_frame.png", "-t", f"{outro_duration:g}",
             "-vf", "fade=t=in:st=0:d=1,fade=t=out:st=10:d=2,format=yuv420p",
-            "-an", "-r", "24", "-c:v", "libx264",
-            "-tune", "stillimage", "-preset", "ultrafast",
+            "-an", "-r", str(VIDEO_FPS), "-c:v", "libx264",
+            "-tune", "stillimage", "-preset", "medium", "-crf", VIDEO_CRF,
             "-pix_fmt", "yuv420p", "outro.mp4",
         ],
         check=True,
@@ -1251,7 +1307,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         sub_segments = []
         for segment in split_txt:
             if len(segment) > 24:
-                sub_segments.extend([segment[i:i + 20].strip() for i in range(0, len(segment), 20) if segment[i:i + 20].strip()])
+                sub_segments.extend(presentation.split_keeping_numbers(segment, 20))
             else:
                 sub_segments.append(segment)
 
@@ -1342,8 +1398,8 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     slide_news_details = sdata["slide_news_details"]
     slide_news = sdata["slide_news"]
     news_slides = [
-        (
-            script_writer.clean_slide_title(slide_news_details[index]["slide_title"]),
+            (
+            presentation.display_text(script_writer.clean_slide_title(slide_news_details[index]["slide_title"])),
             "#fbbf24",
             slide_news[index],
             "compare",
@@ -1387,7 +1443,10 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     slide_durations = calculate_slide_durations(
         slide_start_times, speech_elapsed, intro_video_duration, slide_count, outro_pause
     )
-    dca_return_pct = float(dca_data.get("portfolio", {}).get("total_return_pct", 0.0)) if show_dca else 0.0
+    dca_snapshot = mdata.get("dca_snapshot") or {}
+    dca_return_pct = dca_snapshot.get("roi_pct")
+    if dca_return_pct is None and show_dca:
+        dca_return_pct = (dca_data.get("usd_view") or {}).get("roi_pct")
     fng_tone = (
         "negative" if fng_num <= 40 else "positive" if fng_num >= 60 else "neutral"
     ) if fng_num is not None else "neutral"
@@ -1415,16 +1474,45 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         },
         {
             "label": "DCA 實戰帳本",
-            "value": f"{dca_return_pct:+.2f}%",
-            "detail": "累計總報酬",
-            "tone": "positive" if dca_return_pct >= 0 else "negative",
+            "value": (
+                presentation.format_metric(dca_return_pct, "percent")
+                if dca_return_pct is not None else "沿用最近紀錄"
+            ),
+            "detail": (
+                f"美元總值 {presentation.format_metric(dca_snapshot.get('current_value', 0), 'price')}"
+                if dca_snapshot else "沒有新成交也沿用上次部位"
+            ),
+            "tone": (
+                "neutral" if dca_return_pct is None
+                else "positive" if float(dca_return_pct) >= 0 else "negative"
+            ),
         },
     ]
+    mvrv_info = mdata.get("mvrv") or {}
+    slide_insights = {
+        "mvrv": presentation.format_metric(mvrv_info["value"], "ratio") if mvrv_info.get("value") is not None else "—",
+        "zone": mvrv_info.get("zone", "未取得"),
+        "mvrv_pct": mvrv_info.get("bar_pct", 40),
+        "support": presentation.format_metric(mdata["btc_metrics"]["support"], "price"),
+        "resistance": presentation.format_metric(mdata["btc_metrics"]["resistance"], "price"),
+        "rsi": f"{mdata['btc_rsi']}",
+        "sma": (
+            f"100日 {presentation.format_metric(float(mdata['ma100d']), 'price')} / "
+            f"200日 {presentation.format_metric(float(mdata['ma200d']), 'price')}"
+        ),
+        "headline": mvrv_info.get("zone", "先看價格確認"),
+        "detail": (
+            f"帳本 {presentation.format_metric(dca_return_pct, 'percent')}"
+            if dca_return_pct is not None else "部位沿用最近一筆有效紀錄"
+        ),
+    }
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
             for idx, (title, color, body, ctype) in enumerate(slides_cfg, 1):
+                title = presentation.display_text(title)
+                body = presentation.display_text(body)
                 chart_path = (
                     chart_paths.get("dca") if ctype == "dca"
                     else chart_paths.get("bars") if ctype == "bars"
@@ -1458,6 +1546,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                     "compare_positive": compare_positive,
                     "compare_risk": compare_risk,
                     "ticker_items": ticker_items,
+                    "insights": slide_insights,
                 }
                 render_animated_slide(
                     idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4", browser
@@ -1486,17 +1575,17 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             "[backward]reverse,setpts=PTS-STARTPTS[reversed];"
             f"[forward][reversed]concat=n=2:v=1:a=0,"
             f"loop=loop=-1:size={boomerang_frames}:start=0,"
-            "fps=24,trim=duration=15,setpts=PTS-STARTPTS[animation];"
+            f"fps={VIDEO_FPS},trim=duration=15,setpts=PTS-STARTPTS[animation];"
             "[0:v][animation]overlay=630:98:shortest=1,"
             "fade=t=out:st=14:d=1,format=yuv420p[output]"
         )
         subprocess.run(
             [
-                "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
+                "ffmpeg", "-y", "-loop", "1", "-framerate", str(VIDEO_FPS),
                 "-i", "intro_frame.png", "-i", "info.mp4",
                 "-filter_complex", intro_filter, "-map", "[output]", "-an",
-                "-t", "15", "-r", "24", "-c:v", "libx264",
-                "-tune", "stillimage", "-preset", "ultrafast",
+                "-t", "15", "-r", str(VIDEO_FPS), "-c:v", "libx264",
+                "-tune", "stillimage", "-preset", "medium", "-crf", VIDEO_CRF,
                 "-pix_fmt", "yuv420p", "intro.mp4",
             ],
             check=True,
@@ -1535,7 +1624,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         if is_video:
             mux_command.extend(["-stream_loop", "-1", "-i", path])
         else:
-            mux_command.extend(["-loop", "1", "-framerate", "24", "-i", path])
+            mux_command.extend(["-loop", "1", "-framerate", str(VIDEO_FPS), "-i", path])
         input_indexes[name] = input_index
         return input_index
 
@@ -1573,7 +1662,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         input_index = input_indexes[f"{speaker}_talk"]
         avatar_filters.extend(
             [
-                f"[{input_index}:v]fps=24,"
+                f"[{input_index}:v]fps={VIDEO_FPS},"
                 "scale=252:252:force_original_aspect_ratio=increase,"
                 f"crop=252:252,setsar=1,format=rgba[{speaker}_square]",
                 f"[{speaker}_square][{speaker}_mask]alphamerge[{speaker}_talk_circle]",
@@ -1628,8 +1717,9 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         [
             "-filter_complex", avatar_filter,
             "-map", "[v_out]", "-map", "1:a:0",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
-            "-threads", "4", "-r", "24", "-c:a", "aac", "-b:a", "128k",
+            "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+            "-threads", "4", "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
             "-shortest", "output.mp4",
         ]
     )
@@ -2059,7 +2149,7 @@ window.fitShortLayout = () => {{
             with tempfile.TemporaryDirectory(prefix="short_render_") as video_dir:
                 context = browser.new_context(
                     viewport={"width": SHORT_VIDEO_WIDTH, "height": SHORT_VIDEO_HEIGHT},
-                    device_scale_factor=1,
+                    device_scale_factor=2,
                     record_video_dir=video_dir,
                     record_video_size={
                         "width": SHORT_VIDEO_WIDTH,
@@ -2081,11 +2171,11 @@ window.fitShortLayout = () => {{
                     [
                         "ffmpeg", "-y", "-i", recording_path,
                         "-vf", (
-                            f"fps=24,scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:"
+                            f"fps={VIDEO_FPS},scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:"
                             "flags=lanczos,format=yuv420p"
                         ),
-                        "-t", f"{render_duration:.6f}", "-an", "-r", "24",
-                        "-c:v", "libx264", "-preset", "ultrafast",
+                        "-t", f"{render_duration:.6f}", "-an", "-r", str(VIDEO_FPS),
+                        "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
                         "-pix_fmt", "yuv420p", "short_visual.mp4",
                     ],
                     check=True,
@@ -2103,8 +2193,8 @@ window.fitShortLayout = () => {{
         mux_command.extend(["-t", f"{short_audio_duration:.6f}"])
     mux_command.extend(
         [
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24",
-            "-r", "24", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+            "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k", "-shortest", "short.mp4",
         ]
     )

@@ -1,0 +1,17 @@
+{
+  "status": "skeleton",
+  "enabled": false,
+  "note": "正式每日學習尚未接入產片流程。欄位只定義未來 history_db 每日快照。",
+  "daily_record": {
+    "date": "YYYY-MM-DD",
+    "market_snapshot": {},
+    "mvrv": {},
+    "script_excerpt": "",
+    "angle_id": "",
+    "quality_audit": {
+      "number_format_ok": true,
+      "banned_terms": [],
+      "similarity_to_recent": 0
+    }
+  }
+}

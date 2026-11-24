@@ -1,0 +1,159 @@
+"""播報層共用格式、禁忌詞與 SSML。畫面與口播只走這裡，不在各檔各寫一套。"""
+import html
+import re
+
+# 增刪平台、媒體與禁忌詞只改這一份。較長的詞要排在前面，避免短詞先切掉長詞。
+EXCLUDED_PLATFORMS = [
+    "動區動趨",
+    "BlockTempo",
+    "Cointelegraph",
+    "CoinDesk",
+    "The Block",
+    "Blockcast",
+    "Decrypt",
+    "Bloomberg",
+    "Reuters",
+    "區塊客",
+    "鏈新聞",
+    "彭博",
+    "路透",
+    "動區",
+    "幣安",
+    "Binance",
+    "Coinbase",
+    "Bybit",
+    "Bitget",
+    "Kraken",
+    "Uniswap",
+    "火幣",
+    "HTX",
+    "OKX",
+    "HODLer",
+    "HODL",
+    "AI",
+]
+
+EXCLUDED_TERMS = list(EXCLUDED_PLATFORMS)
+
+_EMOTION = {
+    "excited": {"rate": "108%", "pitch": "+1.5st", "break": "180ms"},
+    "serious": {"rate": "92%", "pitch": "-1.5st", "break": "320ms"},
+    "analytical": {"rate": "100%", "pitch": "+0st", "break": "140ms"},
+    "debate": {"rate": "106%", "pitch": "+0.5st", "break": "80ms"},
+}
+_EMOTION_TAG = re.compile(r"\[(excited|serious|analytical|debate)\]")
+_NUMBER = re.compile(r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?")
+
+
+def format_metric(value, kind):
+    """統一幣價、百分比、比值與市值／成交量的顯示精度。"""
+    number = float(value)
+    if kind == "price":
+        return f"${number:,.2f}"
+    if kind == "percent":
+        return f"{number:+.2f}%"
+    if kind == "ratio":
+        return f"{number:.2f}"
+    if kind == "btc":
+        return f"{number:.8f}"
+    if kind == "compact":
+        sign = "-" if number < 0 else ""
+        magnitude = abs(number)
+        if magnitude >= 1_000_000_000_000:
+            return f"{sign}${magnitude / 1_000_000_000_000:.2f}T"
+        if magnitude >= 1_000_000_000:
+            return f"{sign}${magnitude / 1_000_000_000:.2f}B"
+        if magnitude >= 1_000_000:
+            return f"{sign}${magnitude / 1_000_000:.2f}M"
+        return f"{sign}${magnitude:,.2f}"
+    raise ValueError(f"unknown metric kind: {kind}")
+
+
+def classify_mvrv(value):
+    ratio = float(value)
+    if ratio < 1.0:
+        zone = "歷史底部低估區"
+    elif ratio < 2.4:
+        zone = "健康多頭推進區"
+    elif ratio <= 3.5:
+        zone = "市場過熱警戒區"
+    else:
+        zone = "週期極端泡沫區"
+    return zone
+
+
+def sanitize_text(text):
+    """腳本、字幕、簡報共用的後處理：角色名、禁忌詞、台幣字樣。"""
+    cleaned = str(text or "")
+    cleaned = _EMOTION_TAG.sub("", cleaned)
+    for wrong, right in (
+        ("比特王", "比特汪"),
+        ("比特旺", "比特汪"),
+        ("比特網", "比特汪"),
+        ("以太貓", "以太喵"),
+        ("以太猫", "以太喵"),
+    ):
+        cleaned = cleaned.replace(wrong, right)
+    cleaned = re.sub(r"\bHODLers?\b", "長期持有者", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bHODL\b", "長期持有", cleaned, flags=re.I)
+    for term in sorted(EXCLUDED_PLATFORMS, key=len, reverse=True):
+        if term.lower() in {"hodl", "hodler", "ai"}:
+            continue
+        cleaned = re.sub(re.escape(term), "公開資訊", cleaned, flags=re.I)
+    cleaned = re.sub(r"(?<![A-Za-z])AI(?![A-Za-z])", "自動化", cleaned)
+    cleaned = re.sub(r"(?:新台幣|台幣)", "美元", cleaned)
+    cleaned = re.sub(r"NT\$\s*", "$", cleaned)
+    cleaned = re.sub(r"\bTWD\b", "USD", cleaned, flags=re.I)
+    cleaned = re.sub(r"(公開資訊\s*){2,}", "公開資訊", cleaned)
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
+
+def display_text(text):
+    return sanitize_text(text)
+
+
+def build_ssml_inner(text):
+    """把情緒標籤轉成 prosody，並讓千分位數字以連續基數唸出。"""
+    raw = str(text or "")
+    found = _EMOTION_TAG.findall(raw)
+    emotion = found[0] if found else "analytical"
+    spoken = sanitize_text(raw)
+    spoken = _NUMBER.sub(lambda match: match.group(0).replace(",", "").replace("$", ""), spoken)
+    spoken = html.escape(spoken, quote=False)
+    spoken = re.sub(
+        r"(\d+(?:\.\d+)?)",
+        r'<break time="120ms"/><say-as interpret-as="cardinal">\1</say-as>',
+        spoken,
+    )
+    spoken = re.sub(r"([，、])", r'\1<break time="120ms"/>', spoken)
+    spoken = re.sub(r"([。！？!?])", r'\1<break time="280ms"/>', spoken)
+    style = _EMOTION[emotion]
+    return (
+        f'<prosody rate="{style["rate"]}" pitch="{style["pitch"]}">'
+        f'<break time="{style["break"]}"/>{spoken}</prosody>'
+    )
+
+
+def split_keeping_numbers(segment, limit=20):
+    """字幕斷行不得切斷完整數字。"""
+    tokens = re.findall(
+        r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?|\s+|\S",
+        segment,
+    )
+    lines = []
+    current = ""
+    for token in tokens:
+        if len(token) > limit:
+            if current.strip():
+                lines.append(current.strip())
+            lines.append(token.strip())
+            current = ""
+            continue
+        if current and len(current) + len(token) > limit:
+            lines.append(current.strip())
+            current = token.lstrip()
+        else:
+            current += token
+    if current.strip():
+        lines.append(current.strip())
+    return lines or [segment.strip()]
