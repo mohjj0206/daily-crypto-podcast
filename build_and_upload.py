@@ -15,6 +15,7 @@ def main():
     now_tw = datetime.now(tw_tz)
     today_str = now_tw.strftime("%Y年%m月%d日")
     is_test = os.environ.get("TEST_MODE", "").lower() == "true"
+    reuse_script = os.environ.get("REUSE_SCRIPT", "").strip().lower() == "true"
     show_dca = (now_tw.weekday() == 4) or (now_tw.day == 26)
     OUTRO_DURATION = 12.0
     OUTRO_PAUSE = 1.5
@@ -27,9 +28,12 @@ def main():
         "OUTRO_DURATION": OUTRO_DURATION,
         "OUTRO_PAUSE": OUTRO_PAUSE,
         "SLIDE_COUNT": SLIDE_COUNT,
+        "reuse_script": reuse_script,
     }
 
-    print(f"=== 幣看趨勢啟動 [{today_str}] (測試模式: {is_test}, DCA帳本: {show_dca}) ===")
+    print(f"=== 幣看趨勢啟動 [{today_str}] (測試模式: {is_test}, DCA帳本: {show_dca}, 重用劇本: {reuse_script}) ===")
+    if reuse_script:
+        print("[REUSE_SCRIPT] 快取存在時跳過 Gemini，只跑語音、簡報與渲染。")
 
     # ── 1. 抓取所有市場數據與 DCA 帳本 ─────────────────────────
     print("[1/5] 抓取即時市場數據、鏈上指標與最新新聞...")

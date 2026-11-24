@@ -79,13 +79,27 @@ def split_news_summary(summary):
 
 # ── Gemini API 調用 ──────────────────────────────────────────
 
-def call_gemini(prompt_txt):
-    models = [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-    ]
+SCRIPT_CACHE_PATH = "cache_last_script.json"
+PRODUCTION_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+]
+TEST_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+]
+
+
+def reuse_script_enabled():
+    return os.environ.get("REUSE_SCRIPT", "").strip().lower() == "true"
+
+
+def call_gemini(prompt_txt, max_output_tokens=8192, timeout=180):
+    models = list(TEST_MODELS if os.environ.get("TEST_MODE", "").strip().lower() == "true" else PRODUCTION_MODELS)
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
@@ -94,13 +108,16 @@ def call_gemini(prompt_txt):
     overload_waits = (10, 25, 45)
     for model in models:
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
-        body = json.dumps({"contents": [{"parts": [{"text": prompt_txt}]}]}).encode("utf-8")
+        body = json.dumps({
+            "contents": [{"parts": [{"text": prompt_txt}]}],
+            "generationConfig": {"maxOutputTokens": max_output_tokens},
+        }).encode("utf-8")
         overload_tries = 0
         retried_timeout = False
         while True:
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
             try:
-                res = json.loads(urllib.request.urlopen(req, timeout=180).read().decode("utf-8"))
+                res = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
                 return res["candidates"][0]["content"]["parts"][0]["text"]
             except urllib.error.HTTPError as e:
                 err_msg = e.read().decode("utf-8", errors="ignore")
@@ -336,7 +353,76 @@ def extract_slide_news_details(raw, available_entries):
 
 # ── 主流程：生成完整 AI 腳本 ──────────────────────────────────────────
 
+def load_cached_script():
+    if not reuse_script_enabled() or not os.path.isfile(SCRIPT_CACHE_PATH):
+        return None
+    try:
+        with open(SCRIPT_CACHE_PATH, encoding="utf-8") as handle:
+            cached = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"[REUSE_SCRIPT] 快取讀取失敗，改走正常產稿：{error}")
+        return None
+    required = (
+        "part1_raw", "part2_raw", "full_script", "ai_title", "video_title",
+        "slide_news_details", "slide_news", "slide_24h_conditions",
+        "dca_slide_caption", "dca_slide_body",
+    )
+    if not isinstance(cached, dict) or any(key not in cached for key in required):
+        print("[REUSE_SCRIPT] 快取欄位不完整，改走正常產稿。")
+        return None
+    print("[REUSE_SCRIPT] 已載入 cache_last_script.json，本集不呼叫 Gemini。")
+    return cached
+
+
+def save_cached_script(result):
+    with open(SCRIPT_CACHE_PATH, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    print(f"[REUSE_SCRIPT] 已備份劇本至 {SCRIPT_CACHE_PATH}。")
+
+
+def _parse_episode_payload(raw_text):
+    text = raw_text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("episode response has no JSON object")
+    payload = json.loads(text[start:end + 1])
+    title = str(payload.get("title") or "").strip()
+    part1 = str(payload.get("part1") or "").strip()
+    part2 = str(payload.get("part2") or "").strip()
+    news = payload.get("slide_news")
+    week = payload.get("slide_week")
+    if not title or not part1 or not part2:
+        raise ValueError("episode JSON missing title or script parts")
+    if not isinstance(news, list) or len(news) != 3 or not isinstance(week, list) or len(week) != 3:
+        raise ValueError("episode JSON must contain 3 slide_news items and 3 slide_week lines")
+    news_lines = [
+        f"SLIDE_NEWS{index}:{json.dumps(item, ensure_ascii=False)}"
+        for index, item in enumerate(news, 1)
+    ]
+    week_lines = [
+        f"SLIDE_WEEK{index}:{str(item).strip()}"
+        for index, item in enumerate(week, 1)
+    ]
+    return (
+        f"標題：{title}\n{part1}\n" + "\n".join(news_lines),
+        part2 + "\n" + "\n".join(week_lines),
+    )
+
+
+def _episode_long_enough(part1_raw, part2_raw, is_test):
+    if is_test:
+        return len(part1_raw) >= 40 and len(part2_raw) >= 40
+    return len(part1_raw) >= 2000 and len(part2_raw) >= 2000
+
+
 def generate_script(mdata, dca_data, config):
+    cached = load_cached_script()
+    if cached is not None:
+        return cached
     is_test = config["is_test"]
     show_dca = config["show_dca"]
     today_str = config["today_str"]
@@ -510,7 +596,30 @@ def generate_script(mdata, dca_data, config):
 【格式】第一行必須單獨輸出：標題：（結合今日數據的反直覺懸念爆款標題，32字內無引號）；其後逐字稿只能用「男：」「女：」開頭。逐字稿結束後，依上述格式輸出恰好三行新聞圖卡 JSON 摘要。
 【內容】{p1_content_guidance}結尾銜接具體幣價，不說再見、不使用分段結尾。"""
 
-    part1_raw = normalize_long_term_terms(call_gemini(p1_prompt))
+    episode_prompt = f"""{p1_prompt}
+
+【同一回合寫完後半段，禁止拆成第二次主腳本請求】
+{p2_length_guidance}
+後半段標記對應：{p2_slide_anchors}
+後半段不得重複前半段的開場、風險提醒、均線結論、恐慌指數結論或同一則新聞。依序寫六大幣報價與 RSI、24H 漲跌、BTC 價格結構、三個未來 24 小時觀察條件，最後提醒控管倉位並道別。
+【輸出覆蓋規則】不要另起「標題：」純文字行。只輸出一個 JSON 物件，不要 Markdown。字數配額維持上面的前半段與後半段要求，不可縮水。格式：
+{{"title":"32字內標題","part1":"前半段男：女：逐字稿","part2":"後半段男：女：逐字稿","slide_news":[{{"source_news_number":1,"slide_title":"","positive":"","risk":""}}],"slide_week":["條件1","條件2","條件3"]}}
+slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
+
+    episode_raw = call_gemini(episode_prompt, max_output_tokens=65536, timeout=300)
+    try:
+        part1_text, part2_text = _parse_episode_payload(episode_raw)
+        if not _episode_long_enough(part1_text, part2_text, is_test):
+            raise ValueError("episode JSON is shorter than the required length")
+    except (ValueError, json.JSONDecodeError) as error:
+        print(f"單次結構化輸出需要補一次請求：{error}")
+        episode_raw = call_gemini(
+            episode_prompt + "\n上次輸出不合格。這次只回傳合法 JSON，並補足前後段字數。",
+            max_output_tokens=65536,
+            timeout=300,
+        )
+        part1_text, part2_text = _parse_episode_payload(episode_raw)
+    part1_raw = normalize_long_term_terms(part1_text)
     slide_news_details, part1_raw = extract_slide_news_details(part1_raw, entries)
     slide_news_details = align_slide_news_with_dialogue(
         slide_news_details, part1_raw, news_slide_numbers, entries
@@ -523,25 +632,7 @@ def generate_script(mdata, dca_data, config):
     ai_title = sanitize_text(t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC ${cur_p}｜主流幣均線攻防與恐慌指數全解析")
     video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
-    p2_prompt = f"""你是【幣看趨勢】主編。請緊接前半段續寫後半段逐字稿，{target_words}。
-【今日切入視角】延續 {angle_title}，不要換成近 7 日已用視角：{recent_angles}。
-【幣別】只准美元。禁止台幣、NT$、TWD。
-【情緒標記】延續 [excited]、[serious]、[analytical]、[debate] 的用法，標籤不念出。
-【禁忌詞】不得出現：{banned_terms}。
-【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、多空比、現貨成交量、鏈上活躍度、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
-【前段逐字稿】{part1_raw}
-【前段結尾】{part1_raw[-350:]}
-【數據】{full_report}
-【雙人角色與互動】{host_persona_guidance}
-{strategy_script_guidance}
-【頻道核心精神】兩人以BTC數位黃金與ETH世界計算機生態兩種長期視角互補；所有技術分析與未來24小時觀察條件都要依數據客觀說明，既不盲目吹捧BTC或ETH，也不把長期信念包裝成短線買賣指令。反對高槓桿賭博與頻繁短線交易，結尾提醒以長期週期和風險管理看待市場。
-【硬性禁令】禁止早安、午安、晚安、大家好等任何時間問候語；禁止「休息一下」「下一段」「後半段」「上半場」「下半場」「先到這裡」「接著看」「接下來」等分段或轉場字眼；禁止提及媒體名稱、禁止動作括號與Markdown；禁止任何與前半段重複的開場、風險提醒、BTC均線結論、恐慌指數結論或市場焦點分析。
-【隱藏投影片錨點】每個對應段落的第一句，必須在「男：」或「女：」後立刻放入對應標記，標記後才是要口播的文字；每個標記恰好出現一次，嚴格依序，不可念出標記。後半段標記對應：{p2_slide_anchors}
-【篇幅配額】{p2_length_guidance}
-【去重規則】以完整前段逐字稿核對；同一數據只報一次，不復述前段已解讀的多空觀點，不重複前段例子與結論。
-【內容】依錨點順序：六大主流幣報價與14日RSI總覽、六大幣24H漲跌強弱比較、BTC近90日價格結構與支撐壓力圖解讀（不重複前段均線數值）；再提出未來24小時（今日至明晨）必須盯緊的三個BTC/ETH觀察條件，分別聚焦關鍵價位攻防、美股開盤連動、短線清算風險。觀察條件須說明可驗證訊號與多空意義，不可虛構即時數據，且必須從長期持有與DCA風險管理角度解讀，不可給短線下單指令。接著總結行動策略。逐字稿後額外輸出恰好三行簡短圖卡摘要，分別以「SLIDE_WEEK1:」「SLIDE_WEEK2:」「SLIDE_WEEK3:」開頭，與三條24小時條件一一對應；這些標記行不是口播內容。結尾自然提醒控管倉位、長期週期與紀律DCA並道別，不使用分段字眼。"""
-
-    part2_raw = normalize_long_term_terms(call_gemini(p2_prompt))
+    part2_raw = normalize_long_term_terms(part2_text)
     default_24h_conditions = [
         f"均線守位｜BTC ${cur_p}、ETH ${spot_prices['ETH']:.2f} 能否守穩各自100日均線 ${ma100d}、${market_data.calc_sma(cdata['ETH'][0], 100)}。",
         "美股開盤連動｜觀察今日美股開盤後，BTC與ETH是否跟隨納指方向並伴隨成交量變化。",
@@ -553,7 +644,7 @@ def generate_script(mdata, dca_data, config):
 
     full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
 
-    return {
+    result = {
         "part1_raw": part1_raw,
         "part2_raw": part2_raw,
         "full_script": full_script,
@@ -565,3 +656,5 @@ def generate_script(mdata, dca_data, config):
         "dca_slide_caption": dca_slide_caption,
         "dca_slide_body": dca_slide_body,
     }
+    save_cached_script(result)
+    return result

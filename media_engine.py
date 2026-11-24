@@ -920,6 +920,8 @@ def generate_topic_icon(topic_summary, coin_code):
     )
 
     try:
+        if script_writer.reuse_script_enabled():
+            raise RuntimeError("REUSE_SCRIPT skips Gemini image generation.")
         image_prompt = script_writer.call_gemini(
             "Rewrite this description as one concise English image-generation prompt. "
             "Require a square 3D financial editorial illustration with no text, letters, "
@@ -1902,7 +1904,14 @@ def render_short_video(sdata, mdata, config):
 4. 結尾明確引導觀眾點擊頻道觀看完整15分鐘解析。
 5. 以「男：」與「女：」交替對話，至少各說一次；只輸出逐字稿，不要標題、註解或Markdown。"""
 
-    raw_short_script = script_writer.call_gemini(short_prompt)
+    if script_writer.reuse_script_enabled():
+        raw_short_script = (
+            f"男：{headline_for_short}，比特幣現在 {mdata['cur_p']} 美元。\n"
+            "女：風險仍在，完整解析請看今天的正片。"
+        )
+        print("[REUSE_SCRIPT] Shorts 使用快取頭條，不呼叫 Gemini。")
+    else:
+        raw_short_script = script_writer.call_gemini(short_prompt)
     cc = OpenCC("s2twp")
     short_dialogues = []
     for line in raw_short_script.splitlines():
