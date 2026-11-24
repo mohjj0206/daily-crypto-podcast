@@ -1,58 +1,18 @@
 [
-  {
-    "id": "coinmetrics-research",
-    "name": "Coin Metrics State of the Network",
-    "type": "rss",
-    "url": "https://substack.com",
-    "enabled": true,
-    "priority": 10
-  },
-  {
-    "id": "glassnode-insights",
-    "name": "Glassnode Insights",
-    "type": "rss",
-    "url": "https://glassnode.com",
-    "enabled": true,
-    "priority": 15
-  },
-  {
-    "id": "coindesk-main",
-    "name": "CoinDesk",
-    "type": "rss",
-    "url": "https://coindesk.com",
-    "enabled": true,
-    "priority": 20
-  },
-  {
-    "id": "cointelegraph-main",
-    "name": "Cointelegraph",
-    "type": "rss",
-    "url": "https://cointelegraph.com",
-    "enabled": true,
-    "priority": 25
-  },
-  {
-    "id": "bitcoin-optech",
-    "name": "Bitcoin Optech",
-    "type": "rss",
-    "url": "https://bitcoinops.org",
-    "enabled": false,
-    "priority": 30
-  },
-  {
-    "id": "ethereum-blog",
-    "name": "Ethereum Foundation Blog",
-    "type": "rss",
-    "url": "https://ethereum.org",
-    "enabled": false,
-    "priority": 35
-  },
-  {
-    "id": "vitalik-blog",
-    "name": "Vitalik Buterin Essays",
-    "type": "rss",
-    "url": "https://eth.limo",
-    "enabled": false,
-    "priority": 40
-  }
+  {"id": "coinmetrics", "name": "Coin Metrics", "type": "rss", "url": "https://substack.com", "enabled": true, "priority": 10},
+  {"id": "glassnode", "name": "Glassnode Insights", "type": "rss", "url": "https://glassnode.com", "enabled": true, "priority": 15},
+  {"id": "coindesk", "name": "CoinDesk", "type": "rss", "url": "https://coindesk.com", "enabled": true, "priority": 20},
+  {"id": "cointelegraph", "name": "Cointelegraph", "type": "rss", "url": "https://cointelegraph.com", "enabled": true, "priority": 25},
+  {"id": "blockworks", "name": "Blockworks", "type": "rss", "url": "https://blockworks.co", "enabled": true, "priority": 30},
+  {"id": "decrypt", "name": "Decrypt", "type": "rss", "url": "https://decrypt.co", "enabled": true, "priority": 35},
+  {"id": "thedefiant", "name": "The Defiant", "type": "rss", "url": "https://thedefiant.io", "enabled": true, "priority": 40},
+  {"id": "bitcoinmagazine", "name": "Bitcoin Magazine", "type": "rss", "url": "https://bitcoinmagazine.com", "enabled": true, "priority": 45},
+  {"id": "messari", "name": "Messari Research", "type": "rss", "url": "https://messari.io", "enabled": true, "priority": 50},
+  {"id": "abmedia", "name": "ABMedia", "type": "rss", "url": "https://abmedia.io", "enabled": true, "priority": 55},
+  {"id": "bitcoin-optech", "name": "Bitcoin Optech", "type": "rss", "url": "https://bitcoinops.org", "enabled": false, "priority": 60},
+  {"id": "ethereum-blog", "name": "Ethereum Blog", "type": "rss", "url": "https://ethereum.org", "enabled": false, "priority": 65},
+  {"id": "vitalik-blog", "name": "Vitalik Buterin", "type": "rss", "url": "https://eth.limo", "enabled": false, "priority": 70},
+  {"id": "solana-news", "name": "Solana News", "type": "rss", "url": "https://solana.com", "enabled": false, "priority": 75},
+  {"id": "ripple-insights", "name": "Ripple Insights", "type": "rss", "url": "https://ripple.com", "enabled": false, "priority": 80},
+  {"id": "cardano-foundation", "name": "Cardano Foundation", "type": "rss", "url": "https://cardanofoundation.org", "enabled": false, "priority": 85}
 ]
