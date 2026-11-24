@@ -6,7 +6,8 @@
       "btc_price_usd": 111641.73,
       "btc_price_twd": 3435774.09,
       "twd_rate": 30.775,
-      "btc_bought": 0.00291055
+      "btc_bought": 0.00291055,
+      "usd_invested": 324.94
     },
     {
       "date": "2025-11-25",
@@ -14,7 +15,8 @@
       "btc_price_usd": 87341.89,
       "btc_price_twd": 2744814.97,
       "twd_rate": 31.4261,
-      "btc_bought": 0.00364323
+      "btc_bought": 0.00364323,
+      "usd_invested": 318.21
     },
     {
       "date": "2025-12-25",
@@ -22,7 +24,8 @@
       "btc_price_usd": 87234.74,
       "btc_price_twd": 2746978.42,
       "twd_rate": 31.4895,
-      "btc_bought": 0.00364036
+      "btc_bought": 0.00364036,
+      "usd_invested": 317.57
     },
     {
       "date": "2026-01-25",
@@ -30,7 +33,8 @@
       "btc_price_usd": 86572.22,
       "btc_price_twd": 2734296.93,
       "twd_rate": 31.584,
-      "btc_bought": 0.00365725
+      "btc_bought": 0.00365725,
+      "usd_invested": 316.62
     },
     {
       "date": "2026-02-25",
@@ -38,7 +42,8 @@
       "btc_price_usd": 67960.12,
       "btc_price_twd": 2132391.64,
       "twd_rate": 31.3771,
-      "btc_bought": 0.00468957
+      "btc_bought": 0.00468957,
+      "usd_invested": 318.7
     },
     {
       "date": "2026-03-25",
@@ -46,7 +51,8 @@
       "btc_price_usd": 71309.88,
       "btc_price_twd": 2276625.08,
       "twd_rate": 31.9258,
-      "btc_bought": 0.00439247
+      "btc_bought": 0.00439247,
+      "usd_invested": 313.23
     },
     {
       "date": "2026-04-25",
@@ -54,7 +60,8 @@
       "btc_price_usd": 77612.02,
       "btc_price_twd": 2447106.91,
       "twd_rate": 31.53,
-      "btc_bought": 0.00408646
+      "btc_bought": 0.00408646,
+      "usd_invested": 317.16
     },
     {
       "date": "2026-05-25",
@@ -62,7 +69,8 @@
       "btc_price_usd": 77279.93,
       "btc_price_twd": 2429603.65,
       "twd_rate": 31.439,
-      "btc_bought": 0.0041159
+      "btc_bought": 0.0041159,
+      "usd_invested": 318.08
     },
     {
       "date": "2026-06-25",
@@ -70,7 +78,8 @@
       "btc_price_usd": 59721.68,
       "btc_price_twd": 1899627.1,
       "twd_rate": 31.808,
-      "btc_bought": 0.00526419
+      "btc_bought": 0.00526419,
+      "usd_invested": 314.39
     },
     {
       "date": "2026-07-25",
@@ -78,7 +87,8 @@
       "btc_price_usd": 64311.81,
       "btc_price_twd": 2077207.22,
       "twd_rate": 32.299,
-      "btc_bought": 0.00481416
+      "btc_bought": 0.00481416,
+      "usd_invested": 309.61
     },
     {
       "date": "2026-08-25",
@@ -86,7 +96,8 @@
       "btc_price_usd": 78564.98,
       "btc_price_twd": 2499309.06,
       "twd_rate": 31.812,
-      "btc_bought": 0.00400111
+      "btc_bought": 0.00400111,
+      "usd_invested": 314.35
     },
     {
       "date": "2026-09-25",
@@ -94,7 +105,8 @@
       "btc_price_usd": 84034.92,
       "btc_price_twd": 2672831.53,
       "twd_rate": 31.8062,
-      "btc_bought": 0.00374135
+      "btc_bought": 0.00374135,
+      "usd_invested": 314.4
     },
     {
       "date": "2026-10-25",
@@ -102,7 +114,8 @@
       "btc_price_usd": 80024.01,
       "btc_price_twd": 2608542.59,
       "twd_rate": 32.597,
-      "btc_bought": 0.00383356
+      "btc_bought": 0.00383356,
+      "usd_invested": 306.78
     }
   ],
   "start_date": "2025-10-25",
@@ -167,12 +180,15 @@
   "total_twd": 130000.0,
   "total_btc": "0.05279016",
   "avg_buy_price_twd": 2462580.15,
-  "avg_buy_price_usd": 77742.02,
+  "avg_buy_price_usd": 77742.52,
   "current_btc_usd": 61901.0,
   "current_twd_rate": 32.924,
   "current_market_value_usd": 3267.76,
   "current_market_value_twd": 107587.85,
-  "unrealized_pnl_usd": -836.25,
+  "unrealized_pnl_usd": -836.28,
   "unrealized_pnl_twd": -22412.15,
-  "total_return_pct": -17.24
+  "total_return_pct": -17.24,
+  "total_invested_usd": 4104.04,
+  "current_value_usd": 3267.76,
+  "roi_pct": -20.38
 }

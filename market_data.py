@@ -1305,6 +1305,7 @@ def update_dca_portfolio(current_btc_usd, now_tw):
             records.append({
                 "date": deposit_date.isoformat(),
                 "twd_invested": 10000,
+                "usd_invested": round(usd_invested, 2),
                 "btc_price_usd": round(btc_price, 2),
                 "btc_price_twd": round(btc_price * twd_rate, 2),
                 "twd_rate": round(twd_rate, 4),
@@ -1343,8 +1344,10 @@ def update_dca_portfolio(current_btc_usd, now_tw):
         btc_bought = float(record["btc_bought"])
         month["twd_invested"] += twd_invested
         month["btc_bought"] += btc_bought
+        usd_invested = round(twd_invested / twd_rate, 2)
+        record["usd_invested"] = usd_invested
         total_twd += twd_invested
-        total_usd_invested += twd_invested / twd_rate
+        total_usd_invested += usd_invested
         total_btc += btc_bought
 
     if total_btc <= 0:
@@ -1401,11 +1404,15 @@ def dca_usd_view(portfolio, current_btc_usd):
     total_usd = 0.0
     total_btc = 0.0
     for record in records:
-        rate = float(record.get("twd_rate") or 0)
-        invested_twd = float(record.get("twd_invested") or 0)
-        if rate <= 0:
-            continue
-        total_usd += invested_twd / rate
+        stored_usd = record.get("usd_invested")
+        if stored_usd not in (None, ""):
+            total_usd += float(stored_usd)
+        else:
+            rate = float(record.get("twd_rate") or 0)
+            invested_twd = float(record.get("twd_invested") or 0)
+            if rate <= 0:
+                continue
+            total_usd += invested_twd / rate
         total_btc += float(record.get("btc_bought") or 0)
     price = float(current_btc_usd)
     if total_btc <= 0 or total_usd <= 0 or price <= 0:

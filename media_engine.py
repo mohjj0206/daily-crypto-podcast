@@ -585,7 +585,7 @@ body {{
   to {{ transform: translate3d(48px, 24px, 0); }}
 }}
 .ticker {{
-  position: absolute; inset: 0 0 auto; z-index: 2; height: 72px;
+  position: absolute; inset: 0 0 auto; z-index: 2; height: 84px;
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center; padding: 0 26px;
   background: rgba(15, 23, 42, .92);
@@ -598,8 +598,8 @@ body {{
   gap: 8px; padding: 0 10px; white-space: nowrap; overflow: hidden;
 }}
 .ticker-item + .ticker-item {{ border-left: 1px solid rgba(148, 163, 184, .22); }}
-.ticker-label {{ color: #94a3b8; font-size: 16px; }}
-.ticker-item strong {{ color: #f8fafc; font-size: 22px; font-variant-numeric: tabular-nums; }}
+.ticker-label {{ color: #cbd5e1; font-size: 18px; font-weight: 700; }}
+.ticker-item strong {{ color: #f8fafc; font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }}
 .ticker-item strong.positive {{ color: #4ade80; }}
 .ticker-item strong.negative {{ color: #fb7185; }}
 .ticker-item strong.neutral {{ color: #f8fafc; }}
@@ -612,7 +612,7 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 48px; right: 48px; top: 88px; bottom: 36px;
+  position: absolute; left: 48px; right: 48px; top: 100px; bottom: 28px;
   padding: 28px 40px; border: 2px solid rgba(251,191,36,.78);
   border-radius: 18px; background: rgba(15,23,42,.86);
   box-shadow: 0 0 34px rgba(56,189,248,.12), inset 0 0 34px rgba(251,191,36,.035);
@@ -620,7 +620,8 @@ body {{
 }}
 h1 {{
   position: relative; flex: 0 0 auto; max-width: 100%; margin: 0 0 20px;
-  color: var(--accent); font-size: 42px; line-height: 1.2; font-weight: 800;
+  color: #fff7d6; font-size: 44px; line-height: 1.18; font-weight: 800;
+  text-shadow: 0 2px 0 #111827, 0 0 18px rgba(245, 158, 11, .45);
   animation: titleIn .8s cubic-bezier(.2,.8,.2,1) both;
 }}
 @keyframes titleIn {{
@@ -637,20 +638,23 @@ ul {{ list-style: none; margin: 0; padding: 0; min-width: 0; }}
 li {{
   position: relative; margin: 0 0 12px; padding-left: 26px;
   color: #e2e8f0; font-size: 26px; line-height: 1.36; overflow-wrap: anywhere;
-  animation: fadeInUp .65s ease-out both;
+  animation: fadeInUp calc(var(--pace) * 1.4) ease-out both;
 }}
 li::before {{
   position: absolute; top: .56em; left: 0; width: 9px; height: 9px;
   border-radius: 50%; background: var(--accent); content: "";
   box-shadow: 0 0 12px var(--accent);
 }}
-li:nth-child(1) {{ animation-delay: .35s; }}
-li:nth-child(2) {{ animation-delay: .95s; }}
-li:nth-child(3) {{ animation-delay: 1.55s; }}
-li:nth-child(4) {{ animation-delay: 2.15s; }}
-li:nth-child(5) {{ animation-delay: 2.75s; }}
-li:nth-child(n+6) {{ animation-delay: 3.35s; }}
-.frame.compact h1 {{ font-size: 32px; margin-bottom: 12px; }}
+li:nth-child(1) {{ animation-delay: calc(var(--pace) * 0.35); }}
+li:nth-child(2) {{ animation-delay: calc(var(--pace) * 1.1); }}
+li:nth-child(3) {{ animation-delay: calc(var(--pace) * 1.85); }}
+li:nth-child(4) {{ animation-delay: calc(var(--pace) * 2.6); }}
+li:nth-child(5) {{ animation-delay: calc(var(--pace) * 3.35); }}
+li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
+.frame.compact h1,
+.frame.fit-compact h1,
+.frame.fit-tight h1,
+.frame.fit-min h1 {{ font-size: 40px; margin-bottom: 12px; }}
 .frame.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
 .frame.compact li::before {{ width: 7px; height: 7px; }}
 .chart-layout > ul {{
@@ -672,10 +676,10 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 }}
 .content.dense-grid li {{ margin: 0; padding: 8px 12px; font-size: 22px; }}
 .frame.fit-compact {{ padding: 18px 24px; }}
-.frame.fit-compact h1 {{ margin-bottom: 12px; font-size: 30px; }}
+.frame.fit-compact h1 {{ margin-bottom: 12px; font-size: 40px; }}
 .frame.fit-compact .content {{ row-gap: 10px; column-gap: 12px; }}
 .frame.fit-tight {{ padding: 10px 14px; }}
-.frame.fit-tight h1 {{ margin-bottom: 6px; font-size: 26px; }}
+.frame.fit-tight h1 {{ margin-bottom: 6px; font-size: 40px; }}
 .frame.fit-tight .chart-layout, .frame.fit-tight .compare-layout {{ gap: 8px; }}
 .frame.fit-tight .compare-panel {{ padding: 12px; }}
 .frame.fit-tight .compare-panel h2 {{ margin-bottom: 8px; font-size: 18px; }}
@@ -683,7 +687,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
 .frame.fit-tight .content.dense-grid li {{ padding: 8px 10px; }}
 .frame.fit-tight .chart-layout > ul li.chart-caption {{ padding: 7px 9px; font-size: 15px; }}
 .frame.fit-min {{ padding: 4px 8px; }}
-.frame.fit-min h1 {{ margin-bottom: 3px; font-size: 20px; }}
+.frame.fit-min h1 {{ margin-bottom: 3px; font-size: 40px; }}
 .frame.fit-min .chart-layout, .frame.fit-min .compare-layout {{ gap: 4px; }}
 .frame.fit-min .compare-panel {{ padding: 6px; }}
 .frame.fit-min .compare-panel h2 {{ margin-bottom: 4px; font-size: 15px; }}
@@ -695,7 +699,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
   from {{ opacity: 0; transform: translateY(24px); }}
   to {{ opacity: 1; transform: translateY(0); }}
 }}
-.hl {{ position: relative; z-index: 0; color: #fff7cc; white-space: nowrap; }}
+.hl {{ position: relative; z-index: 0; color: #fff7cc; white-space: nowrap; animation: levelPulse calc(var(--pace) * 2) ease-in-out 2; }}
 .hl::after {{
   position: absolute; left: 0; bottom: -.08em; z-index: -1; width: 100%; height: .34em;
   background: linear-gradient(90deg, rgba(251,191,36,.82), rgba(251,191,36,.18));
@@ -817,7 +821,7 @@ li:nth-child(n+6) {{ animation-delay: 3.35s; }}
       if (attempt === 3) frame.classList.add("fit-tight");
       if (attempt === 6) frame.classList.add("fit-min");
       const titleSize = parseFloat(getComputedStyle(title).fontSize);
-      if (titleSize > 36) title.style.fontSize = `${{Math.max(36, titleSize - 2)}}px`;
+      if (titleSize > 40) title.style.fontSize = `${{Math.max(40, titleSize - 2)}}px`;
       const minBodySize = content.classList.contains("chart-layout") ? 22 : 18;
       for (const item of items) {{
         const bodySize = parseFloat(getComputedStyle(item).fontSize);
@@ -1162,7 +1166,7 @@ def create_outro_video(outro_duration):
         [
             "ffmpeg", "-y", "-loop", "1", "-framerate", str(VIDEO_FPS),
             "-i", "outro_frame.png", "-t", f"{outro_duration:g}",
-            "-vf", "fade=t=in:st=0:d=1,fade=t=out:st=10:d=2,format=yuv420p",
+            "-vf", f"scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,fps={VIDEO_FPS},fade=t=in:st=0:d=1,fade=t=out:st=10:d=2,format=yuv420p",
             "-an", "-r", str(VIDEO_FPS), "-c:v", "libx264",
             "-tune", "stillimage", "-preset", "medium", "-crf", VIDEO_CRF,
             "-pix_fmt", "yuv420p", "outro.mp4",
@@ -1578,7 +1582,8 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             f"[forward][reversed]concat=n=2:v=1:a=0,"
             f"loop=loop=-1:size={boomerang_frames}:start=0,"
             f"fps={VIDEO_FPS},trim=duration=15,setpts=PTS-STARTPTS[animation];"
-            "[0:v][animation]overlay=630:98:shortest=1,"
+            f"[0:v]scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,setsar=1[base];"
+            "[base][animation]overlay=630:98:shortest=1,"
             "fade=t=out:st=14:d=1,format=yuv420p[output]"
         )
         subprocess.run(

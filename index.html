@@ -98,7 +98,7 @@
       line-height: 1.6;
     }
     footer { text-align: center; margin-top: 8px; }
-    #error { color: #f87171; margin-bottom: 14px; display: none; }
+    #error { color: #f87171; margin-bottom: 14px; display: none; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -108,18 +108,19 @@
         <img src="./avatar.png" alt="比特汪頭像">
         <div>
           <h1>幣看趨勢｜比特汪 BTC 定期定額實戰公開帳本</h1>
-          <p class="sub">資料僅讀取同目錄 dca_portfolio.json，不呼叫外部行情 API</p>
+          <p class="sub">只讀同目錄 dca_portfolio.json 的美元欄位，不呼叫外部行情 API</p>
         </div>
       </div>
       <a class="yt" href="https://www.youtube.com/@%E5%B9%A3%E7%9C%8B%E8%B6%A8%E5%8B%A2" target="_blank" rel="noopener noreferrer">前往 YouTube 頻道</a>
     </header>
 
     <p id="error"></p>
+    <p class="status" id="status">正在整理帳本…</p>
     <section class="grid">
       <article class="card">
-        <div class="label">累計總投入台幣</div>
-        <div class="value" id="total-twd">—</div>
-        <div class="hint">total_twd</div>
+        <div class="label">累計總投入 (USD)</div>
+        <div class="value" id="total-usd">—</div>
+        <div class="hint">total_invested_usd</div>
       </article>
       <article class="card">
         <div class="label">累計持有 BTC</div>
@@ -127,19 +128,19 @@
         <div class="hint">total_btc</div>
       </article>
       <article class="card">
-        <div class="label">平均買進成本 USD</div>
+        <div class="label">平均買進成本 (USD)</div>
         <div class="value" id="avg-usd">—</div>
         <div class="hint">avg_buy_price_usd</div>
       </article>
       <article class="card">
-        <div class="label">目前總市值與未實現損益</div>
-        <div class="value" id="market-twd">—</div>
+        <div class="label">目前總市值與未實現損益 (USD / %)</div>
+        <div class="value" id="market-usd">—</div>
         <div class="hint" id="pnl">—</div>
       </article>
     </section>
 
     <section class="panel">
-      <h2>累計本金 vs 總市值</h2>
+      <h2>累計本金 vs 總市值 (USD)</h2>
       <div class="chart-box"><canvas id="trend"></canvas></div>
     </section>
 
@@ -150,116 +151,131 @@
           <thead>
             <tr>
               <th>日期</th>
-              <th>扣款 (TWD)</th>
+              <th>投入 (USD)</th>
               <th>BTC 價格 (USD)</th>
-              <th>匯率</th>
               <th>買入 BTC</th>
-              <th>累計本金</th>
+              <th>累計本金 (USD)</th>
               <th>累計 BTC</th>
-              <th>當下市值 (TWD)</th>
+              <th>當下市值 (USD)</th>
             </tr>
           </thead>
-          <tbody id="rows">
-            <tr><td colspan="8">讀取帳本中…</td></tr>
-          </tbody>
+          <tbody id="rows"></tbody>
         </table>
       </div>
     </section>
-    <footer>市值＝持有 BTC × current_btc_usd × current_twd_rate。本頁僅供公開紀錄，不構成投資建議。</footer>
+    <footer>市值 = 持有 BTC × current_btc_usd。未實現損益 = 市值 − 累計投入美元。本頁僅供公開紀錄，不構成投資建議。</footer>
   </div>
 
   <script>
     const n = (v) => {
+      if (typeof v === "string") v = v.replace(/,/g, "").trim();
       const x = Number(v);
-      return Number.isFinite(x) ? x : 0;
+      return Number.isFinite(x) ? x : null;
     };
-    const twd = (v) => "NT$ " + Math.round(n(v)).toLocaleString("zh-TW");
-    const usd = (v) => "$" + n(v).toLocaleString("zh-TW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const btc = (v) => n(v).toLocaleString("zh-TW", { minimumFractionDigits: 8, maximumFractionDigits: 8 });
+    const usd = (v) => "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const btc = (v) => Number(v).toLocaleString("en-US", { minimumFractionDigits: 8, maximumFractionDigits: 8 });
+    const pick = (obj, keys) => {
+      for (const key of keys) {
+        if (obj && obj[key] != null && obj[key] !== "") return obj[key];
+      }
+      return null;
+    };
 
     function showError(msg) {
       const el = document.getElementById("error");
       el.style.display = "block";
       el.textContent = msg;
+      document.getElementById("status").textContent = "帳本未能完成渲染";
     }
 
-    async function main() {
-      const res = await fetch("./dca_portfolio.json");
-      if (!res.ok) throw new Error("無法讀取 ./dca_portfolio.json（HTTP " + res.status + "）");
-      const data = await res.json();
-      const records = Array.isArray(data.records) ? data.records.slice() : [];
+    function rowUsd(row) {
+      const direct = n(pick(row, ["usd_invested", "invested_usd", "amount_usd"]));
+      if (direct != null && direct > 0) return direct;
+      return null;
+    }
+
+    function render(data) {
+      const records = Array.isArray(data.records) ? data.records.filter((row) => row && typeof row === "object") : [];
       records.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 
-      const totalTwd = n(data.total_twd);
-      const totalBtc = n(data.total_btc);
-      const avgUsd = n(data.avg_buy_price_usd);
-      const px = n(data.current_btc_usd);
-      const fx = n(data.current_twd_rate);
-      const marketTwd = totalBtc * px * fx;
-      const pnlTwd = marketTwd - totalTwd;
-      const pnlPct = totalTwd ? (pnlTwd / totalTwd) * 100 : 0;
-      const sign = pnlTwd >= 0 ? "+" : "";
+      let investedSum = 0;
+      let btcSum = 0;
+      const points = [];
+      for (const row of records) {
+        const spent = rowUsd(row);
+        const bought = n(pick(row, ["btc_bought", "btc"]));
+        const price = n(pick(row, ["btc_price_usd", "price_usd"]));
+        if (spent == null || bought == null) {
+          throw new Error("某一筆紀錄缺少 usd_invested 或 btc_bought，已停止使用不完整數字。");
+        }
+        investedSum += spent;
+        btcSum += bought;
+        points.push({
+          date: row.date || "—",
+          spent,
+          price: price == null ? null : price,
+          bought,
+          principal: investedSum,
+          cumBtc: btcSum,
+          mark: price == null ? null : btcSum * price
+        });
+      }
 
-      document.getElementById("total-twd").textContent = twd(totalTwd);
+      const totalInvested = n(pick(data, ["total_invested_usd", "total_usd"])) ?? investedSum;
+      const totalBtc = n(pick(data, ["total_btc"])) ?? btcSum;
+      const px = n(pick(data, ["current_btc_usd", "btc_usd"]));
+      if (px == null || px <= 0) throw new Error("帳本缺少 current_btc_usd，無法計算目前市值。");
+      const market = n(pick(data, ["current_value_usd", "current_market_value_usd"])) ?? (totalBtc * px);
+      const pnl = n(pick(data, ["unrealized_pnl_usd"])) ?? (market - totalInvested);
+      const avg = n(pick(data, ["avg_buy_price_usd"])) ?? (totalBtc ? totalInvested / totalBtc : 0);
+      const pct = totalInvested ? (pnl / totalInvested) * 100 : 0;
+      const pnlText = (pnl > 0 ? "+" : pnl < 0 ? "-" : "") + usd(Math.abs(pnl));
+
+      document.getElementById("total-usd").textContent = usd(totalInvested);
       document.getElementById("total-btc").textContent = btc(totalBtc) + " BTC";
-      document.getElementById("avg-usd").textContent = usd(avgUsd);
-      document.getElementById("market-twd").textContent = twd(marketTwd);
+      document.getElementById("avg-usd").textContent = usd(avg);
+      document.getElementById("market-usd").textContent = usd(market);
       const pnlEl = document.getElementById("pnl");
-      const pnlLabel = (pnlTwd > 0 ? "+" : "") + twd(pnlTwd);
-      pnlEl.textContent = "未實現損益 " + pnlLabel + "（" + sign + pnlPct.toFixed(2) + "%）｜BTC " + usd(px) + " × 匯率 " + fx.toLocaleString("zh-TW");
-      pnlEl.className = "hint " + (pnlTwd >= 0 ? "up" : "down");
+      pnlEl.textContent = "未實現損益 " + pnlText + "（" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%）｜BTC " + usd(px);
+      pnlEl.className = "hint " + (pnl >= 0 ? "up" : "down");
 
-      const labels = [];
-      const principal = [];
-      const market = [];
-      let cumTwd = 0;
-      let cumBtc = 0;
       const body = document.getElementById("rows");
       body.innerHTML = "";
-
-      records.forEach((row) => {
-        const invested = n(row.twd_invested);
-        const bought = n(row.btc_bought);
-        const priceUsd = n(row.btc_price_usd);
-        const rate = n(row.twd_rate) || fx;
-        const priceTwd = n(row.btc_price_twd) || priceUsd * rate;
-        cumTwd += invested;
-        cumBtc += bought;
-        const mark = cumBtc * priceTwd;
-        labels.push(row.date || "");
-        principal.push(Math.round(cumTwd));
-        market.push(Math.round(mark));
-
+      if (!points.length) {
+        body.innerHTML = "<tr><td colspan=\"7\">帳本尚無扣款紀錄</td></tr>";
+      }
+      points.forEach((row) => {
         const tr = document.createElement("tr");
-        [row.date || "—", twd(invested), usd(priceUsd), rate ? rate.toLocaleString("zh-TW") : "—", btc(bought), twd(cumTwd), btc(cumBtc), twd(mark)]
-          .forEach((text, i) => {
+        [row.date, usd(row.spent), row.price == null ? "—" : usd(row.price), btc(row.bought), usd(row.principal), btc(row.cumBtc), row.mark == null ? "—" : usd(row.mark)]
+          .forEach((text) => {
             const td = document.createElement("td");
             td.textContent = text;
             tr.appendChild(td);
           });
         body.appendChild(tr);
       });
+      body.dataset.ready = "1";
+      document.getElementById("status").textContent = "已用同目錄帳本完成渲染";
 
-      if (!records.length) {
-        body.innerHTML = "<tr><td colspan=\"8\">帳本尚無扣款紀錄</td></tr>";
-      }
-
+      const labels = points.map((row) => row.date);
+      const principal = points.map((row) => Number(row.principal.toFixed(2)));
+      const marketSeries = points.map((row) => row.mark == null ? null : Number(row.mark.toFixed(2)));
       labels.push("目前");
-      principal.push(Math.round(totalTwd));
-      market.push(Math.round(marketTwd));
+      principal.push(Number(totalInvested.toFixed(2)));
+      marketSeries.push(Number(market.toFixed(2)));
 
-      const canvas = document.getElementById("trend");
       if (typeof Chart === "undefined") {
-        showError("Chart.js 未能載入，數據卡片與明細仍可閱讀。");
+        showError("Chart.js 未能載入。四張卡片與明細已用帳本數字渲染。");
         return;
       }
+      const canvas = document.getElementById("trend");
       new Chart(canvas, {
         type: "line",
         data: {
           labels,
           datasets: [
             {
-              label: "累計本金 (TWD)",
+              label: "累計本金 (USD)",
               data: principal,
               borderColor: "#94a3b8",
               backgroundColor: "transparent",
@@ -269,14 +285,15 @@
               tension: 0.15
             },
             {
-              label: "總市值 (TWD)",
-              data: market,
+              label: "總市值 (USD)",
+              data: marketSeries,
               borderColor: "#f59e0b",
               backgroundColor: "rgba(245, 158, 11, 0.12)",
               borderWidth: 2.5,
               fill: true,
               pointRadius: 3,
-              tension: 0.25
+              tension: 0.25,
+              spanGaps: true
             }
           ]
         },
@@ -288,7 +305,7 @@
             legend: { labels: { color: "#e2e8f0" } },
             tooltip: {
               callbacks: {
-                label: (ctx) => ctx.dataset.label + "：" + twd(ctx.parsed.y)
+                label: (ctx) => ctx.dataset.label + "：" + (ctx.parsed.y == null ? "—" : usd(ctx.parsed.y))
               }
             }
           },
@@ -297,7 +314,7 @@
             y: {
               ticks: {
                 color: "#94a3b8",
-                callback: (v) => "NT$ " + Number(v).toLocaleString("zh-TW")
+                callback: (v) => "$" + Number(v).toLocaleString("en-US")
               },
               grid: { color: "rgba(148,163,184,0.08)" }
             }
@@ -306,10 +323,36 @@
       });
     }
 
-    main().catch((err) => {
-      showError(err && err.message ? err.message : "帳本載入失敗");
-      document.getElementById("rows").innerHTML = "<tr><td colspan=\"8\">載入失敗</td></tr>";
-    });
+    async function loadLedger() {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetch("./dca_portfolio.json", { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error("無法讀取 ./dca_portfolio.json（HTTP " + res.status + "）");
+        const data = await res.json();
+        if (!data || typeof data !== "object") throw new Error("帳本不是物件");
+        render(data);
+      } catch (err) {
+        const message = err && err.name === "AbortError"
+          ? "讀取 ./dca_portfolio.json 超過 8 秒，已停止等待。"
+          : (err && err.message ? err.message : "帳本載入失敗");
+        showError(message);
+        const body = document.getElementById("rows");
+        body.dataset.ready = "1";
+        body.innerHTML = "<tr><td colspan=\"7\">" + message + "</td></tr>";
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    loadLedger();
+    setTimeout(() => {
+      const body = document.getElementById("rows");
+      if (body && body.dataset.ready !== "1") {
+        showError("頁面腳本未能完成渲染。");
+        body.innerHTML = "<tr><td colspan=\"7\">渲染逾時</td></tr>";
+      }
+    }, 9000);
   </script>
 </body>
 </html>

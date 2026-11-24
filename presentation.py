@@ -112,17 +112,28 @@ def display_text(text):
     return sanitize_text(text)
 
 
-def build_ssml_inner(text):
-    """把情緒標籤轉成 prosody，並讓千分位數字以連續基數唸出。"""
-    raw = str(text or "")
+def infer_emotion(raw):
+    """沒有手寫標籤時，依漲跌用詞決定語氣。"""
     found = _EMOTION_TAG.findall(raw)
-    emotion = found[0] if found else "analytical"
+    if found:
+        return found[0]
+    if re.search(r"下跌|暴跌|回撤|跌破|下殺|風險|謹慎|浮虧|恐慌|走弱", raw):
+        return "serious"
+    if re.search(r"上漲|大漲|上攻|突破|站上|強勢|反彈|走強", raw):
+        return "excited"
+    return "analytical"
+
+
+def build_ssml_inner(text):
+    """把情緒標籤轉成 prosody，關鍵數字整段連讀並加重。"""
+    raw = str(text or "")
+    emotion = infer_emotion(raw)
     spoken = sanitize_text(raw)
     spoken = _NUMBER.sub(lambda match: match.group(0).replace(",", "").replace("$", ""), spoken)
     spoken = html.escape(spoken, quote=False)
     spoken = re.sub(
-        r"(\d+(?:\.\d+)?)",
-        r'<break time="120ms"/><say-as interpret-as="cardinal">\1</say-as>',
+        r"(\d{3,}(?:\.\d+)?|\d+\.\d+)",
+        r'<break time="160ms"/><emphasis level="moderate"><say-as interpret-as="cardinal">\1</say-as></emphasis>',
         spoken,
     )
     spoken = re.sub(r"([，、])", r'\1<break time="120ms"/>', spoken)
@@ -137,7 +148,7 @@ def build_ssml_inner(text):
 def split_keeping_numbers(segment, limit=20):
     """字幕斷行不得切斷完整數字。"""
     tokens = re.findall(
-        r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?|\s+|\S",
+        r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?|[A-Za-z]{2,10}|\s+|\S",
         segment,
     )
     lines = []
