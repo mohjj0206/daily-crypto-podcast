@@ -1,0 +1,11 @@
+---
+description: 檔案驅動靜默執行工作流（讀取 prompt.txt 並將所有報告寫入 output.txt）
+alwaysApply: true
+---
+
+當使用者輸入 `run` 或要求執行任務時，請嚴格遵守以下「靜默檔案工作流」：
+1. **讀取指令**：完整讀取 `.cursor/prompt.txt` 中的所有需求。
+2. **靜默執行**：依照需求修改專案檔案（執行前若需同步請先 `git pull origin main`），修改完成後執行對應的語法檢查（如 `python -m py_compile`）以及 `git add .`、`git commit` 與 `git push origin main`。
+3. **集中輸出報告**：將本次執行的「時間、讀取的任務摘要、修改的檔案清單、語法檢查結果、Git Commit Hash 與完整報告」全部寫入（覆蓋）`.cursor/output.txt`（使用繁體中文）。
+4. **對話框極簡沉默原則**：在 Cursor 聊天對話視窗中，**絕對禁止**重複貼出需求、解釋過程或大段程式碼；執行完畢後**僅允許回覆 3 個字：`Done.`（完成）**。
+5. 切忌任何歷程與執行過程都不可以出現 ide 介面與對話框, 所有歷程跟 output 都放到 @output.txt  , 請記得一定要靜默

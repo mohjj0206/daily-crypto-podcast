@@ -1,0 +1,16 @@
+Gemini model 'gemini-3.8-flash' returned 429; switching immediately.
+教學逐字稿 5257 字，進入後續流程。
+教學分鏡 26 張。
+已混入墊音與 24 個轉場提示音：tutorial_bed.mp3
+    main()
+  File "/home/runner/work/daily-crypto-podcast/daily-crypto-podcast/build_special_topic.py", line 1403, in main
+    rendered = media_engine.render_tutorial_episode(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/daily-crypto-podcast/daily-crypto-podcast/media_engine.py", line 2763, in render_tutorial_episode
+    short_path, short_duration = _render_tutorial_short(tutorial)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/daily-crypto-podcast/daily-crypto-podcast/media_engine.py", line 2612, in _render_tutorial_short
+    host_assets = create_speaker_avatars()
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: create_speaker_avatars() missing 1 required positional argument: 'talk_videos'
+Error: Process completed with exit code 1.

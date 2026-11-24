@@ -1,0 +1,20 @@
+時間：2026-11-24 11:27（UTC+8）
+
+讀取的任務摘要：
+教學片 GitHub Actions 在長片與墊音完成後，於教學 Shorts 建立雙主播頭像時崩潰。錯誤為 create_speaker_avatars() 缺少必要參數 talk_videos。Gemini 429 已在日誌中切換模型，教學稿 5257 字、26 張分鏡與 tutorial_bed.mp3 都已產出，失敗點只在 Shorts 頭像。
+
+Git pull：Already up to date（基底 33e1952）。
+
+修改的檔案：
+- media_engine.py（_render_tutorial_short 補上與長片相同的 talk_videos）
+
+語法檢查：python -m py_compile 全部 .py，通過。
+
+Git Commit：f2926418709a671503830eb243f5a097fff5fdef
+訊息：fix: pass talk_videos into tutorial Shorts avatar rendering
+已推送 33e1952..f292641。未提交 .cursor/。
+
+完整報告：
+每日長片與教學長片呼叫 create_speaker_avatars 時都會傳入 cat_vtober.mp4 與 dor_vtober.mp4（檔案不存在則為 None）。教學 Shorts 底部雙圓形主播是後來補上的，呼叫時漏了這個參數，因此在 build_special_topic.py 的 render_tutorial_episode 走到 _render_tutorial_short 就以 TypeError 結束，exit code 1。
+
+現在 Shorts 與另外兩處使用同一組影片路徑。有單張靜態圖時仍優先用圖；沒有靜態圖時才從對應 VTuber 影片抓第一幀，最後才退回 avatar.png。長片合成路徑沒有改動。
