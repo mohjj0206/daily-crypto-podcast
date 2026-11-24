@@ -541,7 +541,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
             )
 
     layout = slide_data.get("layout")
-    if layout not in {"chart", "compare", "hero"}:
+    if layout not in {"chart", "compare", "hero", "summary"}:
         layout = "chart" if chart_markup else "hero"
     if layout == "chart" and not chart_markup:
         layout = "hero"
@@ -583,6 +583,10 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
         content_markup = (
             '<section class="content chart-layout">'
             f'{chart_markup}<ul>{list_markup}{chart_caption_markup}</ul></section>'
+        )
+    elif layout == "summary":
+        content_markup = (
+            f'<section class="content summary-layout"><ul>{list_markup}</ul></section>'
         )
     else:
         content_markup = (
@@ -795,9 +799,16 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
   from {{ clip-path: inset(0 100% 0 0); }}
   to {{ clip-path: inset(0 0 0 0); }}
 }}
+.metric-spacer {{ flex: 0 0 168px; }}
+.metric-rail {{
+  position: absolute; left: 290px; right: 290px; bottom: 152px; z-index: 6;
+}}
+.disclaimer-line {{
+  margin: 0 0 6px; text-align: center; color: #94a3b8;
+  font-size: 15px; line-height: 1.2; font-weight: 600;
+}}
 .insight-dock {{
-  flex: 0 0 auto; display: grid; grid-template-columns: 1.15fr 1fr 1.15fr 1.2fr;
-  gap: 12px; margin-top: 8px;
+  display: grid; grid-template-columns: 1.15fr 1fr 1.15fr 1.2fr; gap: 12px;
 }}
 .insight-dock article {{
   border: 1px solid rgba(245, 158, 11, .45); border-radius: 12px; padding: 12px 14px;
@@ -860,6 +871,22 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 .hero-layout li:nth-child(1) {{ animation-delay: .35s; }}
 .hero-layout li:nth-child(2) {{ animation-delay: .6s; }}
 .hero-layout li:nth-child(3) {{ animation-delay: .85s; }}
+.summary-layout ul {{
+  width: 100%; height: 100%; display: flex; flex-direction: column;
+  justify-content: center; gap: 16px; text-align: left;
+}}
+.summary-layout li {{
+  flex: 0 1 auto; margin: 0; padding: 22px 28px;
+  border: 1px solid rgba(56, 189, 248, .5); border-radius: 16px;
+  background: rgba(8, 15, 28, .82);
+  display: flex; align-items: center;
+  font-size: 34px; font-weight: 750; line-height: 1.35;
+  animation: heroPop .75s cubic-bezier(.16,1,.3,1) both;
+}}
+.summary-layout li::before {{ display: none; }}
+.summary-layout li:nth-child(2) {{
+  border-color: rgba(251, 191, 36, .55); animation-delay: .2s;
+}}
 @keyframes heroPop {{ from {{ opacity: 0; transform: scale(.86) translateY(20px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
 </style>
 </head>
@@ -869,8 +896,12 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
   {content_markup}
-  <aside class="insight-dock">{insight_markup}</aside>
+  <div class="metric-spacer"></div>
 </main>
+<div class="metric-rail">
+  <p class="disclaimer-line">公開資訊整理，不構成投資建議。</p>
+  <aside class="insight-dock">{insight_markup}</aside>
+</div>
 </div>
   <script>
   window.fitSlideLayout = () => {{
@@ -1685,7 +1716,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             for index, condition in enumerate(sdata["slide_24h_conditions"])
         ]
         slides_cfg = [
-            ("今日主軸", "#fb7185", "本節目內容為公開資訊整理，不構成投資建議。\n加密貨幣波動劇烈，請獨立思考並自負風險。", None),
+            ("今日核心衝突", "#38bdf8", presentation.opening_conflict_body(mdata), "summary"),
         ]
         if show_dca:
             slides_cfg.append(
@@ -1814,6 +1845,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 )
                 layout = (
                     "compare" if ctype == "compare"
+                    else "summary" if ctype == "summary"
                     else "chart" if chart_path or ctype == "gauge"
                     else "hero"
                 )

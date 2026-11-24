@@ -103,6 +103,33 @@ DAILY_STORY_BEATS = {
 }
 
 
+def opening_conflict_body(mdata):
+    """第 1 頁只放情緒和價格有沒有打架，不放免責大字。"""
+    mdata = mdata or {}
+    price = format_usd(mdata.get("cur_p")) if mdata.get("cur_p") not in (None, "") else "比特幣"
+    pct = mdata.get("btc_pct")
+    move = f"{float(pct):+.2f}%" if isinstance(pct, (int, float)) else ""
+    fear = mdata.get("fng_num")
+    fear_name = ""
+    today_fng = mdata.get("today_fng") or {}
+    if isinstance(today_fng, dict):
+        fear_name = str(today_fng.get("value_classification") or "")
+    fear_line = f"恐慌指數 {int(fear)} {fear_name}".strip() if isinstance(fear, (int, float)) else "情緒溫度"
+    conflict = f"{fear_line}，比特幣 {price} {move}".strip("， ")
+    focus = "先看情緒和價格有沒有走在一起"
+    if isinstance(pct, (int, float)) and isinstance(fear, (int, float)):
+        price_down = float(pct) < 0
+        fear_high = float(fear) >= 55
+        fear_low = float(fear) < 40
+        if price_down and fear_low:
+            focus = "價格先退，恐慌指數還沒跟上"
+        elif (not price_down) and fear_high:
+            focus = "價格還撐著，情緒已經偏熱"
+        else:
+            focus = "情緒和價格今天站在同一邊"
+    return f"{conflict}\n{focus}"
+
+
 def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
     """開頭三頁快篩，其餘八頁留給當日模式。週五或 26 日再加一頁帳本。"""
     mdata = mdata or {}
@@ -122,8 +149,8 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
             "role": "thermometer",
             "title": f"{fear_line}，{price} 有跟著怕嗎？",
             "accent": "#38bdf8",
-            "body": f"{fear_line}\n比特幣 {price} {move}\n本節目內容為公開資訊整理，不構成投資建議。",
-            "chart": "gauge",
+            "body": opening_conflict_body(mdata),
+            "chart": "summary",
         },
         {
             "role": "thermometer",
