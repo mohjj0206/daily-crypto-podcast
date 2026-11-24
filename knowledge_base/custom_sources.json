@@ -1,29 +1,58 @@
 [
   {
+    "id": "coinmetrics-research",
+    "name": "Coin Metrics State of the Network",
+    "type": "rss",
+    "url": "https://substack.com",
+    "enabled": true,
+    "priority": 10
+  },
+  {
+    "id": "glassnode-insights",
+    "name": "Glassnode Insights",
+    "type": "rss",
+    "url": "https://glassnode.com",
+    "enabled": true,
+    "priority": 15
+  },
+  {
+    "id": "coindesk-main",
+    "name": "CoinDesk",
+    "type": "rss",
+    "url": "https://coindesk.com",
+    "enabled": true,
+    "priority": 20
+  },
+  {
+    "id": "cointelegraph-main",
+    "name": "Cointelegraph",
+    "type": "rss",
+    "url": "https://cointelegraph.com",
+    "enabled": true,
+    "priority": 25
+  },
+  {
     "id": "bitcoin-optech",
     "name": "Bitcoin Optech",
     "type": "rss",
-    "url": "https://bitcoinops.org/feed.xml",
+    "url": "https://bitcoinops.org",
     "enabled": false,
-    "priority": 10,
-    "note": "比特幣開發週報。改成 true 後，當日產片會收 48 小時內文章當背景，口播不得唸出站名。"
+    "priority": 30
   },
   {
     "id": "ethereum-blog",
-    "name": "Ethereum Blog",
+    "name": "Ethereum Foundation Blog",
     "type": "rss",
-    "url": "https://blog.ethereum.org/feed.xml",
+    "url": "https://ethereum.org",
     "enabled": false,
-    "priority": 20,
-    "note": "以太坊官方部落格 RSS。啟用後只作背景參考。"
+    "priority": 35
   },
   {
-    "id": "bitcoin-dev-guide",
-    "name": "Bitcoin Developer Guide",
-    "type": "webpage",
-    "url": "https://developer.bitcoin.org/devguide/index.html",
+    "id": "vitalik-blog",
+    "name": "Vitalik Buterin Essays",
+    "type": "rss",
+    "url": "https://eth.limo",
     "enabled": false,
-    "priority": 30,
-    "note": "網頁模式會去掉 HTML，只取前 2500 字正文。啟用前請確認網址仍可公開讀取。"
+    "priority": 40
   }
 ]
