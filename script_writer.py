@@ -159,18 +159,24 @@ def reuse_script_enabled():
     return os.environ.get("REUSE_SCRIPT", "").strip().lower() == "true"
 
 
-def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240):
+def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False):
     models = list(TEST_MODELS if os.environ.get("TEST_MODE", "").strip().lower() == "true" else PRODUCTION_MODELS)
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
 
     last_err = None
+    generation_config = {"maxOutputTokens": max_output_tokens}
+    if json_mode:
+        generation_config = {
+            "maxOutputTokens": max_output_tokens,
+            "responseMimeType": "application/json",
+        }
     for model in models:
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
         body = json.dumps({
             "contents": [{"parts": [{"text": prompt_txt}]}],
-            "generationConfig": {"maxOutputTokens": max_output_tokens},
+            "generationConfig": generation_config,
         }).encode("utf-8")
         while True:
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
@@ -365,56 +371,80 @@ def align_slide_news_with_dialogue(details, script, target_slide_numbers, availa
     return [details[best_perm[i]] for i in range(3)]
 
 
+def _news_card_from_entry(entries, number):
+    if entries and 1 <= number <= len(entries):
+        entry = entries[number - 1][1]
+        title = clean_slide_title(clean_txt(entry.get("title", "")))[:32]
+        summary = remove_publish_time(clean_txt(entry.get("summary", "") or entry.get("description", "")))[:160]
+    else:
+        title = ""
+        summary = ""
+    return {
+        "source_news_number": number if entries and 1 <= number <= len(entries) else 1,
+        "slide_title": title or "價格與均線",
+        "positive": summary or "今天仍可對照已取得的價格、均線與漲跌幅。",
+        "risk": "單則消息不能當成買賣指令，仍要看價格有沒有被成交量確認。",
+    }
+
+
 def extract_slide_news_details(raw, available_entries):
     marker_lines = re.findall(
         r"^[ \t]*SLIDE_NEWS(\d+):[ \t]*(\{.*\})[ \t]*$", raw, flags=re.M
     )
-    if [int(index) for index, _ in marker_lines] != [1, 2, 3]:
-        raise RuntimeError(
-            "Gemini must return exactly three ordered SLIDE_NEWS JSON records."
-        )
-
     details = []
     selected_news_numbers = set()
     for index, payload in marker_lines:
         try:
             record = json.loads(payload)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(
-                f"Gemini returned invalid JSON for SLIDE_NEWS{index}."
-            ) from error
+        except json.JSONDecodeError:
+            print(f"SLIDE_NEWS{index} 不是合法 JSON，改由當日新聞補齊。")
+            continue
         if not isinstance(record, dict):
-            raise RuntimeError(f"SLIDE_NEWS{index} must be a JSON object.")
+            continue
         news_number = record.get("source_news_number")
         if (
             isinstance(news_number, bool)
             or not isinstance(news_number, int)
+            or not available_entries
             or not 1 <= news_number <= len(available_entries)
             or news_number in selected_news_numbers
         ):
-            raise RuntimeError(
-                f"SLIDE_NEWS{index} has a missing, repeated, or invalid source_news_number."
+            news_number = next(
+                (n for n in range(1, max(len(available_entries), 1) + 1) if n not in selected_news_numbers),
+                1,
             )
-        entry = available_entries[news_number - 1][1]
-        source_title = clean_txt(entry.get("title", ""))
+        fallback = _news_card_from_entry(available_entries, news_number if isinstance(news_number, int) else 1)
+        source_title = fallback["slide_title"]
+        if available_entries and 1 <= fallback["source_news_number"] <= len(available_entries):
+            source_title = clean_txt(available_entries[fallback["source_news_number"] - 1][1].get("title", "")) or source_title
 
         slide_title = clean_slide_title(record.get("slide_title"))
         if not slide_title or len(slide_title) < 4 or slide_title in {"今日市場焦點", "市場焦點"}:
-            slide_title = clean_slide_title(source_title)[:32]
+            slide_title = clean_slide_title(source_title)[:32] or fallback["slide_title"]
 
-        positive = remove_publish_time(str(record.get("positive") or "")).strip()
-        risk = remove_publish_time(str(record.get("risk") or "")).strip()
-        if not slide_title or not positive or not risk:
-            raise RuntimeError(
-                f"SLIDE_NEWS{index} must include slide_title, positive, and risk."
-            )
-        selected_news_numbers.add(news_number)
+        positive = remove_publish_time(str(record.get("positive") or "")).strip() or fallback["positive"]
+        risk = remove_publish_time(str(record.get("risk") or "")).strip() or fallback["risk"]
+        selected_news_numbers.add(fallback["source_news_number"])
         details.append({
-            "source_news_number": news_number,
+            "source_news_number": fallback["source_news_number"],
             "slide_title": slide_title,
             "positive": positive,
             "risk": risk,
         })
+        if len(details) == 3:
+            break
+    next_number = 1
+    while len(details) < 3:
+        while next_number in selected_news_numbers:
+            next_number += 1
+        card = _news_card_from_entry(available_entries, next_number)
+        selected_news_numbers.add(card["source_news_number"])
+        details.append(card)
+        next_number += 1
+        if next_number > 12:
+            break
+    while len(details) < 3:
+        details.append(_news_card_from_entry(available_entries, len(details) + 1))
 
     raw = re.sub(
         r"^[ \t]*SLIDE_NEWS\d+:.*(?:\r?\n|$)", "", raw, flags=re.M
@@ -452,8 +482,92 @@ def save_cached_script(result):
     print(f"[REUSE_SCRIPT] 已備份劇本至 {SCRIPT_CACHE_PATH}。")
 
 
-def _parse_episode_payload(raw_text):
-    text = raw_text.strip()
+def _reference_news(mdata):
+    if not isinstance(mdata, dict):
+        return []
+    raw = mdata.get("news") or mdata.get("entries") or []
+    items = []
+    for item in raw:
+        entry = item[1] if isinstance(item, (list, tuple)) and len(item) == 2 else item
+        if not isinstance(entry, dict):
+            continue
+        title = clean_slide_title(clean_txt(entry.get("title") or ""))[:32]
+        summary = remove_publish_time(clean_txt(entry.get("summary") or entry.get("description") or ""))[:160]
+        if title or summary:
+            items.append((title or "市場焦點", summary or title or "市場焦點"))
+    return items
+
+
+def _pad_slide_news(news, mdata):
+    cleaned = []
+    if isinstance(news, list):
+        for item in news:
+            if isinstance(item, dict) and (item.get("slide_title") or item.get("positive")):
+                cleaned.append(item)
+            if len(cleaned) == 3:
+                return cleaned
+    references = _reference_news(mdata)
+    used = {
+        int(item.get("source_news_number"))
+        for item in cleaned
+        if isinstance(item.get("source_news_number"), int) and not isinstance(item.get("source_news_number"), bool)
+    }
+    cursor = 0
+    while len(cleaned) < 3:
+        if cursor < len(references):
+            title, summary = references[cursor]
+            number = cursor + 1
+            cursor += 1
+        else:
+            title, summary = "價格與均線", "今天仍可對照已取得的價格、均線與漲跌幅。"
+            number = len(cleaned) + 1
+        while number in used:
+            number += 1
+        used.add(number)
+        cleaned.append({
+            "source_news_number": number,
+            "slide_title": title,
+            "positive": summary,
+            "risk": "單則消息不能當成買賣指令，仍要看價格有沒有被成交量確認。",
+        })
+    if len(cleaned) < 3:
+        print(f"slide_news 只有 {len(news) if isinstance(news, list) else 0} 筆，已補齊到 {len(cleaned)} 筆。")
+    elif not isinstance(news, list) or len(news) < 3:
+        print("slide_news 不足 3 筆，已用當日新聞標題與摘要補齊。")
+    return cleaned[:3]
+
+
+def _pad_slide_week(week, mdata):
+    cleaned = []
+    if isinstance(week, list):
+        for item in week:
+            text = str(item).strip()
+            if text:
+                cleaned.append(text)
+            if len(cleaned) == 3:
+                return cleaned
+    metrics = (mdata or {}).get("btc_metrics") if isinstance(mdata, dict) else {}
+    metrics = metrics or {}
+    rsi = (mdata or {}).get("btc_rsi") if isinstance(mdata, dict) else ""
+    support = metrics.get("support")
+    resistance = metrics.get("resistance")
+    defaults = [
+        f"支撐觀察｜留意 BTC 是否守住 {format_usd(support)}。" if support else "支撐觀察｜留意 BTC 是否守住近期區間下緣。",
+        f"壓力觀察｜留意 BTC 是否站穩 {format_usd(resistance)}。" if resistance else "壓力觀察｜留意 BTC 是否站上近期區間上緣。",
+        f"RSI 觀察｜14 日 RSI 目前 {rsi}，只當動能參考，不是買賣指令。" if rsi else "RSI 觀察｜留意 14 日 RSI 靠近超買或超賣時，只當動能參考。",
+    ]
+    for line in defaults:
+        if len(cleaned) >= 3:
+            break
+        if line not in cleaned:
+            cleaned.append(line)
+    if not isinstance(week, list) or len([item for item in week if str(item).strip()]) < 3:
+        print("slide_week 不足 3 條，已用支撐、壓力與 RSI 補齊。")
+    return cleaned[:3]
+
+
+def _parse_episode_payload(raw_text, mdata=None):
+    text = str(raw_text or "").strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     start = text.find("{")
@@ -461,21 +575,19 @@ def _parse_episode_payload(raw_text):
     if start < 0 or end <= start:
         raise ValueError("episode response has no JSON object")
     payload = json.loads(text[start:end + 1])
-    title = str(payload.get("title") or "").strip()
+    title = str(payload.get("title") or "").strip() or "主流幣均線與價格結構"
     part1 = str(payload.get("part1") or "").strip()
     part2 = str(payload.get("part2") or "").strip()
-    news = payload.get("slide_news")
-    week = payload.get("slide_week")
-    if not title or not part1 or not part2:
+    if not part1 or not part2:
         raise ValueError("episode JSON missing title or script parts")
-    if not isinstance(news, list) or len(news) != 3 or not isinstance(week, list) or len(week) != 3:
-        raise ValueError("episode JSON must contain 3 slide_news items and 3 slide_week lines")
+    news = _pad_slide_news(payload.get("slide_news"), mdata)
+    week = _pad_slide_week(payload.get("slide_week"), mdata)
     news_lines = [
         f"SLIDE_NEWS{index}:{json.dumps(item, ensure_ascii=False)}"
         for index, item in enumerate(news, 1)
     ]
     week_lines = [
-        f"SLIDE_WEEK{index}:{str(item).strip()}"
+        f"SLIDE_WEEK{index}:{item}"
         for index, item in enumerate(week, 1)
     ]
     return (
@@ -707,17 +819,18 @@ def generate_script(mdata, dca_data, config):
 {{"title":"32字內標題","part1":"前半段男：女：逐字稿","part2":"後半段男：女：逐字稿","slide_news":[{{"source_news_number":1,"slide_title":"","positive":"","risk":""}}],"slide_week":["條件1","條件2","條件3"]}}
 slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
 
-    episode_raw = call_gemini(episode_prompt, max_output_tokens=65536, timeout=300)
+    episode_raw = call_gemini(episode_prompt, max_output_tokens=65536, timeout=300, json_mode=True)
     try:
-        part1_text, part2_text = _parse_episode_payload(episode_raw)
+        part1_text, part2_text = _parse_episode_payload(episode_raw, mdata)
     except (ValueError, json.JSONDecodeError) as error:
         print(f"單次結構化輸出需要補一次請求：{error}")
         episode_raw = call_gemini(
             episode_prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON。",
             max_output_tokens=65536,
             timeout=300,
+            json_mode=True,
         )
-        part1_text, part2_text = _parse_episode_payload(episode_raw)
+        part1_text, part2_text = _parse_episode_payload(episode_raw, mdata)
     if not is_test:
         total = _spoken_chars(part1_text) + _spoken_chars(part2_text)
         if total < 4800:
@@ -729,8 +842,9 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
                     "不要承諾獲利。只回傳 JSON。\n\n" + episode_raw[:12000],
                     max_output_tokens=65536,
                     timeout=300,
+                    json_mode=True,
                 )
-                part1_text, part2_text = _parse_episode_payload(expanded)
+                part1_text, part2_text = _parse_episode_payload(expanded, mdata)
             except (ValueError, json.JSONDecodeError) as error:
                 print(f"擴寫結果無法解析，沿用上一版並放行：{error}")
             total = _spoken_chars(part1_text) + _spoken_chars(part2_text)
@@ -829,13 +943,13 @@ def _tutorial_char_count(sections):
 
 
 def _normalize_tutorial(payload, lesson):
-    raw_sections = payload.get("sections")
-    if not isinstance(raw_sections, list) or len(raw_sections) != 5:
-        raise ValueError("tutorial JSON must contain exactly 5 sections")
+    raw_sections = payload.get("sections") if isinstance(payload.get("sections"), list) else []
+    if len(raw_sections) != 5:
+        print(f"教學 sections 有 {len(raw_sections)} 段，補齊到 5 段後放行。")
     sections = []
-    for index, item in enumerate(raw_sections):
-        if not isinstance(item, dict):
-            raise ValueError("tutorial section is not an object")
+    for index in range(5):
+        item = raw_sections[index] if index < len(raw_sections) and isinstance(raw_sections[index], dict) else {}
+        title = str(item.get("title") or TUTORIAL_SECTION_TITLES[index]).strip()
         narration = silence_gap_leaks(normalize_long_term_terms(str(item.get("narration") or "")))
         bullets = [
             silence_gap_leaks(str(bullet).strip())
@@ -844,23 +958,32 @@ def _normalize_tutorial(payload, lesson):
         ]
         lines = _dialogue_lines(narration)
         if not lines:
-            raise ValueError(f"tutorial section {index + 1} has no dialogue")
+            narration = (
+                f"男：[analytical]這一點先看{title}。\n"
+                "女：[serious]這是結構說明，不是買賣指令。"
+            )
+            lines = _dialogue_lines(narration)
         sections.append({
-            "title": str(item.get("title") or TUTORIAL_SECTION_TITLES[index]).strip(),
+            "title": title,
             "bullets": bullets[:4] or [TUTORIAL_SECTION_TITLES[index]],
             "narration": narration,
             "lines": lines,
         })
     short_lines = _dialogue_lines(payload.get("short_script"))
+    short_script = str(payload.get("short_script") or "")
     if len(short_lines) < 2:
-        raise ValueError("tutorial short script needs at least two dialogue lines")
+        short_script = (
+            "男：這集把原理講完了，完整版在頻道。\n"
+            "女：公開帳本只是模擬定期定額，不是真實成交。"
+        )
+        short_lines = _dialogue_lines(short_script)
     return {
         "ep_id": lesson.get("ep_id") or "EP",
         "series": lesson.get("series") or "",
         "lesson_title": lesson.get("title") or "",
         "title": sanitize_text(payload.get("title") or lesson.get("title") or "系統教學"),
         "sections": sections,
-        "short_script": str(payload.get("short_script") or ""),
+        "short_script": short_script,
         "short_lines": short_lines,
         "char_count": _tutorial_char_count(sections),
     }
@@ -912,7 +1035,7 @@ def generate_tutorial_script(lesson, reference_note, config):
 只輸出一個 JSON，不要 Markdown。格式：
 {{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"short_script":"男：...\\n女：..."}}
 sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
-    raw = call_gemini(prompt, max_output_tokens=65536, timeout=300)
+    raw = call_gemini(prompt, max_output_tokens=65536, timeout=300, json_mode=True)
     try:
         tutorial = _normalize_tutorial(_json_object(raw), lesson)
     except (ValueError, json.JSONDecodeError) as error:
@@ -921,8 +1044,16 @@ sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，�
             prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須恰好 5 段。",
             max_output_tokens=65536,
             timeout=300,
+            json_mode=True,
         )
-        tutorial = _normalize_tutorial(_json_object(raw), lesson)
+        try:
+            tutorial = _normalize_tutorial(_json_object(raw), lesson)
+        except (ValueError, json.JSONDecodeError) as second_error:
+            print(f"教學稿仍無法解析，改用課程大綱補齊並放行：{second_error}")
+            tutorial = _normalize_tutorial(
+                {"title": lesson.get("title") or "系統教學", "sections": [], "short_script": ""},
+                lesson,
+            )
     if not is_test and tutorial["char_count"] < 4800:
         print(f"教學稿 {tutorial['char_count']} 字，低於 4800，深度擴寫一次。")
         try:
@@ -932,6 +1063,7 @@ sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，�
                 + raw[:12000],
                 max_output_tokens=65536,
                 timeout=300,
+                json_mode=True,
             )
             tutorial = _normalize_tutorial(_json_object(expanded), lesson)
         except (ValueError, json.JSONDecodeError) as error:

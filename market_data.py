@@ -1457,13 +1457,21 @@ def _estimate_mvrv(drawdown_pct):
     return round(2.8 + (drawdown / 80.0) * 2.0, 2)
 
 
-def fetch_mvrv(drawdown_pct=None):
-    """CoinMetrics 社群 API 的市值／實現市值。失敗時用本地快取，再不行才標成備援估算。"""
+def fetch_btc_mvrv(drawdown_pct=None):
+    """先向 CoinMetrics 社群 API 取市值與實現市值，失敗再改查 Blockchain.com 的 MVRV。"""
     cache_path = os.path.join("cache", "mvrv_cache.json")
-    url = (
+    coinmetrics_url = (
         "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
         "?assets=btc&metrics=CapMrktCurUSD,CapRealUSD&frequency=1d&page_size=5"
     )
+    blockchain_url = "https://api.blockchain.info/charts/mvrv?timespan=30days&format=json"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
 
     def pack(value, source, is_estimate, market_cap=None, realized=None, as_of=None):
         zone = presentation.classify_mvrv(value)
@@ -1482,8 +1490,16 @@ def fetch_mvrv(drawdown_pct=None):
             ),
         }
 
+    def store(result):
+        os.makedirs("cache", exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as cache_file:
+            json.dump(result, cache_file, ensure_ascii=False, indent=2)
+        return result
+
     try:
-        payload = fetch_json(url, timeout=20)
+        payload = fetch_json(
+            coinmetrics_url, timeout=20, headers=headers, cache_bust_param=None
+        )
         rows = payload.get("data") if isinstance(payload, dict) else None
         parsed = None
         for row in reversed(rows or []):
@@ -1494,13 +1510,28 @@ def fetch_mvrv(drawdown_pct=None):
                 break
         if parsed is None:
             raise ValueError("CoinMetrics returned no MVRV pair.")
-        result = pack(parsed[0], "CoinMetrics", False, parsed[1], parsed[2], parsed[3])
-        os.makedirs("cache", exist_ok=True)
-        with open(cache_path, "w", encoding="utf-8") as cache_file:
-            json.dump(result, cache_file, ensure_ascii=False, indent=2)
-        return result
+        return store(pack(parsed[0], "CoinMetrics", False, parsed[1], parsed[2], parsed[3]))
     except Exception as error:
-        print(f"MVRV live fetch failed; trying cache: {error}")
+        print(f"CoinMetrics MVRV failed; trying Blockchain.com: {error}")
+
+    try:
+        chart = fetch_json(
+            blockchain_url, timeout=20, headers=headers, cache_bust_param=None
+        )
+        points = chart.get("values") if isinstance(chart, dict) else None
+        parsed_point = None
+        for point in reversed(points or []):
+            if not isinstance(point, dict) or point.get("y") in (None, ""):
+                continue
+            value = float(point["y"])
+            if value > 0:
+                parsed_point = (value, point.get("x"))
+                break
+        if parsed_point is None:
+            raise ValueError("Blockchain.com returned no MVRV point.")
+        return store(pack(parsed_point[0], "Blockchain.com", False, as_of=parsed_point[1]))
+    except Exception as error:
+        print(f"Blockchain.com MVRV failed; trying cache: {error}")
 
     try:
         if os.path.exists(cache_path):
@@ -1520,6 +1551,10 @@ def fetch_mvrv(drawdown_pct=None):
 
     estimated = _estimate_mvrv(drawdown_pct)
     return pack(estimated, "drawdown-proxy", True)
+
+
+def fetch_mvrv(drawdown_pct=None):
+    return fetch_btc_mvrv(drawdown_pct)
 
 
 def fetch_dca_data(current_btc_usd, now_tw):
@@ -1774,7 +1809,7 @@ def fetch_all_market_data(now_tw, is_test):
         okx_spot_volume_metrics,
     )
 
-    mvrv = fetch_mvrv(btc_metrics.get("current_drawdown_pct"))
+    mvrv = fetch_btc_mvrv(btc_metrics.get("current_drawdown_pct"))
     dca_snapshot = load_dca_usd_snapshot(spot_prices["BTC"])
     custom_references = fetch_custom_sources(tw_tz)
 
