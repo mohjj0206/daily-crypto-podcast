@@ -1,7 +1,10 @@
+import math
 import os
 import re
 import json
+import struct
 import time
+import wave
 import base64
 import html
 import io
@@ -1204,6 +1207,188 @@ def split_thumb_title(text, font, draw, max_width, max_lines=3):
     return lines
 
 
+def _write_pcm_wav(path, samples, rate):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with wave.open(path, "w") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        frames = bytearray()
+        for sample in samples:
+            clipped = max(-1.0, min(1.0, sample))
+            frames.extend(struct.pack("<h", int(clipped * 32767)))
+        handle.writeframes(frames)
+
+
+def _ambient_pad_samples():
+    rate = 22050
+    seconds = 16
+    count = rate * seconds
+    tones = ((98.0, 0.22), (123.0, 0.14), (147.0, 0.09), (196.0, 0.04))
+    samples = []
+    for index in range(count):
+        moment = index / rate
+        tremolo = 0.84 + 0.16 * math.sin(2 * math.pi * 0.125 * moment)
+        value = 0.0
+        for frequency, gain in tones:
+            value += gain * math.sin(2 * math.pi * frequency * moment)
+        samples.append(value * tremolo * 0.5)
+    return samples, rate
+
+
+def _chime_samples():
+    rate = 44100
+    seconds = 0.35
+    count = int(rate * seconds)
+    samples = []
+    for index in range(count):
+        moment = index / rate
+        first = math.sin(2 * math.pi * 740.0 * moment) * math.exp(-11 * moment)
+        second_t = max(0.0, moment - 0.12)
+        second = math.sin(2 * math.pi * 988.0 * moment) * math.exp(-10 * second_t) * (1 if moment >= 0.12 else 0)
+        samples.append((first * 0.45 + second * 0.28) * 0.7)
+    return samples, rate
+
+
+def ensure_broadcast_audio():
+    """缺少內建音檔時用標準庫生成。自訂 mp3 優先。"""
+    folder = os.path.join("assets", "audio")
+    os.makedirs(folder, exist_ok=True)
+    bgm_path = os.path.join(folder, "bgm_ambient.wav")
+    sfx_path = os.path.join(folder, "sfx_transition.wav")
+    custom_bgm = os.path.join(folder, "custom_bgm.mp3")
+    custom_sfx = os.path.join(folder, "custom_sfx.mp3")
+    if not os.path.exists(bgm_path):
+        samples, rate = _ambient_pad_samples()
+        _write_pcm_wav(bgm_path, samples, rate)
+        print(f"已生成內建環境墊音 {bgm_path}")
+    if not os.path.exists(sfx_path):
+        samples, rate = _chime_samples()
+        _write_pcm_wav(sfx_path, samples, rate)
+        print(f"已生成內建轉場提示音 {sfx_path}")
+    return (
+        custom_bgm if os.path.exists(custom_bgm) else bgm_path,
+        custom_sfx if os.path.exists(custom_sfx) else sfx_path,
+    )
+
+
+def mix_voice_with_bed(speech_path, output_path, transition_times):
+    """人聲維持原音量，墊音約 -28dB，轉場提示音約 -18dB。"""
+    bgm_path, sfx_path = ensure_broadcast_audio()
+    stamps = []
+    for raw in transition_times or []:
+        try:
+            stamp = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if stamp < 0.05 or any(abs(stamp - old) < 0.25 for old in stamps):
+            continue
+        stamps.append(stamp)
+    stamps = stamps[:24]
+    command = ["ffmpeg", "-y", "-i", speech_path, "-stream_loop", "-1", "-i", bgm_path]
+    for _stamp in stamps:
+        command.extend(["-i", sfx_path])
+    filters = [
+        "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[speech]",
+        "[1:a]volume=0.0398,aformat=sample_rates=44100:channel_layouts=stereo[bgm]",
+    ]
+    labels = ["[speech]", "[bgm]"]
+    for index, stamp in enumerate(stamps):
+        delay = int(round(stamp * 1000))
+        filters.append(
+            f"[{index + 2}:a]volume=0.1259,adelay={delay}|{delay},"
+            "aformat=sample_rates=44100:channel_layouts=stereo"
+            f"[sfx{index}]"
+        )
+        labels.append(f"[sfx{index}]")
+    filters.append(
+        "".join(labels)
+        + f"amix=inputs={len(labels)}:duration=first:normalize=0:dropout_transition=0[mix]"
+    )
+    command.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "[mix]",
+        "-c:a", "libmp3lame", "-b:a", "192k",
+        output_path,
+    ])
+    subprocess.run(command, check=True)
+    print(f"已混入墊音與 {len(stamps)} 個轉場提示音：{output_path}")
+
+
+def _cjk_chars(text):
+    return "".join(ch for ch in str(text or "") if "\u4e00" <= ch <= "\u9fff")
+
+
+def _fit_cjk_hook(text, fallback):
+    compact = _cjk_chars(text)
+    if 6 <= len(compact) <= 9:
+        return compact
+    if len(compact) > 9:
+        return compact[:9]
+    return fallback
+
+
+def _daily_thumb_hook(mdata, sdata):
+    fng = mdata.get("fng_num")
+    pct = mdata.get("btc_pct")
+    if fng is not None and int(fng) <= 40:
+        return f"恐慌指數{int(fng)}守得住"
+    if pct is not None and float(pct) <= -3:
+        return "比特幣急跌了"
+    if pct is not None and float(pct) >= 3:
+        return "比特幣急漲了"
+    raw = re.sub(r"^【幣看趨勢】|\([^)]+\)$", "", str(sdata.get("video_title") or ""))
+    for part in re.split(r"[，。！？、\s｜|]+", raw):
+        hook = _fit_cjk_hook(part, "")
+        if hook:
+            return hook
+    return "比特幣守得住"
+
+
+def _draw_impact_thumb(image, hook, badges, avatar_box):
+    draw = ImageDraw.Draw(image)
+    width, height = image.size
+    draw.rectangle((0, 0, width, height), fill="#070b14")
+    draw.rectangle((0, 0, int(width * 0.035), height), fill="#f59e0b")
+    font_path = get_system_font_path()
+    max_text_width = int(width * 0.62)
+    hook_font = ImageFont.truetype(font_path, 72)
+    for size in range(int(height * 0.22), 48, -4):
+        candidate = ImageFont.truetype(font_path, size)
+        if draw.textbbox((0, 0), hook, font=candidate)[2] <= max_text_width:
+            hook_font = candidate
+            break
+    text_x = int(width * 0.07)
+    text_y = int(height * 0.22)
+    draw.text((text_x + 8, text_y + 8), hook, font=hook_font, fill="#000000")
+    draw.text(
+        (text_x, text_y), hook, font=hook_font, fill="#fff7ed",
+        stroke_width=max(6, hook_font.size // 12), stroke_fill="#000000",
+    )
+    badge_font = ImageFont.truetype(font_path, max(28, int(height * 0.055)))
+    badge_x = int(width * 0.68)
+    badge_y = int(height * 0.62)
+    for label, fill in badges:
+        draw.rounded_rectangle(
+            (badge_x, badge_y, width - int(width * 0.04), badge_y + int(height * 0.12)),
+            radius=18, fill=fill,
+        )
+        draw.text(
+            (badge_x + 24, badge_y + int(height * 0.025)),
+            label, font=badge_font, fill="#ffffff",
+        )
+        badge_y += int(height * 0.15)
+    if avatar_box and os.path.exists("avatar.png"):
+        left, top, box_w, box_h = avatar_box
+        with Image.open("avatar.png") as avatar:
+            avatar = avatar.convert("RGBA").resize((box_w, box_h), Image.LANCZOS)
+            image.paste(avatar, (left, top), avatar)
+        draw.rounded_rectangle(
+            (left - 8, top - 8, left + box_w + 8, top + box_h + 8),
+            radius=28, outline="#f59e0b", width=8,
+        )
+
+
 # ── 主片 1080p 影音合成 ──────────────────────────────────────────
 
 def render_main_video(sdata, mdata, dca_data, chart_paths, config):
@@ -1620,7 +1805,8 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         for start, end in speaker_intervals["M"]
     ) or "0"
     speech_window = f"between(t,{intro_dur:.6f},{speech_end_t:.6f})"
-    mux_command = ["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast.mp3"]
+    mix_voice_with_bed("podcast.mp3", "podcast_bed.mp3", slide_start_times.values())
+    mux_command = ["ffmpeg", "-y", "-i", "base.mp4", "-i", "podcast_bed.mp3"]
     input_indexes = {}
 
     def add_avatar_input(name, path, is_video=False):
@@ -1772,87 +1958,19 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     )
 
     # 8. 製作封面縮圖 thumb.jpg
-    topic_icon_path = generate_topic_icon(slide_news[0], "BTC")
-    t_img = Image.new("RGB", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), "#090d16")
-    td = ImageDraw.Draw(t_img)
-    td.rectangle((21, 21, 1899, 1059), outline="#fbbf24", width=6)
-    td.line((75, 135, 1102, 135), fill="#38bdf8", width=5)
-    td.text(
-        (82, 63),
-        "幣看趨勢｜每日深度財經情報",
-        fill="#fbbf24",
-        font=ImageFont.truetype(fp, 45),
+    hook = _daily_thumb_hook(mdata, sdata)
+    pct_fill = "#16a34a" if mdata["btc_pct"] >= 0 else "#dc2626"
+    badges = [(f"BTC {mdata['btc_pct']:+.2f}%", pct_fill)]
+    mvrv_info = mdata.get("mvrv") or {}
+    if mvrv_info.get("value") is not None:
+        badges.append((f"MVRV {presentation.format_metric(mvrv_info['value'], 'ratio')}", "#d97706"))
+    elif fng_num is not None:
+        badges.append((f"恐慌 {int(fng_num)}", "#0369a1"))
+    t_img = Image.new("RGB", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), "#070b14")
+    _draw_impact_thumb(
+        t_img, hook, badges,
+        (1280, 80, 560, 560) if os.path.exists("avatar.png") else None,
     )
-    raw_t = re.sub(r'^【幣看趨勢】|\([^)]+\)$', '', sdata["video_title"]).strip()
-
-    thumb_font = None
-    thumb_lines = []
-    thumb_max_width = 1050
-    for thumb_size in range(58, 27, -2):
-        candidate_font = ImageFont.truetype(
-            fp, round(thumb_size * MAIN_OUTPUT_SCALE)
-        )
-        candidate_lines = split_thumb_title(raw_t, candidate_font, td, thumb_max_width)
-        widest = max((td.textbbox((0, 0), line, font=candidate_font)[2] for line in candidate_lines), default=0)
-        if len(candidate_lines) <= 3 and widest <= thumb_max_width:
-            thumb_font = candidate_font
-            thumb_lines = candidate_lines
-            break
-    if thumb_font is None:
-        thumb_font = ImageFont.truetype(
-            fp, round(26 * MAIN_OUTPUT_SCALE)
-        )
-        thumb_lines = split_thumb_title(raw_t, thumb_font, td, thumb_max_width)
-
-    line_height = thumb_font.size + 27
-    text_y = 174
-    for line_index, line in enumerate(thumb_lines):
-        td.text(
-            (82, text_y + line_index * line_height),
-            line,
-            fill="#ffffff",
-            font=thumb_font,
-        )
-
-    glow = Image.new(
-        "RGBA", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), (0, 0, 0, 0)
-    )
-    glow_draw = ImageDraw.Draw(glow)
-    for radius, alpha in ((198, 22), (177, 34), (153, 48)):
-        glow_draw.ellipse(
-            (262 - radius, 855 - radius, 262 + radius, 855 + radius),
-            fill=(251, 191, 36, alpha),
-        )
-    t_img = Image.alpha_composite(t_img.convert("RGBA"), glow).convert("RGB")
-    with Image.open(topic_icon_path) as icon:
-        icon = icon.convert("RGBA").resize((345, 345), Image.LANCZOS)
-        icon_mask = Image.new("L", (345, 345), 0)
-        ImageDraw.Draw(icon_mask).ellipse((0, 0, 344, 344), fill=255)
-        icon.putalpha(icon_mask)
-        t_img.paste(icon, (90, 682), icon)
-    td = ImageDraw.Draw(t_img)
-    td.ellipse((87, 680, 438, 1031), outline="#fbbf24", width=6)
-    metric_font = ImageFont.truetype(fp, round(27 * MAIN_OUTPUT_SCALE))
-    td.text((480, 711), f"BTC 即時價格　{presentation.format_usd(mdata['cur_p'])}", fill="#fbbf24", font=metric_font)
-    td.text((480, 798), f"24H 漲跌　{'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%", fill="#38bdf8", font=metric_font)
-    if fng_num is not None:
-        td.text(
-            (480, 885),
-            f"恐慌貪婪指數　{fng_num} / 100",
-            fill="#cbd5e1",
-            font=metric_font,
-        )
-    if os.path.exists("avatar.png"):
-        with Image.open("avatar.png") as avatar:
-            avatar = avatar.convert("RGBA").resize((645, 645), Image.LANCZOS)
-            t_img.paste(avatar, (1200, 218), avatar)
-        td.rounded_rectangle(
-            (1194, 212, 1851, 869),
-            radius=30,
-            outline="#fbbf24",
-            width=6,
-        )
-
     thumb_path = "thumb.jpg"
     t_img.save(thumb_path, "JPEG", quality=92)
 
@@ -2224,15 +2342,14 @@ def _concat_media(list_name, output_name):
 
 
 def _write_tutorial_thumb(tutorial):
-    font_path = get_system_font_path()
-    image = Image.new("RGB", (1280, 720), "#090d16")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((24, 24, 1256, 696), outline="#f59e0b", width=6)
-    badge_font = ImageFont.truetype(font_path, 36)
-    title_font = ImageFont.truetype(font_path, 54)
-    draw.text((56, 70), presentation.tutorial_badge(tutorial.get("ep_id", "EP")), fill="#f59e0b", font=badge_font)
-    title = str(tutorial.get("title") or tutorial.get("lesson_title") or "系統教學")
-    draw.text((56, 180), title[:42], fill="#f8fafc", font=title_font)
+    title = str(tutorial.get("title") or tutorial.get("lesson_title") or "成本帶怎麼看")
+    hook = _fit_cjk_hook(title, "成本帶怎麼看")
+    image = Image.new("RGB", (1280, 720), "#070b14")
+    _draw_impact_thumb(
+        image, hook,
+        [(str(tutorial.get("ep_id") or "深潛"), "#d97706")],
+        (860, 36, 360, 360) if os.path.exists("avatar.png") else None,
+    )
     image.save("thumb_tutorial.jpg", "JPEG", quality=92)
     return "thumb_tutorial.jpg"
 
@@ -2306,6 +2423,13 @@ def render_tutorial_episode(tutorial, chart_path):
             section_duration[flat[index][0]] += duration
             handle.write(f"file '{filename}'\n")
     _concat_media("tutorial_audio.txt", "tutorial.mp3")
+    section_marks = []
+    section_cursor = 0.0
+    for duration in section_duration:
+        if section_cursor >= 0.05:
+            section_marks.append(section_cursor)
+        section_cursor += duration
+    mix_voice_with_bed("tutorial.mp3", "tutorial_bed.mp3", section_marks)
     badge = presentation.tutorial_badge(tutorial.get("ep_id", "EP"))
     ticker_items = [
         {"label": "課程", "value": tutorial.get("ep_id", "EP"), "detail": tutorial.get("series", ""), "tone": "neutral"},
@@ -2358,7 +2482,7 @@ def render_tutorial_episode(tutorial, chart_path):
     _concat_media("tutorial_video.txt", "tutorial_visual.mp4")
     subprocess.run(
         [
-            "ffmpeg", "-y", "-i", "tutorial_visual.mp4", "-i", "tutorial.mp3",
+            "ffmpeg", "-y", "-i", "tutorial_visual.mp4", "-i", "tutorial_bed.mp3",
             "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
             "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "128k", "-shortest", "tutorial_main.mp4",
