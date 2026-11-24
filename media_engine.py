@@ -2402,8 +2402,8 @@ def _tutorial_card_html(card, chart_markup):
     )
     if layout == "compare":
         body = (
-            '<div class="split"><article class="bad"><small>迷思</small>'
-            f'<p>{myth}</p></article><article class="good"><small>真相</small>'
+            '<div class="split"><article class="bad"><small>迷思 ❌</small>'
+            f'<p>{myth}</p></article><article class="good"><small>真相 ✅</small>'
             f'<p>{truth}</p></article></div>'
         )
     elif layout == "steps":
@@ -2428,7 +2428,8 @@ article {{ border-radius:28px; padding:36px; }}
 .good {{ background:#052e1a; border:4px solid #22c55e; }}
 small {{ font-size:32px; font-weight:800; }}
 p {{ font-size:40px; line-height:1.35; }}
-.steps {{ list-style:none; margin:0; padding:0; }}
+.steps {{ list-style:none; margin:0; padding:0; position:relative; }}
+.steps::before {{ content:""; position:absolute; left:34px; top:36px; bottom:36px; width:4px; background:#f59e0b; }}
 .steps li {{ display:flex; gap:22px; align-items:center; margin:18px 0; font-size:36px;
   animation:pop .45s ease-out both; }}
 .steps li:nth-child(2) {{ animation-delay:.15s; }}
@@ -2602,13 +2603,31 @@ def _render_tutorial_short(tutorial):
         cards.append(
             f'<article style="animation-delay:{index * duration / 4:.2f}s">{html.escape(str(line.get("text") or "")[:28])}</article>'
         )
-    avatars = ""
-    if os.path.exists("avatar.png"):
-        with Image.open("avatar.png") as avatar:
+    def png_data(path):
+        with Image.open(path) as image:
             buffer = io.BytesIO()
-            avatar.convert("RGBA").resize((420, 220), Image.LANCZOS).save(buffer, format="PNG")
-        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        avatars = f'<img class="hosts" alt="" src="data:image/png;base64,{encoded}">'
+            image.convert("RGBA").save(buffer, format="PNG")
+        return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    host_assets = create_speaker_avatars()
+    hosts = [
+        f'<img class="host cat" alt="" src="data:image/png;base64,{png_data(host_assets["cat_idle"])}">',
+        f'<img class="host dog" alt="" src="data:image/png;base64,{png_data(host_assets["dog_idle"])}">',
+    ]
+    talk_sources = {
+        "女": png_data(host_assets["cat_speaking"]),
+        "男": png_data(host_assets["dog_speaking"]),
+    }
+    clock = 0.0
+    for index, (_, _, _, segment_duration) in enumerate(results):
+        role = lines[index].get("role") if index < len(lines) else "男"
+        side = "cat" if role == "女" else "dog"
+        hosts.append(
+            f'<img class="host {side} talk" alt="" src="data:image/png;base64,{talk_sources.get(role, talk_sources["男"])}" '
+            f'style="animation-delay:{clock:.3f}s;animation-duration:{max(segment_duration, 0.1):.3f}s">'
+        )
+        clock += segment_duration
+    avatars = "".join(hosts)
     short_html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><style>
 html,body {{ margin:0; width:1080px; height:1920px; overflow:hidden; color:#f8fafc; font-family:'Noto Sans CJK TC',sans-serif; }}
 body {{ background:#070b14; }}
@@ -2624,8 +2643,11 @@ article {{ position:absolute; inset:0; display:grid; place-items:center; padding
   background:rgba(15,23,42,.92); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
   opacity:0; animation:card {duration:.2f}s linear forwards; }}
 @keyframes card {{ 4%,22% {{ opacity:1; transform:scale(1); }} 0%,28%,100% {{ opacity:0; transform:scale(.94); }} }}
-.hosts {{ position:absolute; left:250px; bottom:80px; width:580px; height:280px; object-fit:contain;
-  border:6px solid #f59e0b; border-radius:40px; background:#111827; }}
+.host {{ position:absolute; bottom:90px; width:240px; height:240px; border-radius:50%; object-fit:cover; background:#111827; }}
+.host.cat {{ left:150px; }}
+.host.dog {{ right:150px; }}
+.host.talk {{ opacity:0; animation:speak linear 1; }}
+@keyframes speak {{ 0%,100% {{ opacity:1; }} }}
 </style></head><body><div class="badge">{badge}</div><h1>{hook}</h1><div class="deck">{''.join(cards)}</div>{avatars}</body></html>"""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
