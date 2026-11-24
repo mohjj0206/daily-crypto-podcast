@@ -140,10 +140,14 @@ def _split_numbers(lines):
 
 
 def audit_episode(script, subtitle_path, is_test):
-    """腳本與字幕的本地規則稽核，分數 0～100。"""
+    """只檢查口播與字幕。公開帳本頁與 dca_portfolio.json 的台幣對照不納入。"""
     warnings = []
     text = script or ""
-    subtitle_lines = _subtitle_lines(subtitle_path)
+    ledger_name = os.path.basename(str(subtitle_path or ""))
+    if ledger_name in {"index.html", "dca_portfolio.json"}:
+        subtitle_lines = []
+    else:
+        subtitle_lines = _subtitle_lines(subtitle_path)
     combined = text if subtitle_lines is None else text + "\n" + "\n".join(subtitle_lines)
     if CURRENCY_WORD.search(combined):
         warnings.append("出現台幣或 TWD")

@@ -1367,6 +1367,10 @@ def update_dca_portfolio(current_btc_usd, now_tw):
         "start_date": start_date.isoformat(),
         "monthly_contribution_twd": 10000,
         "schedule_days": [25],
+        "contribution_note": (
+            f"自 {start_date.isoformat()} 起，每月 25 日固定投入 NT$10,000"
+            "（依當日 USD/TWD 匯率換算為美元買進 BTC）。"
+        ),
         "records": records,
         "monthly_summary": monthly_summary,
         "total_twd": total_twd,

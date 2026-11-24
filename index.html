@@ -15,7 +15,7 @@
       min-height: 100vh;
       padding: 28px 16px 56px;
     }
-    .wrap { max-width: 1080px; margin: 0 auto; }
+    .wrap { max-width: 1180px; margin: 0 auto; }
     header {
       display: flex;
       align-items: center;
@@ -108,7 +108,7 @@
         <img src="./avatar.png" alt="比特汪頭像">
         <div>
           <h1>幣看趨勢｜比特汪 BTC 定期定額實戰公開帳本</h1>
-          <p class="sub">只讀同目錄 dca_portfolio.json 的美元欄位，不呼叫外部行情 API</p>
+          <p class="sub" id="rule">自 2025-10-25 起，每月 25 日固定投入 NT$10,000（依當日 USD/TWD 匯率換算為美元買進 BTC）。只讀同目錄 dca_portfolio.json，不呼叫外部行情 API。</p>
         </div>
       </div>
       <a class="yt" href="https://www.youtube.com/@%E5%B9%A3%E7%9C%8B%E8%B6%A8%E5%8B%A2" target="_blank" rel="noopener noreferrer">前往 YouTube 頻道</a>
@@ -118,9 +118,9 @@
     <p class="status" id="status">正在整理帳本…</p>
     <section class="grid">
       <article class="card">
-        <div class="label">累計總投入 (USD)</div>
+        <div class="label">累計投入本金</div>
         <div class="value" id="total-usd">—</div>
-        <div class="hint">total_invested_usd</div>
+        <div class="hint" id="total-twd">台幣對照整理中</div>
       </article>
       <article class="card">
         <div class="label">累計持有 BTC</div>
@@ -151,7 +151,9 @@
           <thead>
             <tr>
               <th>日期</th>
-              <th>投入 (USD)</th>
+              <th>台幣投入</th>
+              <th>當期匯率</th>
+              <th>換算投入 (USD)</th>
               <th>BTC 價格 (USD)</th>
               <th>買入 BTC</th>
               <th>累計本金 (USD)</th>
@@ -163,7 +165,7 @@
         </table>
       </div>
     </section>
-    <footer>市值 = 持有 BTC × current_btc_usd。未實現損益 = 市值 − 累計投入美元。本頁僅供公開紀錄，不構成投資建議。</footer>
+    <footer>美元市值 = 持有 BTC × current_btc_usd。未實現損益 = 市值 − 累計投入美元。台幣欄位只對照每月 NT$10,000 換匯，影片與大盤仍用整數美元。本頁不構成投資建議。</footer>
   </div>
 
   <script>
@@ -179,6 +181,8 @@
       return sign + "$" + rounded.toLocaleString("en-US");
     };
     const btc = (v) => Number(v).toLocaleString("en-US", { minimumFractionDigits: 8, maximumFractionDigits: 8 });
+    const twdText = (v) => "NT$" + Math.round(Number(v)).toLocaleString("en-US");
+    const fxText = (v) => Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     const pick = (obj, keys) => {
       for (const key of keys) {
         if (obj && obj[key] != null && obj[key] !== "") return obj[key];
@@ -193,9 +197,24 @@
       document.getElementById("status").textContent = "帳本未能完成渲染";
     }
 
-    function rowUsd(row) {
+    function rowTwd(row, monthlyTwd) {
+      const direct = n(pick(row, ["twd_invested", "invested_twd"]));
+      return direct != null && direct > 0 ? direct : monthlyTwd;
+    }
+
+    function rowUsd(row, monthlyTwd) {
       const direct = n(pick(row, ["usd_invested", "invested_usd", "amount_usd"]));
       if (direct != null && direct > 0) return direct;
+      const rate = n(pick(row, ["twd_rate", "usd_twd", "fx"]));
+      const investedTwd = rowTwd(row, monthlyTwd);
+      if (rate != null && rate > 0 && investedTwd > 0) return investedTwd / rate;
+      return null;
+    }
+
+    function rowFx(row, spent, monthlyTwd) {
+      const direct = n(pick(row, ["twd_rate", "usd_twd", "fx"]));
+      if (direct != null && direct > 0) return direct;
+      if (spent != null && spent > 0) return monthlyTwd / spent;
       return null;
     }
 
@@ -203,55 +222,87 @@
       const records = Array.isArray(data.records) ? data.records.filter((row) => row && typeof row === "object") : [];
       records.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 
+      const monthlyTwd = n(pick(data, ["monthly_contribution_twd"])) || 10000;
+      const startDate = pick(data, ["start_date"]) || "2025-10-25";
+      const rule = pick(data, ["contribution_note"]) || (
+        "自 " + startDate + " 起，每月 25 日固定投入 NT$10,000（依當日 USD/TWD 匯率換算為美元買進 BTC）。只讀同目錄 dca_portfolio.json，不呼叫外部行情 API。"
+      );
+      const localNote = "只讀同目錄 dca_portfolio.json，不呼叫外部行情 API。";
+      document.getElementById("rule").textContent = String(rule).includes("不呼叫外部") ? rule : String(rule).replace(/。?$/, "。") + localNote;
+
       let investedSum = 0;
+      let twdSum = 0;
       let btcSum = 0;
       const points = [];
       for (const row of records) {
-        const spent = rowUsd(row);
+        const spent = rowUsd(row, monthlyTwd);
+        const investedTwd = rowTwd(row, monthlyTwd);
+        const fx = rowFx(row, spent, monthlyTwd);
         const bought = n(pick(row, ["btc_bought", "btc"]));
         const price = n(pick(row, ["btc_price_usd", "price_usd"]));
-        if (spent == null || bought == null) {
-          throw new Error("某一筆紀錄缺少 usd_invested 或 btc_bought，已停止使用不完整數字。");
-        }
-        investedSum += spent;
-        btcSum += bought;
+        if (spent != null) investedSum += spent;
+        twdSum += investedTwd;
+        if (bought != null) btcSum += bought;
         points.push({
           date: row.date || "—",
+          twd: investedTwd,
+          fx,
           spent,
           price: price == null ? null : price,
           bought,
-          principal: investedSum,
-          cumBtc: btcSum,
-          mark: price == null ? null : btcSum * price
+          principal: spent == null ? null : investedSum,
+          cumBtc: bought == null ? null : btcSum,
+          mark: price == null || bought == null ? null : btcSum * price
         });
       }
 
       const totalInvested = n(pick(data, ["total_invested_usd", "total_usd"])) ?? investedSum;
+      const totalTwd = n(pick(data, ["total_twd"])) ?? twdSum;
       const totalBtc = n(pick(data, ["total_btc"])) ?? btcSum;
       const px = n(pick(data, ["current_btc_usd", "btc_usd"]));
-      if (px == null || px <= 0) throw new Error("帳本缺少 current_btc_usd，無法計算目前市值。");
-      const market = n(pick(data, ["current_value_usd", "current_market_value_usd"])) ?? (totalBtc * px);
-      const pnl = n(pick(data, ["unrealized_pnl_usd"])) ?? (market - totalInvested);
-      const avg = n(pick(data, ["avg_buy_price_usd"])) ?? (totalBtc ? totalInvested / totalBtc : 0);
-      const pct = totalInvested ? (pnl / totalInvested) * 100 : 0;
-      const pnlText = (pnl > 0 ? "+" : pnl < 0 ? "-" : "") + usd(Math.abs(pnl));
+      const market = px == null || px <= 0
+        ? n(pick(data, ["current_value_usd", "current_market_value_usd"]))
+        : (n(pick(data, ["current_value_usd", "current_market_value_usd"])) ?? (totalBtc * px));
+      const pnl = market == null ? null : (n(pick(data, ["unrealized_pnl_usd"])) ?? (market - totalInvested));
+      const avg = n(pick(data, ["avg_buy_price_usd"])) ?? (totalBtc && totalInvested ? totalInvested / totalBtc : null);
+      const pct = pnl == null || !totalInvested ? null : (pnl / totalInvested) * 100;
+      const latestFx = n(pick(data, ["current_twd_rate"])) || (points.length ? points[points.length - 1].fx : null);
+      const marketTwd = n(pick(data, ["current_market_value_twd"])) ?? (market != null && latestFx ? market * latestFx : null);
 
-      document.getElementById("total-usd").textContent = usd(totalInvested);
-      document.getElementById("total-btc").textContent = btc(totalBtc) + " BTC";
-      document.getElementById("avg-usd").textContent = usd(avg);
-      document.getElementById("market-usd").textContent = usd(market);
+      document.getElementById("total-usd").textContent = totalInvested ? usd(totalInvested) : "—";
+      document.getElementById("total-twd").textContent = twdText(totalTwd) + " / " + points.length + " 期";
+      document.getElementById("total-btc").textContent = (totalBtc ? btc(totalBtc) : "—") + (totalBtc ? " BTC" : "");
+      document.getElementById("avg-usd").textContent = avg == null ? "—" : usd(avg);
+      document.getElementById("market-usd").textContent = market == null ? "—" : usd(market);
       const pnlEl = document.getElementById("pnl");
-      pnlEl.textContent = "未實現損益 " + pnlText + "（" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%）｜BTC " + usd(px);
-      pnlEl.className = "hint " + (pnl >= 0 ? "up" : "down");
+      if (pnl == null) {
+        pnlEl.textContent = "帳本缺少現價，市值暫不計算";
+        pnlEl.className = "hint";
+      } else {
+        const pnlText = (pnl > 0 ? "+" : pnl < 0 ? "-" : "") + usd(Math.abs(pnl));
+        const twdHint = marketTwd == null ? "" : "｜約當台幣市值 " + twdText(marketTwd) + (latestFx ? "（匯率 " + fxText(latestFx) + "）" : "");
+        pnlEl.textContent = "未實現損益 " + pnlText + "（" + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%）" + (px ? "｜BTC " + usd(px) : "") + twdHint;
+        pnlEl.className = "hint " + (pnl >= 0 ? "up" : "down");
+      }
 
       const body = document.getElementById("rows");
       body.innerHTML = "";
       if (!points.length) {
-        body.innerHTML = "<tr><td colspan=\"7\">帳本尚無扣款紀錄</td></tr>";
+        body.innerHTML = "<tr><td colspan=\"9\">帳本尚無扣款紀錄</td></tr>";
       }
       points.forEach((row) => {
         const tr = document.createElement("tr");
-        [row.date, usd(row.spent), row.price == null ? "—" : usd(row.price), btc(row.bought), usd(row.principal), btc(row.cumBtc), row.mark == null ? "—" : usd(row.mark)]
+        [
+          row.date,
+          twdText(row.twd),
+          row.fx == null ? "—" : fxText(row.fx),
+          row.spent == null ? "—" : usd(row.spent),
+          row.price == null ? "—" : usd(row.price),
+          row.bought == null ? "—" : btc(row.bought),
+          row.principal == null ? "—" : usd(row.principal),
+          row.cumBtc == null ? "—" : btc(row.cumBtc),
+          row.mark == null ? "—" : usd(row.mark)
+        ]
           .forEach((text) => {
             const td = document.createElement("td");
             td.textContent = text;
@@ -263,11 +314,11 @@
       document.getElementById("status").textContent = "已用同目錄帳本完成渲染";
 
       const labels = points.map((row) => row.date);
-      const principal = points.map((row) => Number(row.principal.toFixed(2)));
+      const principal = points.map((row) => row.principal == null ? null : Number(row.principal.toFixed(2)));
       const marketSeries = points.map((row) => row.mark == null ? null : Number(row.mark.toFixed(2)));
       labels.push("目前");
-      principal.push(Number(totalInvested.toFixed(2)));
-      marketSeries.push(Number(market.toFixed(2)));
+      principal.push(totalInvested == null ? null : Number(Number(totalInvested).toFixed(2)));
+      marketSeries.push(market == null ? null : Number(Number(market).toFixed(2)));
 
       if (typeof Chart === "undefined") {
         showError("Chart.js 未能載入。四張卡片與明細已用帳本數字渲染。");
@@ -287,7 +338,8 @@
               borderDash: [6, 4],
               borderWidth: 2,
               pointRadius: 3,
-              tension: 0.15
+              tension: 0.15,
+              spanGaps: true
             },
             {
               label: "總市值 (USD)",
@@ -344,7 +396,7 @@
         showError(message);
         const body = document.getElementById("rows");
         body.dataset.ready = "1";
-        body.innerHTML = "<tr><td colspan=\"7\">" + message + "</td></tr>";
+        body.innerHTML = "<tr><td colspan=\"9\">" + message + "</td></tr>";
       } finally {
         clearTimeout(timer);
       }
@@ -355,7 +407,7 @@
       const body = document.getElementById("rows");
       if (body && body.dataset.ready !== "1") {
         showError("頁面腳本未能完成渲染。");
-        body.innerHTML = "<tr><td colspan=\"7\">渲染逾時</td></tr>";
+        body.innerHTML = "<tr><td colspan=\"9\">渲染逾時</td></tr>";
       }
     }, 9000);
   </script>
