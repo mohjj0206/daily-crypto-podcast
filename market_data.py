@@ -459,7 +459,7 @@ def fetch_market_quote(symbol, primary_quotes):
 
 def calc_sma(arr, p):
     sl = arr[-p:]
-    return f"{sum(sl)/len(sl):.2f}" if sl else "0.00"
+    return str(presentation.round_usd(sum(sl) / len(sl))) if sl else "0"
 
 
 def calc_rsi(arr, p=14):
@@ -1108,12 +1108,12 @@ def format_market_structure_report(name, metrics, spot_price):
         else "（近90日未觀察到回撤）"
     )
     return (
-        f"{name}：現價 ${spot_price:,.2f}；90日高點 ${metrics['swing_high']:,.2f}"
+        f"{name}：現價 {presentation.format_usd(spot_price)}；90日高點 {presentation.format_usd(metrics['swing_high'])}"
         f"（{metrics['swing_high_date']}），距該高點 {metrics['days_since_high']} 天，"
         f"目前回撤 {metrics['current_drawdown_pct']:.2f}%；"
         f"90日最大回撤 {metrics['maximum_drawdown_pct']:.2f}%"
         f"{drawdown_dates}；"
-        f"30日支撐 ${metrics['support']:,.2f}、壓力 ${metrics['resistance']:,.2f}；"
+        f"30日支撐 {presentation.format_usd(metrics['support'])}、壓力 {presentation.format_usd(metrics['resistance'])}；"
         f"現價相對100日線 {metrics['sma_100_deviation_pct']:+.2f}%、"
         f"相對200日線 {metrics['sma_200_deviation_pct']:+.2f}%"
     )
@@ -1619,7 +1619,7 @@ def fetch_all_market_data(now_tw, is_test):
     btc_w = fetch_market_series("BTCUSDT", "1w", 210)
     btc_cl, btc_pct, btc_rsi = cdata["BTC"]
     eth_cl, eth_pct, eth_rsi = cdata["ETH"]
-    cur_p = f"{spot_prices['BTC']:.2f}"
+    cur_p = str(presentation.round_usd(spot_prices["BTC"]))
 
     btc_metrics = calculate_market_structure(
         daily_histories["BTC"], spot_prices["BTC"], now_tw.date()
@@ -1630,11 +1630,11 @@ def fetch_all_market_data(now_tw, is_test):
     btc_oversold_events = find_rsi_oversold_events(
         daily_histories["BTC"], btc_metrics["rsi_series"], now_tw.date()
     )
-    ma100d = f"{btc_metrics['sma_100']:.2f}"
-    ma200d = f"{btc_metrics['sma_200']:.2f}"
+    ma100d = str(presentation.round_usd(btc_metrics["sma_100"]))
+    ma200d = str(presentation.round_usd(btc_metrics["sma_200"]))
     ma100w, ma200w = calc_sma(btc_w, 100), calc_sma(btc_w, 200)
-    eth_ma100d = f"{eth_metrics['sma_100']:.2f}"
-    eth_ma200d = f"{eth_metrics['sma_200']:.2f}"
+    eth_ma100d = str(presentation.round_usd(eth_metrics["sma_100"]))
+    eth_ma200d = str(presentation.round_usd(eth_metrics["sma_200"]))
 
     btc_technical_report = format_market_structure_report(
         "BTC", btc_metrics, spot_prices["BTC"]
@@ -1669,7 +1669,7 @@ def fetch_all_market_data(now_tw, is_test):
         sgn = "+" if pct >= 0 else ""
         r_txt = f" | RSI {rsi}" if rsi else ""
         coins_lines.append(
-            f"{name}: ${spot_prices[name]:,.2f} ({sgn}{pct:.2f}%{r_txt})"
+            f"{name}: {presentation.format_usd(spot_prices[name])} ({sgn}{pct:.2f}%{r_txt})"
         )
     coins_summary = "\n".join(coins_lines)
 
@@ -1683,14 +1683,14 @@ def fetch_all_market_data(now_tw, is_test):
     )
 
     s1 = (
-        f"BTC 即時價格：${cur_p} USD\n"
-        f"日線均線：100日 ${ma100d} / 200日 ${ma200d}\n"
-        f"週線均線：100週 ${ma100w} / 200週 ${ma200w}\n"
+        f"BTC 即時價格：{presentation.format_usd(cur_p)} USD\n"
+        f"日線均線：100日 {presentation.format_usd(ma100d)} / 200日 {presentation.format_usd(ma200d)}\n"
+        f"週線均線：100週 {presentation.format_usd(ma100w)} / 200週 {presentation.format_usd(ma200w)}\n"
         f"14日 RSI：{btc_rsi}"
     )
     eth_slide = (
-        f"ETH 即時價格：${spot_prices['ETH']:,.2f} USD ({eth_pct:+.2f}% 24H)\n"
-        f"日線均線：100日 ${eth_ma100d} / 200日 ${eth_ma200d}\n"
+        f"ETH 即時價格：{presentation.format_usd(spot_prices['ETH'])} USD ({eth_pct:+.2f}% 24H)\n"
+        f"日線均線：100日 {presentation.format_usd(eth_ma100d)} / 200日 {presentation.format_usd(eth_ma200d)}\n"
         f"14日 RSI：{eth_rsi}"
     )
 

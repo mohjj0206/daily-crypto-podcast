@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.font_manager import FontProperties
 import market_data
+import presentation
 
 
 def get_chart_font():
@@ -58,11 +59,11 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
         )
         ax.axhline(
             btc_metrics["resistance"], color="#F87171", linestyle="--",
-            linewidth=1.3, label=f"30 日壓力 ${btc_metrics['resistance']:,.0f}",
+            linewidth=1.3, label=f"30 日壓力 {presentation.format_usd(btc_metrics['resistance'])}",
         )
         ax.axhline(
             btc_metrics["support"], color="#34D399", linestyle="--",
-            linewidth=1.3, label=f"30 日支撐 ${btc_metrics['support']:,.0f}",
+            linewidth=1.3, label=f"30 日支撐 {presentation.format_usd(btc_metrics['support'])}",
         )
         ax.set_title(
             "BTC 價格結構與關鍵多空攻防圖", color="#F8FAFC",
@@ -70,7 +71,7 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
         )
         ax.text(
             0.015, 0.97,
-            f"現價 ${btc_metrics['spot_price']:,.0f}"
+            f"現價 {presentation.format_usd(btc_metrics['spot_price'])}"
             f"  |  距 90 日高點 {btc_metrics['days_since_high']} 天"
             f"  |  回撤 {btc_metrics['current_drawdown_pct']:.2f}%"
             f"  |  最大回撤 {btc_metrics['maximum_drawdown_pct']:.2f}%",
@@ -79,7 +80,7 @@ def generate_technical_charts(btc_history, btc_metrics, oversold_events):
         )
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d"))
         ax.yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda value, _: f"${value:,.0f}")
+            plt.FuncFormatter(lambda value, _: presentation.format_usd(value))
         )
         ax.tick_params(colors="#CBD5E1", labelsize=9)
         ax.grid(color=grid_color, linewidth=0.65)
@@ -238,6 +239,9 @@ def generate_dca_chart(portfolio, now_tw):
         fontproperties=chart_font,
     )
     axis.tick_params(axis="x", colors="#cbd5e1", labelrotation=45, labelsize=14, pad=6)
+    axis.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda value, _: presentation.format_usd(value))
+    )
     axis.tick_params(axis="y", colors="#cbd5e1", labelsize=14)
     for tick_label in axis.get_xticklabels() + axis.get_yticklabels():
         tick_label.set_fontproperties(chart_font)
@@ -270,6 +274,9 @@ def generate_dual_chart(cdata, output_path="chart_dual.png"):
         ax.set_title(
             f"{name} 100D Trend", color="white", fontsize=18,
             fontweight="bold",
+        )
+        ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda value, _: presentation.format_usd(value))
         )
         ax.tick_params(colors="#94a3b8", labelsize=14)
         for tick_label in ax.get_xticklabels() + ax.get_yticklabels():

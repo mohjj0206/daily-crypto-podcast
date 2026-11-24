@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 import feedparser
+import presentation
 import matplotlib
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from opencc import OpenCC
@@ -320,7 +321,9 @@ def load_market_data(coin_code):
 
 
 def format_price(value):
-    return "資料不足" if value is None else f"${value:,.2f} USDT"
+    if value is None:
+        return "資料不足"
+    return presentation.format_usd(value) + " USDT"
 
 
 def market_report(coin_code, market):
@@ -329,7 +332,7 @@ def market_report(coin_code, market):
     rsi_display = "資料不足" if market["rsi_14"] is None else f"{market['rsi_14']:.2f}"
     return (
         f"日期：{TODAY_STR}\n主角：{metadata['name']}（{coin_code}，交易對 {market['symbol']}）\n"
-        f"即時價格：${market['price']:,.6f} USDT\n"
+        f"即時價格：{format_price(market['price'])}\n"
         f"24 小時漲跌：{market['change_24h']:+.2f}%\n"
         f"100 日均線：{format_price(market['sma_100'])}\n"
         f"200 日均線：{format_price(market['sma_200'])}\n"
@@ -1010,7 +1013,7 @@ def create_slides(coin_code, market, trigger, articles, conditions):
         story_titles.append("相關報導資料不足，以下不推定未經證實的事件")
     timeline = "\n".join(f"• {title}" for title in story_titles)
     trend_text = (
-        f"價格 ${market['price']:,.6f} USDT｜24H {market['change_24h']:+.2f}%\n"
+        f"價格 {format_price(market['price'])}｜24H {market['change_24h']:+.2f}%\n"
         f"100 日線 {format_price(market['sma_100'])}｜200 日線 {format_price(market['sma_200'])}"
     )
     rsi_display = "資料不足" if market["rsi_14"] is None else f"{market['rsi_14']:.2f}"
@@ -1143,7 +1146,7 @@ def create_thumbnail(coin_code, topic_title, market, topic_icon):
     icon = ImageOps.fit(topic_icon.convert("RGB"), (230, 230), method=Image.Resampling.LANCZOS)
     image.paste(icon, (60, 455))
     draw.text((325, 470), f"{coin_code} 即時價格", fill="#38d9e6", font=load_font(27, True))
-    draw.text((325, 515), f"${market['price']:,.4f}", fill="#f8fafc", font=load_font(32, True))
+    draw.text((325, 515), format_price(market["price"]).replace(" USDT", ""), fill="#f8fafc", font=load_font(32, True))
     draw.text((325, 568), f"24H {market['change_24h']:+.2f}%", fill=metadata["color"], font=load_font(28, True))
     draw.text((325, 620), f"RSI 14：{rsi_display}", fill="#d6b66b", font=load_font(25))
 
@@ -1179,7 +1182,7 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
         f"本集【幣看深潛】聚焦 {SUPPORTED_COINS[coin_code]['name']}（{coin_code}），"
         f"整理公開報導、技術脈絡、生態動態與即時行情。\n\n"
         f"⏱️ 專題章節（含 12 秒動態片尾）\n{chr(10).join(chapters)}\n\n"
-        f"即時價格：${market['price']:,.6f} USDT\n"
+        f"即時價格：{format_price(market['price'])}\n"
         f"24 小時漲跌：{market['change_24h']:+.2f}%\n"
         "本節目僅作公開資訊與市場數據整理，不構成投資建議。加密資產波動劇烈，請自行研究並承擔風險。\n\n"
         f"#幣看深潛 #{coin_code} #加密貨幣 #區塊鏈"

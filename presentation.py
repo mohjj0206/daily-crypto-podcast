@@ -1,6 +1,7 @@
 """播報層共用格式、禁忌詞與 SSML。畫面與口播只走這裡，不在各檔各寫一套。"""
 import html
 import re
+from decimal import Decimal, ROUND_HALF_UP
 
 # 增刪平台、媒體與禁忌詞只改這一份。較長的詞要排在前面，避免短詞先切掉長詞。
 EXCLUDED_PLATFORMS = [
@@ -45,11 +46,24 @@ _EMOTION_TAG = re.compile(r"\[(excited|serious|analytical|debate)\]")
 _NUMBER = re.compile(r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?")
 
 
+def round_usd(value):
+    """金額用四捨五入，不用銀行家捨入。"""
+    cleaned = str(value).replace(",", "").replace("$", "").strip()
+    return int(Decimal(cleaned).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def format_usd(value):
+    """具體美元金額四捨五入到整數，並加上千分位。負號放在錢字符號前面。"""
+    rounded = round_usd(value)
+    sign = "-" if rounded < 0 else ""
+    return f"{sign}${abs(rounded):,}"
+
+
 def format_metric(value, kind):
     """統一幣價、百分比、比值與市值／成交量的顯示精度。"""
     number = float(value)
     if kind == "price":
-        return f"${number:,.2f}"
+        return format_usd(number)
     if kind == "percent":
         return f"{number:+.2f}%"
     if kind == "ratio":
@@ -65,7 +79,7 @@ def format_metric(value, kind):
             return f"{sign}${magnitude / 1_000_000_000:.2f}B"
         if magnitude >= 1_000_000:
             return f"{sign}${magnitude / 1_000_000:.2f}M"
-        return f"{sign}${magnitude:,.2f}"
+        return format_usd(number)
     raise ValueError(f"unknown metric kind: {kind}")
 
 

@@ -70,8 +70,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain dca_portfolio.json)" ]; then
-            git add dca_portfolio.json
-            git commit -m "chore: update BTC DCA portfolio ledger"
+          if [ -n "$(git status --porcelain dca_portfolio.json history_db)" ]; then
+            git add dca_portfolio.json history_db
+            git commit -m "chore: update BTC DCA portfolio ledger and learning history"
             git push
           fi

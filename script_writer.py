@@ -9,7 +9,7 @@ from itertools import permutations
 from zoneinfo import ZoneInfo
 from opencc import OpenCC
 
-from presentation import EXCLUDED_PLATFORMS, sanitize_text
+from presentation import EXCLUDED_PLATFORMS, format_usd, sanitize_text
 
 
 # ── 文字清理與格式工具 ──────────────────────────────────────────
@@ -176,6 +176,12 @@ def load_show_angle():
         if (today - used).days < 7:
             fresh.append(entry)
     used_ids = {entry.get("angle_id") for entry in fresh}
+    try:
+        with open("learning_insights.json", encoding="utf-8") as handle:
+            avoid_ids = set(json.load(handle).get("avoid_angle_ids") or [])
+    except (OSError, ValueError, json.JSONDecodeError):
+        avoid_ids = set()
+    used_ids |= avoid_ids
     chosen = next((angle for angle in angles if angle["id"] not in used_ids), angles[0])
     fresh.append({"date": today.isoformat(), "angle_id": chosen["id"], "angle": chosen["title"]})
     with open(log_path, "w", encoding="utf-8") as handle:
@@ -185,7 +191,24 @@ def load_show_angle():
     sample = [terms[(offset + index) % len(terms)] for index in range(6)]
     vocab = "；".join(f"{item['term']}：{item['gloss']}" for item in sample)
     recent = "、".join(entry.get("angle") or entry.get("angle_id", "") for entry in fresh[:-1]) or "無"
-    return chosen["title"], vocab, recent
+    return chosen["title"], vocab, recent, chosen["id"]
+
+
+def _learning_prompt_line():
+    """讀本地 learning_insights.json，不另外呼叫模型。"""
+    try:
+        with open("learning_insights.json", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return "尚無近 14 日歷史，依今日數據開題即可。"
+    avoid = "、".join(data.get("avoid_angles") or []) or "無"
+    keywords = "、".join(data.get("recent_title_keywords") or []) or "無"
+    warnings = "；".join(data.get("previous_warnings") or []) or "無"
+    return (
+        f"今日避開這些切入角度：{avoid}。"
+        f"近 7 日標題已用過的關鍵詞不要再當主標：{keywords}。"
+        f"上一集品質警告：{warnings}。"
+    )
 
 
 def dca_performance_guidance(unrealized_pnl_usd):
@@ -450,9 +473,9 @@ def generate_script(mdata, dca_data, config):
     full_report = (
         f"【今日日期】：{today_str}\n【數據抓取時間】：{mdata['data_fetched_at']}\n"
         "【比特幣核心技術指標】\n"
-        f"- BTC 即時報價：${cur_p} USD (24H: {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%)\n"
-        f"- 短中期均線：100日 ${ma100d} | 200日 ${ma200d}\n"
-        f"- 長期週線：100週 ${ma100w} | 200週 ${ma200w}\n"
+        f"- BTC 即時報價：{format_usd(cur_p)} USD (24H: {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%)\n"
+        f"- 短中期均線：100日 {format_usd(ma100d)} | 200日 {format_usd(ma200d)}\n"
+        f"- 長期週線：100週 {format_usd(ma100w)} | 200週 {format_usd(ma200w)}\n"
         f"- 波段結構：{mdata['btc_technical_report']}\n"
         f"- ETH 波段結構：{mdata['eth_technical_report']}\n"
         f"- BTC RSI 歷史：{mdata['btc_oversold_report']}\n"
@@ -563,14 +586,16 @@ def generate_script(mdata, dca_data, config):
 兩人分別代表「數位黃金派」與「世界計算機生態派」，互相尊重、立場互補，自然吐槽、穿插幣圈冷笑話與台灣網路梗；以太喵以數據幫比特汪踩煞車。口播禁止使用HODL、HODLer等縮寫，一律自然說「長期持有」或「長期持有者」。若今日不是DCA播報日，勿主動插入帳本環節；只有在指定DCA環節才可報帳本數字。"""
     strategy_script_guidance = """【分析順序與雙人分工】全節目以「數據拆解 → 條件式策略劇本 → 長期定投心法」推進。以太喵先依本次報告讀出BTC與ETH結構數據，並說明RSI超賣區段只是歷史動能訊號；穩定幣市值增加或減少不等於資金已買入或賣出BTC。籌碼面須報出可用的全體帳戶與前列交易者多空比、近30日現貨成交量變化及鏈上活躍度變化；分清「放量下跌」與「縮量下跌」，並依恐慌貪婪值、90日回撤及成交額變化交叉描述恐慌換手或縮量沉澱。若某項未取得便明說略過，不補值。這些指標都是代理資料，不能據此確定散戶正在割肉、巨鯨正在吸籌，或長期持有者惜售。接著以太喵提出兩種條件式劇本：若價格站穩30日壓力並有後續價格確認，描述可能改善的結構；若跌破30日支撐，說明回撤風險仍在及需觀察的後續訊號。不可捏造支撐、壓力或確認條件。比特汪以白話總結短線交易者可能退場、長期參與者可能較少換手，但必須標明這不是對巨鯨吸籌的證明；提醒觀眾勿在恐慌中衝動改變計畫，從長期週期談紀律定投、不猜最低點。超賣不保證反彈，歷史表現不保證未來；定期定額須符合個人預算與風險承受度，不可催促觀眾買進。"""
 
-    angle_title, vocab_line, recent_angles = load_show_angle()
+    angle_title, vocab_line, recent_angles, angle_id = load_show_angle()
+    learning_line = _learning_prompt_line()
     banned_terms = "、".join(EXCLUDED_PLATFORMS)
     mvrv_line = mdata.get("mvrv", {}).get("report", "MVRV 未取得")
     p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 【今日切入視角】{angle_title}。近 7 日已用視角（今日必須避開）：{recent_angles}。
+【自檢差異化】{learning_line}
 【可自然帶入的術語】{vocab_line}
 【MVRV】{mvrv_line}。必須說出數值與區間判讀，並聲明它不是買賣指令。
-【幣別】所有價格、市值、成交量、定投投入、總值與損益只准使用美元，禁止台幣、NT$、TWD。
+【幣別】所有價格、市值、成交量、定投投入、總值與損益只准使用美元，禁止台幣、NT$、TWD。直接以美元報出的金額一律四捨五入到整數並加千分位，例如 $95,421、-$836，禁止 $95,420.50 這類小數金額。百分比、MVRV、RSI 與 BTC 顆數維持原有小數。
 【情緒標記】每一句以「男：」或「女：」開頭的口播，在角色名後可先放一個標籤 [excited]、[serious]、[analytical] 或 [debate]，標籤本身不要念出來。暴跌與風險用 serious，突破與強勢用 excited，拆數字用 analytical，兩人交鋒用 debate。
 【禁忌詞】旁白不得出現：{banned_terms}。角色名只能是比特汪與以太喵。
 【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、多空比、現貨成交量、鏈上活躍度、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
@@ -629,12 +654,12 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
         for item in slide_news_details
     ]
     t_match = re.search(r'^標題[：:]\s*(.+)', part1_raw, re.M)
-    ai_title = sanitize_text(t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC ${cur_p}｜主流幣均線攻防與恐慌指數全解析")
+    ai_title = sanitize_text(t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC {format_usd(cur_p)}｜主流幣均線攻防與恐慌指數全解析")
     video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
     part2_raw = normalize_long_term_terms(part2_text)
     default_24h_conditions = [
-        f"均線守位｜BTC ${cur_p}、ETH ${spot_prices['ETH']:.2f} 能否守穩各自100日均線 ${ma100d}、${market_data.calc_sma(cdata['ETH'][0], 100)}。",
+        f"均線守位｜BTC {format_usd(cur_p)}、ETH {format_usd(spot_prices['ETH'])} 能否守穩各自100日均線 {format_usd(ma100d)}、{format_usd(market_data.calc_sma(cdata['ETH'][0], 100))}。",
         "美股開盤連動｜觀察今日美股開盤後，BTC與ETH是否跟隨納指方向並伴隨成交量變化。",
         "短線清算風險｜留意急漲急跌時合約清算與資金費率是否擴大，避免槓桿部位遭短線掃損。",
     ]
@@ -655,6 +680,8 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
         "slide_24h_conditions": slide_24h_conditions,
         "dca_slide_caption": dca_slide_caption,
         "dca_slide_body": dca_slide_body,
+        "angle_id": angle_id,
+        "angle_title": angle_title,
     }
     save_cached_script(result)
     return result

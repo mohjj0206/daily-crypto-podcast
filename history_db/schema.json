@@ -1,7 +1,7 @@
 {
-  "status": "skeleton",
-  "enabled": false,
-  "note": "正式每日學習尚未接入產片流程。欄位只定義未來 history_db 每日快照。",
+  "status": "phase-1",
+  "enabled": true,
+  "note": "正式產片成功後才寫 YYYY-MM-DD.json。不存逐字稿全文，不呼叫額外 API。",
   "daily_record": {
     "date": "YYYY-MM-DD",
     "market_snapshot": {},

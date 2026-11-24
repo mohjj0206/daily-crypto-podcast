@@ -172,7 +172,12 @@
       const x = Number(v);
       return Number.isFinite(x) ? x : null;
     };
-    const usd = (v) => "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const usd = (v) => {
+      const number = Number(v);
+      const rounded = Math.round(Math.abs(number));
+      const sign = number < 0 ? "-" : "";
+      return sign + "$" + rounded.toLocaleString("en-US");
+    };
     const btc = (v) => Number(v).toLocaleString("en-US", { minimumFractionDigits: 8, maximumFractionDigits: 8 });
     const pick = (obj, keys) => {
       for (const key of keys) {
@@ -314,7 +319,7 @@
             y: {
               ticks: {
                 color: "#94a3b8",
-                callback: (v) => "$" + Number(v).toLocaleString("en-US")
+                callback: (v) => usd(v)
               },
               grid: { color: "rgba(148,163,184,0.08)" }
             }

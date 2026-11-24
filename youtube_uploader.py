@@ -1,4 +1,5 @@
 import os
+import presentation
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -38,7 +39,7 @@ def _build_engagement_comment(cur_p, btc_pct, fng_num, show_dca):
     """根據當日行情產生一則互動二選一留言文字。"""
     if show_dca:
         return (
-            f"🐾 今天 BTC 站在 ${float(cur_p):,f}，DCA 帳本繼續紀律執行中！\n"
+            f"🐾 今天 BTC 站在 {presentation.format_usd(cur_p)}，DCA 帳本繼續紀律執行中！\n"
             "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://mohjj0206.github.io/daily-crypto-podcast/\n\n"
             "你這個月選擇「繼續定期定額、不管短線波動」還是「暫停一個月先觀望」？\n"
             "留言告訴比特汪與以太喵，讓我們一起追蹤你的策略！👇"
@@ -175,9 +176,9 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
 def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today_str):
     main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
     short_title = (
-        f"BTC ${cur_p}｜恐慌指數 {fng_num} 點，這個訊號別忽略！ #Shorts"
+        f"BTC {presentation.format_usd(cur_p)}｜恐慌指數 {fng_num} 點，這個訊號別忽略！ #Shorts"
         if fng_num is not None else
-        f"BTC ${cur_p}｜幣圈最新市場焦點與風險解析 #Shorts"
+        f"BTC {presentation.format_usd(cur_p)}｜幣圈最新市場焦點與風險解析 #Shorts"
     )
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"

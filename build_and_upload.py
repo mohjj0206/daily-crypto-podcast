@@ -7,6 +7,7 @@ import chart_maker
 import script_writer
 import media_engine
 import youtube_uploader
+import daily_learner
 
 
 def main():
@@ -39,6 +40,7 @@ def main():
     print("[1/5] 抓取即時市場數據、鏈上指標與最新新聞...")
     mdata = market_data.fetch_all_market_data(now_tw, is_test)
     dca_data = market_data.fetch_dca_data(mdata["spot_prices"]["BTC"], now_tw) if show_dca else {}
+    daily_learner.prepare_learning_insights()
 
     # ── 2. 生成各類數據視覺化圖表 ─────────────────────────────
     print("[2/5] 生成技術分析與走勢圖表...")
@@ -71,6 +73,7 @@ def main():
         )
     finally:
         tech_chart_dir.cleanup()
+    audit = daily_learner.audit_episode(sdata.get("full_script", ""), "subs.ass", is_test)
 
     # ── 5. 上傳 YouTube、發布留言與播放清單歸類 ───────────────
     print("[5/5] 上傳至 YouTube 並發布頻道互動...")
@@ -98,6 +101,13 @@ def main():
         today_str=today_str,
     )
 
+    daily_learner.archive_episode(
+        is_test=is_test,
+        upload_id=main_video_id,
+        mdata=mdata,
+        sdata=sdata,
+        audit=audit,
+    )
     print("=== 全流程執行完畢！ ===")
 
 

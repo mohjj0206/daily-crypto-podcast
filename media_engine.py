@@ -1459,13 +1459,13 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     ticker_items = [
         {
             "label": "BTC",
-            "value": f"${float(mdata['cur_p']):,.2f}",
+            "value": presentation.format_usd(mdata["cur_p"]),
             "detail": f"{mdata['btc_pct']:+.2f}% 24H",
             "tone": "positive" if mdata["btc_pct"] >= 0 else "negative",
         },
         {
             "label": "ETH",
-            "value": f"${mdata['spot_prices']['ETH']:,.2f}",
+            "value": presentation.format_usd(mdata["spot_prices"]["ETH"]),
             "detail": f"{mdata['eth_pct']:+.2f}% 24H",
             "tone": "positive" if mdata["eth_pct"] >= 0 else "negative",
         },
@@ -1836,7 +1836,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     td = ImageDraw.Draw(t_img)
     td.ellipse((87, 680, 438, 1031), outline="#fbbf24", width=6)
     metric_font = ImageFont.truetype(fp, round(27 * MAIN_OUTPUT_SCALE))
-    td.text((480, 711), f"BTC 即時價格　${mdata['cur_p']}", fill="#fbbf24", font=metric_font)
+    td.text((480, 711), f"BTC 即時價格　{presentation.format_usd(mdata['cur_p'])}", fill="#fbbf24", font=metric_font)
     td.text((480, 798), f"24H 漲跌　{'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%", fill="#38bdf8", font=metric_font)
     td.text(
         (480, 885),
@@ -1887,9 +1887,9 @@ def render_short_video(sdata, mdata, config):
         f"資料抓取時間：{mdata['data_fetched_at']}\n"
         f"頭條：{headline_for_short}\n"
         f"多空打折摘要：{sdata['slide_news'][0]}\n"
-        f"BTC：${mdata['cur_p']}，24H {'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%，"
-        f"100日均線 ${mdata['ma100d']}，200日均線 ${mdata['ma200d']}，RSI {mdata['btc_rsi']}\n"
-        f"ETH：${mdata['spot_prices']['ETH']:,.2f}，24H {'+' if mdata['eth_pct'] >= 0 else ''}{mdata['eth_pct']:.2f}%，"
+        f"BTC：{presentation.format_usd(mdata['cur_p'])}，24H {'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%，"
+        f"100日均線 {presentation.format_usd(mdata['ma100d'])}，200日均線 {presentation.format_usd(mdata['ma200d'])}，RSI {mdata['btc_rsi']}\n"
+        f"ETH：{presentation.format_usd(mdata['spot_prices']['ETH'])}，24H {'+' if mdata['eth_pct'] >= 0 else ''}{mdata['eth_pct']:.2f}%，"
         f"RSI {mdata['eth_rsi']}\n"
         + (
             f"恐慌與貪婪指數：{today_fng['value']}（{today_fng['value_classification']}）"
@@ -1911,7 +1911,7 @@ def render_short_video(sdata, mdata, config):
 
     if script_writer.reuse_script_enabled():
         raw_short_script = (
-            f"男：{headline_for_short}，比特幣現在 {mdata['cur_p']} 美元。\n"
+            f"男：{headline_for_short}，比特幣現在 {presentation.format_usd(mdata['cur_p'])}。\n"
             "女：風險仍在，完整解析請看今天的正片。"
         )
         print("[REUSE_SCRIPT] Shorts 使用快取頭條，不呼叫 Gemini。")
@@ -2129,10 +2129,10 @@ body {{
 <main class="panel">
   <div class="eyebrow">BTC 即時價格</div>
   <div class="symbol">BITCOIN　BTC</div>
-  <div class="price">${mdata['cur_p']}</div>
+  <div class="price">{presentation.format_usd(mdata['cur_p'])}</div>
   <section class="stats">
     <div class="stat"><strong>{mdata['btc_pct']:+.2f}%</strong><small>BTC 24H</small></div>
-    <div class="stat"><strong>${mdata['spot_prices']['ETH']:,.2f}</strong><small>ETH 現價</small></div>
+    <div class="stat"><strong>{presentation.format_usd(mdata['spot_prices']['ETH'])}</strong><small>ETH 現價</small></div>
     <div class="stat"><strong>{mdata['eth_pct']:+.2f}%</strong><small>ETH 24H</small></div>
     <div class="stat"><strong>{fear_value}</strong><small>恐懼貪婪・{fear_classification}</small></div>
   </section>
