@@ -11,6 +11,21 @@ def _write_metadata(section, title, description, mode):
         metadata_file.write(f"{section}說明欄與章節時間軸：\n{description}\n\n")
 
 
+def _print_studio_links(video_id):
+    text = str(video_id or "")
+    if not text or text.startswith(("TEST", "UPLOAD")):
+        return
+    print(f"影片連結：https://www.youtube.com/watch?v={text}")
+    print(f"後台編輯：https://studio.youtube.com/video/{text}/edit")
+
+
+def _playlist_permission_skip(error):
+    if "insufficientPermissions" in str(error):
+        print("播放清單權限不足（insufficientPermissions），略過。")
+        return True
+    return False
+
+
 def _record_upload_failure(asset, error):
     with open("UPLOAD_FAILED.flag", "a", encoding="utf-8") as flag_file:
         flag_file.write(f"{asset}：{type(error).__name__}: {error}\n")
@@ -72,7 +87,8 @@ def _resolve_playlist_id(youtube):
             if "幣看趨勢" in item["snippet"].get("title", ""):
                 return item["id"]
     except Exception as _pl_lookup_err:
-        print(f"查詢播放清單時發生錯誤（不影響主程式）：{_pl_lookup_err}")
+        if not _playlist_permission_skip(_pl_lookup_err):
+            print(f"查詢播放清單時發生錯誤（不影響主程式）：{_pl_lookup_err}")
     return None
 
 
@@ -112,6 +128,7 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
             _, res = req.next_chunk()
         video_id = res["id"]
         print("Uploaded Video ID:", video_id)
+        _print_studio_links(video_id)
     except Exception as err:
         _record_upload_failure("主片", err)
         if "uploadLimitExceeded" in str(err):
@@ -168,7 +185,8 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
         else:
             print("未設定 YOUTUBE_PLAYLIST_ID 且頻道內找不到含「幣看趨勢」的播放清單，略過自動歸類。")
     except Exception as _pl_err:
-        print(f"加入播放清單失敗（不影響主程式）：{_pl_err}")
+        if not _playlist_permission_skip(_pl_err):
+            print(f"加入播放清單失敗（不影響主程式）：{_pl_err}")
 
     return video_id
 
@@ -227,6 +245,7 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
             _, short_response = short_request.next_chunk()
         short_id = short_response["id"]
         print("Uploaded YouTube Short:", short_id)
+        _print_studio_links(short_id)
         return short_id
     except Exception as err:
         _record_upload_failure("Shorts", err)
@@ -300,6 +319,8 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
         youtube, rendered["output_path"], title, description,
         ["幣看深潛", "比特幣", "UTXO", "系統教學", tutorial.get("ep_id", "EP")],
     )
+    print("Uploaded Tutorial Video ID:", video_id)
+    _print_studio_links(video_id)
     if rendered.get("thumb_path") and os.path.exists(rendered["thumb_path"]):
         try:
             youtube.thumbnails().set(
@@ -314,7 +335,11 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
         "結構示意，不構成投資建議。\n#Shorts #幣看深潛 #比特幣"
     )
     try:
-        _insert_video(youtube, rendered["short_path"], short_title, short_description, ["Shorts", "幣看深潛"])
+        short_id = _insert_video(
+            youtube, rendered["short_path"], short_title, short_description, ["Shorts", "幣看深潛"]
+        )
+        print("Uploaded Tutorial Short:", short_id)
+        _print_studio_links(short_id)
     except Exception as error:
         _record_upload_failure("教學Shorts", error)
     try:
@@ -329,6 +354,7 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
             ).execute()
             print(f"已加入播放清單 {PLAYLIST_EVERGREEN}：{playlist_id}")
     except Exception as error:
-        print(f"加入教學播放清單失敗（不影響主片）：{error}")
+        if not _playlist_permission_skip(error):
+            print(f"加入教學播放清單失敗（不影響主片）：{error}")
     return video_id
 

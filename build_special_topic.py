@@ -1404,7 +1404,12 @@ def main():
         tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5,
     )
     youtube = youtube_uploader.build_youtube_client()
+    if is_test:
+        print("TEST_MODE=true，跳過教學長片與教學 Shorts 上傳。")
+    else:
+        print("TEST_MODE=false，上傳教學長片與教學 Shorts。")
     video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
+    youtube_uploader._print_studio_links(video_id)
     if not is_test and video_id and not str(video_id).startswith(("TEST", "UPLOAD")):
         mark_evergreen_complete(lesson)
     else:
