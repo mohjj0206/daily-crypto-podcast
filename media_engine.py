@@ -450,7 +450,6 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
             chart_markup = (
                 '<div class="visual gauge">'
                 '<div class="gauge-title">市場情緒指數</div>'
-                '<div class="gauge-value">本次未取得通過時效驗證的資料</div>'
                 '</div>'
             )
         else:
@@ -1396,11 +1395,10 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             )
         else:
             sentiment_slide = (
-                f"今日：{fng_num}（{today_fng['value_classification']}）\n"
-                "昨日資料未取得，略過日變化比較。"
+                f"今日：{fng_num}（{today_fng['value_classification']}）"
             )
     else:
-        sentiment_slide = "本次未取得通過新鮮度驗證的指數資料，略過數值與方向判讀。"
+        sentiment_slide = ""
 
     slide_news_details = sdata["slide_news_details"]
     slide_news = sdata["slide_news"]
@@ -1470,16 +1468,15 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             "detail": f"{mdata['eth_pct']:+.2f}% 24H",
             "tone": "positive" if mdata["eth_pct"] >= 0 else "negative",
         },
-        {
+    ]
+    if fng_num is not None:
+        ticker_items.append({
             "label": "恐慌貪婪指數",
-            "value": str(fng_num) if fng_num is not None else "未取得",
-            "detail": (
-                str(today_fng["value_classification"])
-                if today_fng else "資料未通過時效驗證"
-            ),
+            "value": str(fng_num),
+            "detail": str(today_fng["value_classification"]) if today_fng else "",
             "tone": fng_tone,
-        },
-        {
+        })
+    ticker_items.append({
             "label": "DCA 實戰帳本",
             "value": (
                 presentation.format_metric(dca_return_pct, "percent")
@@ -1493,12 +1490,11 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 "neutral" if dca_return_pct is None
                 else "positive" if float(dca_return_pct) >= 0 else "negative"
             ),
-        },
-    ]
+        })
     mvrv_info = mdata.get("mvrv") or {}
     slide_insights = {
         "mvrv": presentation.format_metric(mvrv_info["value"], "ratio") if mvrv_info.get("value") is not None else "—",
-        "zone": mvrv_info.get("zone", "未取得"),
+        "zone": mvrv_info.get("zone") or "—",
         "mvrv_pct": mvrv_info.get("bar_pct", 40),
         "support": presentation.format_metric(mdata["btc_metrics"]["support"], "price"),
         "resistance": presentation.format_metric(mdata["btc_metrics"]["resistance"], "price"),
@@ -1839,13 +1835,13 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     metric_font = ImageFont.truetype(fp, round(27 * MAIN_OUTPUT_SCALE))
     td.text((480, 711), f"BTC 即時價格　{presentation.format_usd(mdata['cur_p'])}", fill="#fbbf24", font=metric_font)
     td.text((480, 798), f"24H 漲跌　{'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%", fill="#38bdf8", font=metric_font)
-    td.text(
-        (480, 885),
-        f"恐慌貪婪指數　{fng_num if fng_num is not None else '未取得'}"
-        f"{' / 100' if fng_num is not None else ''}",
-        fill="#cbd5e1",
-        font=metric_font,
-    )
+    if fng_num is not None:
+        td.text(
+            (480, 885),
+            f"恐慌貪婪指數　{fng_num} / 100",
+            fill="#cbd5e1",
+            font=metric_font,
+        )
     if os.path.exists("avatar.png"):
         with Image.open("avatar.png") as avatar:
             avatar = avatar.convert("RGBA").resize((645, 645), Image.LANCZOS)
@@ -2026,11 +2022,14 @@ def render_short_video(sdata, mdata, config):
         f'<li style="--delay:{index * 0.6:.1f}s">{highlight}</li>'
         for index, highlight in enumerate(short_highlights)
     )
-    fear_value = html.escape(str(today_fng["value"])) if today_fng else "未取得"
-    fear_classification = (
-        html.escape(str(today_fng["value_classification"]))
-        if today_fng else "資料未通過時效驗證"
-    )
+    fear_stat = ""
+    if today_fng:
+        fear_value = html.escape(str(today_fng["value"]))
+        fear_classification = html.escape(str(today_fng["value_classification"]))
+        fear_stat = (
+            f'<div class="stat"><strong>{fear_value}</strong>'
+            f"<small>恐懼貪婪・{fear_classification}</small></div>"
+        )
 
     short_html = f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
@@ -2135,7 +2134,7 @@ body {{
     <div class="stat"><strong>{mdata['btc_pct']:+.2f}%</strong><small>BTC 24H</small></div>
     <div class="stat"><strong>{presentation.format_usd(mdata['spot_prices']['ETH'])}</strong><small>ETH 現價</small></div>
     <div class="stat"><strong>{mdata['eth_pct']:+.2f}%</strong><small>ETH 24H</small></div>
-    <div class="stat"><strong>{fear_value}</strong><small>恐懼貪婪・{fear_classification}</small></div>
+    {fear_stat}
   </section>
   <ul class="points">{highlights_markup}</ul>
 </main>

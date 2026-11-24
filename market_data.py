@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import json
@@ -945,7 +946,7 @@ def fetch_onchain_activity_metrics():
 
 def describe_long_short_ratio(metric):
     if metric is None:
-        return "未取得通過時效驗證的公開多空比資料，略過，不推測"
+        return ""
     ratio = metric["ratio"]
     direction = "偏多" if ratio > 1 else "偏空" if ratio < 1 else "中性"
     return (
@@ -956,12 +957,17 @@ def describe_long_short_ratio(metric):
 
 def format_trader_position_report(metrics):
     if not metrics:
-        return "未取得通過時效驗證的多空比資料，略過，不推測。"
+        return ""
     reports = [
-        describe_long_short_ratio(metrics.get("all_accounts")),
-        describe_long_short_ratio(metrics.get("top_accounts")),
-        describe_long_short_ratio(metrics.get("top_positions")),
+        text for text in (
+            describe_long_short_ratio(metrics.get("all_accounts")),
+            describe_long_short_ratio(metrics.get("top_accounts")),
+            describe_long_short_ratio(metrics.get("top_positions")),
+        )
+        if text
     ]
+    if not reports:
+        return ""
     return (
         "；".join(reports)
         + "。前列交易者是交易所排名代理，不等同所有鏈上巨鯨；"
@@ -971,7 +977,7 @@ def format_trader_position_report(metrics):
 
 def format_spot_volume_report(metrics):
     if metrics is None:
-        return "未取得足夠且新鮮的 OKX BTC 現貨成交量資料，略過，不推測。"
+        return ""
     activity = (
         "放量下跌"
         if metrics["price_change_pct"] < 0 and metrics["volume_change_pct"] >= 20
@@ -991,7 +997,6 @@ def format_onchain_activity_report(metrics):
     for key in ("estimated_transfer_volume", "transaction_count"):
         metric = metrics.get(key) if metrics else None
         if metric is None:
-            reports.append("未取得足夠的新鮮鏈上歷史資料，略過，不推測")
             continue
         if key == "estimated_transfer_volume":
             value_text = f"估算鏈上交易量日均 US${metric['recent_average']:,.0f}"
@@ -1001,6 +1006,8 @@ def format_onchain_activity_report(metrics):
             f"{value_text}，較前30日 {metric['change_pct']:+.2f}%"
             f"（截至 {metric['end_date']}）"
         )
+    if not reports:
+        return ""
     return (
         "；".join(reports)
         + "。這些是全網活動代理，無法識別地址身分或判定交易所淨流入／流出。"
@@ -1008,15 +1015,12 @@ def format_onchain_activity_report(metrics):
 
 
 def format_chip_sentiment_report(fng_value, market_structure, spot_volume):
-    if fng_value is None:
-        return "恐慌貪婪指數未取得，無法做情緒交叉判讀。"
-    if market_structure is None:
-        return "近期回撤資料未取得，無法做情緒交叉判讀。"
+    if fng_value is None or market_structure is None:
+        return ""
     drawdown_pct = market_structure["current_drawdown_pct"]
     if spot_volume is None:
         return (
-            f"恐慌貪婪指數 {fng_value}；目前相對90日高點回撤 {drawdown_pct:.2f}%；"
-            "現貨成交量資料不足，無法區分放量恐慌或縮量沉澱。"
+            f"恐慌貪婪指數 {fng_value}；目前相對90日高點回撤 {drawdown_pct:.2f}%。"
         )
     volume_change_pct = spot_volume["volume_change_pct"]
     if fng_value <= 24 and drawdown_pct <= -10 and volume_change_pct >= 20:
@@ -1120,24 +1124,24 @@ def format_market_structure_report(name, metrics, spot_price):
 
 
 def format_stablecoin_market_cap_report(changes):
-    if changes is None:
-        return "未取得通過時效與資料驗證的穩定幣市值資料，略過，不推測。"
+    if not changes:
+        return ""
     reports = []
     for days in (7, 30):
         change = changes.get(days)
         if change is None:
-            reports.append(f"近{days}日資料不足，略過")
             continue
         direction = "增加" if change["change_amount"] >= 0 else "減少"
         reports.append(
             f"近{days}日{direction} US${abs(change['change_amount']):,.0f}"
             f"（{change['change_pct']:+.2f}%）"
         )
+    if not reports:
+        return ""
     return (
-        f"截至 {max(item['end_date'] for item in changes.values())}："
+        f"截至 {max(item['end_date'] for item in changes.values() if item)}："
         + "；".join(reports)
         + "。市值變化不等同於實際流入加密資產。"
-        if changes else "未取得足夠的穩定幣歷史資料，略過，不推測。"
     )
 
 
@@ -1146,7 +1150,7 @@ def format_oversold_report(events, rsi_series):
         (value for value in reversed(rsi_series) if value is not None), None
     )
     if latest_rsi is None:
-        return "14日 RSI 資料不足，略過超賣判讀。"
+        return ""
     event_dates = "、".join(
         f"{event['start_date']}（低點 {event['low_date']}，RSI {event['low_rsi']:.1f}）"
         for event in events
@@ -1581,6 +1585,111 @@ def fetch_dca_data(current_btc_usd, now_tw):
     }
 
 
+CUSTOM_SOURCES_PATH = os.path.join("knowledge_base", "custom_sources.json")
+
+
+def _html_to_text(raw):
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw or "")
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _load_enabled_custom_sources():
+    try:
+        with open(CUSTOM_SOURCES_PATH, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print(f"custom_sources.json 未讀入，外部參考留空：{error}")
+        return []
+    items = payload if isinstance(payload, list) else []
+    if isinstance(payload, dict):
+        items = payload.get("sources") or []
+    enabled = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("enabled") is not True:
+            continue
+        if not str(item.get("url") or "").strip():
+            continue
+        enabled.append(item)
+    enabled.sort(key=lambda item: int(item.get("priority") or 100))
+    return enabled
+
+
+def _custom_rss_items(source, tw_tz, now_utc):
+    url = str(source["url"])
+    feed = feedparser.parse(fetch_bytes(url, timeout=20, cache_bust_param=None))
+    cutoff = now_utc - timedelta(hours=48)
+    found = []
+    for entry in feed.entries:
+        published_at = published_datetime(entry, tw_tz)
+        if published_at is None:
+            continue
+        published_utc = published_at.astimezone(timezone.utc)
+        if published_utc > now_utc or published_utc < cutoff:
+            continue
+        if is_pure_ai_news(entry) or not is_core_crypto_news(entry):
+            continue
+        title = _html_to_text(str(entry.get("title") or ""))
+        summary = _html_to_text(
+            str(entry.get("summary") or entry.get("description") or "")
+        )
+        name = str(source.get("name") or "")
+        if name:
+            title = re.sub(re.escape(name), "", title, flags=re.I).strip()
+            summary = re.sub(re.escape(name), "", summary, flags=re.I).strip()
+        excerpt = summary[:2500].strip()
+        if len(title) < 4 and len(excerpt) < 40:
+            continue
+        found.append({
+            "title": title[:120],
+            "excerpt": excerpt or title,
+        })
+        if len(found) >= 3:
+            break
+    return found
+
+
+def _custom_webpage(source):
+    raw = fetch_bytes(str(source["url"]), timeout=20, cache_bust_param=None)
+    text = _html_to_text(raw.decode("utf-8", errors="ignore"))
+    name = str(source.get("name") or "")
+    if name:
+        text = re.sub(re.escape(name), "", text, flags=re.I).strip()
+    excerpt = text[:2500].strip()
+    if len(excerpt) < 80:
+        return None
+    if len(excerpt) > 2500:
+        excerpt = excerpt[:2500]
+    title = str(source.get("note") or "研究頁正文").strip()
+    title = re.sub(re.escape(name), "", title, flags=re.I).strip() if name else title
+    return {"title": title[:80] or "研究頁正文", "excerpt": excerpt}
+
+
+def fetch_custom_sources(tw_tz=None):
+    """讀取 enabled 的自訂 RSS 與網頁，整理成不含站名的背景參考。失敗的來源直接跳過。"""
+    if tw_tz is None:
+        tw_tz = ZoneInfo("Asia/Taipei")
+    now_utc = datetime.now(timezone.utc)
+    references = []
+    for source in _load_enabled_custom_sources():
+        kind = str(source.get("type") or "").strip().lower()
+        source_id = source.get("id") or source.get("url")
+        try:
+            if kind == "rss":
+                references.extend(_custom_rss_items(source, tw_tz, now_utc))
+            elif kind == "webpage":
+                page = _custom_webpage(source)
+                if page:
+                    references.append(page)
+            else:
+                print(f"custom source {source_id} 類型不支援，已跳過。")
+        except Exception as error:
+            print(f"custom source {source_id} 已跳過：{error}")
+    print(f"custom sources：啟用來源整理出 {len(references)} 則背景參考。")
+    return references[:8]
+
+
 # ── 主流程：彙總所有市場數據 ──────────────────────────────────────────
 
 def fetch_all_market_data(now_tw, is_test):
@@ -1667,6 +1776,7 @@ def fetch_all_market_data(now_tw, is_test):
 
     mvrv = fetch_mvrv(btc_metrics.get("current_drawdown_pct"))
     dca_snapshot = load_dca_usd_snapshot(spot_prices["BTC"])
+    custom_references = fetch_custom_sources(tw_tz)
 
     coins_lines = []
     for name, (cl, pct, rsi) in cdata.items():
@@ -1683,7 +1793,7 @@ def fetch_all_market_data(now_tw, is_test):
             f" / 昨日 {yest_fng['value']} ({yest_fng['value_classification']})"
             if yest_fng else ""
         )
-        if today_fng else "本次未取得通過新鮮度驗證的指數資料，請略過此項，不得推測數值"
+        if today_fng else ""
     )
 
     s1 = (
@@ -1739,4 +1849,5 @@ def fetch_all_market_data(now_tw, is_test):
         "eth_slide": eth_slide,
         "mvrv": mvrv,
         "dca_snapshot": dca_snapshot,
+        "custom_references": custom_references,
     }

@@ -45,9 +45,9 @@ def _build_engagement_comment(cur_p, btc_pct, fng_num, show_dca):
             "留言告訴比特汪與以太喵，讓我們一起追蹤你的策略！👇"
         )
     direction = "強勢上漲" if btc_pct >= 1.5 else ("明顯回落" if btc_pct <= -1.5 else "橫盤震盪")
+    fear_clause = f"，恐慌貪婪指數 {fng_num}" if fng_num is not None else ""
     return (
-        f"🐾 今天 BTC {direction}（{btc_pct:+.2f}%），恐慌貪婪指數 "
-        f"{fng_num if fng_num is not None else '資料未取得'}！\n"
+        f"🐾 今天 BTC {direction}（{btc_pct:+.2f}%）{fear_clause}！\n"
         "你現在的策略是「繼續紀律定投、逢低加碼」還是「空手觀望、等待更明確訊號」？\n"
         "留言告訴比特汪與以太喵！👇 #幣看趨勢"
     )

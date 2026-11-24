@@ -13,6 +13,7 @@ DATE_FILE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
 MONEY_DECIMAL = re.compile(r"(?:US)?\$\s*-?\d[\d,]*\.\d+(?![TBM])")
 CURRENCY_WORD = re.compile(r"台幣|新台幣|NT\$|\bTWD\b", re.I)
 WRONG_HOST = re.compile(r"比特王|比特旺|比特網|以太貓|以太猫")
+SYSTEM_LEAK = re.compile(r"抓不到|無法取得|資料缺失|數據缺失|連線失敗|API\s*異常")
 KEYWORD = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]{2,}")
 STOPWORDS = {"今日", "市場", "比特", "幣看", "趨勢", "分析", "解析"}
 
@@ -151,6 +152,8 @@ def audit_episode(script, subtitle_path, is_test):
     combined = text if subtitle_lines is None else text + "\n" + "\n".join(subtitle_lines)
     if CURRENCY_WORD.search(combined):
         warnings.append("出現台幣或 TWD")
+    if SYSTEM_LEAK.search(combined):
+        warnings.append("系統露餡：提到抓不到、無法取得、資料缺失或連線失敗")
     if MONEY_DECIMAL.search(combined):
         warnings.append("美元金額仍帶小數")
     for term in presentation.EXCLUDED_PLATFORMS:
@@ -178,7 +181,7 @@ def audit_episode(script, subtitle_path, is_test):
     for warning in warnings:
         if warning.startswith("出現台幣"):
             score -= 25
-        elif warning.startswith("美元金額"):
+        elif warning.startswith("美元金額") or warning.startswith("系統露餡"):
             score -= 20
         elif warning.startswith("字數"):
             score -= 20

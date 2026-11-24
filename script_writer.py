@@ -14,6 +14,67 @@ from presentation import EXCLUDED_PLATFORMS, format_usd, sanitize_text
 
 # ── 文字清理與格式工具 ──────────────────────────────────────────
 
+INCOMPLETE_METRIC = re.compile(
+    r"抓不到|無法取得|資料缺失|數據缺失|連線失敗|API\s*異常|"
+    r"未取得|資料不足|數據不足|略過此項|略過，不推測|略過超賣|"
+    r"請略過|不得推測|無法做情緒|無法區分|所以不預測"
+)
+LEAK_SENTENCE = re.compile(
+    r"抓不到|無法取得|資料缺失|數據缺失|連線失敗|API\s*異常|"
+    r"未取得|資料不足|數據不足|所以不預測|接口異常|系統缺漏"
+)
+
+
+def present_metric(text):
+    """資料摘要只留下完整數值。缺項整句拿掉，不把缺漏原因送進模型。"""
+    kept = []
+    for piece in re.split(r"(?<=[；。])", str(text or "")):
+        if not piece.strip() or INCOMPLETE_METRIC.search(piece):
+            continue
+        kept.append(piece)
+    return "".join(kept).strip()
+
+
+def silence_gap_leaks(text):
+    """口播、標題與兩欄摘要若說出系統缺漏，刪掉該句。"""
+    lines = []
+    for raw in str(text or "").splitlines():
+        pieces = re.split(r"(?<=[。！？；])", raw)
+        kept = [piece for piece in pieces if piece.strip() and not LEAK_SENTENCE.search(piece)]
+        line = "".join(kept).strip()
+        if re.fullmatch(r"(?:男|女)[：:]\s*(?:\[[^\]]+\])?\s*", line):
+            continue
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _metric_bullet(label, value):
+    text = present_metric(value)
+    if not text:
+        return None
+    return f"- {label}：{text}"
+
+
+def _custom_reference_block(references):
+    lines = []
+    for item in references or []:
+        if not isinstance(item, dict):
+            continue
+        title = present_metric(item.get("title") or "")
+        excerpt = present_metric(item.get("excerpt") or "")
+        if not title and not excerpt:
+            continue
+        lines.append(f"{len(lines) + 1}. {title}\n{excerpt[:2200]}")
+    if not lines:
+        return ""
+    return (
+        "【外部背景參考】以下內容只供消化成自己的分析。"
+        "禁止唸出網站、媒體、作者或網址。\n"
+        + "\n\n".join(lines)
+    )
+
+
 def clean_txt(s):
     s = re.sub(r'(?:〈.*?〉)?這篇文章最早(?:發佈|出現)於.*', '', s or '')
     s = re.sub(r'(?:延伸閱讀|版權所有|copyright|©).*', '', s, flags=re.I)
@@ -470,25 +531,36 @@ def generate_script(mdata, dca_data, config):
     dca_report = dca_data.get("dca_report", "")
     dca_slide_body = dca_data.get("dca_slide_body", "")
 
+    metric_lines = [
+        f"- BTC 即時報價：{format_usd(cur_p)} USD (24H: {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%)",
+        f"- 短中期均線：100日 {format_usd(ma100d)} | 200日 {format_usd(ma200d)}",
+        f"- 長期週線：100週 {format_usd(ma100w)} | 200週 {format_usd(ma200w)}",
+    ]
+    for label, value in (
+        ("波段結構", mdata.get("btc_technical_report")),
+        ("ETH 波段結構", mdata.get("eth_technical_report")),
+        ("BTC RSI 歷史", mdata.get("btc_oversold_report")),
+        ("全網穩定幣總市值變化", mdata.get("stablecoin_report")),
+        ("大戶與全體帳戶持倉代理", mdata.get("trader_position_report")),
+        ("近30日現貨成交量", mdata.get("spot_volume_report")),
+        ("鏈上轉帳活躍度代理", mdata.get("onchain_activity_report")),
+        ("恐慌、回撤與成交量交叉判讀", mdata.get("chip_sentiment_report")),
+        ("市場恐慌與貪婪指數", mdata.get("fear_report")),
+        ("MVRV", (mdata.get("mvrv") or {}).get("report")),
+    ):
+        bullet = _metric_bullet(label, value)
+        if bullet:
+            metric_lines.append(bullet)
+    reference_block = _custom_reference_block(mdata.get("custom_references"))
     full_report = (
         f"【今日日期】：{today_str}\n【數據抓取時間】：{mdata['data_fetched_at']}\n"
         "【比特幣核心技術指標】\n"
-        f"- BTC 即時報價：{format_usd(cur_p)} USD (24H: {'+' if btc_pct >= 0 else ''}{btc_pct:.2f}%)\n"
-        f"- 短中期均線：100日 {format_usd(ma100d)} | 200日 {format_usd(ma200d)}\n"
-        f"- 長期週線：100週 {format_usd(ma100w)} | 200週 {format_usd(ma200w)}\n"
-        f"- 波段結構：{mdata['btc_technical_report']}\n"
-        f"- ETH 波段結構：{mdata['eth_technical_report']}\n"
-        f"- BTC RSI 歷史：{mdata['btc_oversold_report']}\n"
-        f"- 全網穩定幣總市值變化：{mdata['stablecoin_report']}\n"
-        f"- 大戶與全體帳戶持倉代理：{mdata['trader_position_report']}\n"
-        f"- 近30日現貨成交量：{mdata['spot_volume_report']}\n"
-        f"- 鏈上轉帳活躍度代理：{mdata['onchain_activity_report']}\n"
-        f"- 恐慌、回撤與成交量交叉判讀：{mdata['chip_sentiment_report']}\n"
-        f"- 市場恐慌與貪婪指數：{mdata['fear_report']}\n"
-        f"- {mdata.get('mvrv', {}).get('report', 'MVRV 未取得')}\n\n"
-        f"{dca_report}\n\n【主流幣即時報價與RSI掃描】\n{mdata['coins_summary']}\n\n"
+        + "\n".join(metric_lines)
+        + f"\n\n{dca_report}\n\n【主流幣即時報價與RSI掃描】\n{mdata['coins_summary']}\n\n"
         f"【近36小時通過時效驗證的新聞】\n{news_list}"
     )
+    if reference_block:
+        full_report += "\n\n" + reference_block
     full_report = sanitize_text(full_report)
 
     dca_performance_state = ""
@@ -584,21 +656,25 @@ def generate_script(mdata, dca_data, config):
     host_persona_guidance = """女聲「以太喵」（cmn-TW-Wavenet-A）自稱「本喵」或「以太喵」：冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗；熟悉以太坊技術升級、Layer 2、DeFi與RWA。她負責精準拆解價格結構圖與RSI圖，報出回撤天數與幅度、30日支撐壓力、相對100日及200日線乖離、歷史超賣區段，以及穩定幣總市值變化；籌碼面則客觀對照公開交易所的全體帳戶、前列交易者帳戶與持倉多空比、近30日現貨成交額，以及公開鏈上統計的估算交易量與筆數。說明多空比是平台倉位代理、鏈上統計不能辨識地址身分或交易所淨流向；只依本次數據判讀短線成交量與情緒，不將「散戶割肉」或「巨鯨吸籌」說成已證實事實。市場劇本須分別說明站穩壓力或跌破支撐後可驗證的條件，不把指標當成必然預測，並替激動的比特汪踩煞車。
 男聲「比特汪」（cmn-TW-Wavenet-B）自稱「本汪」或「比特汪」：熱情直率、容易激動，自然使用「汪嗚」「本汪」「別汪想」等狗語梗；重視BTC長期週期與紀律定投。接住以太喵的數據，用白話說明短線交易者可能退場、長期參與者可能較不活躍，但不得宣稱巨鯨必然吸籌或敦促觀眾把便宜籌碼交給特定族群。以不猜最低點、不追短線、不碰高槓桿為原則，提醒按個人預算與風險承受能力維持或調整分批計畫；不得保證獲利、回本或週期必然翻正。節目角色設定中的每月定投帳本是模擬紀錄，並非真實成交。
 兩人分別代表「數位黃金派」與「世界計算機生態派」，互相尊重、立場互補，自然吐槽、穿插幣圈冷笑話與台灣網路梗；以太喵以數據幫比特汪踩煞車。口播禁止使用HODL、HODLer等縮寫，一律自然說「長期持有」或「長期持有者」。若今日不是DCA播報日，勿主動插入帳本環節；只有在指定DCA環節才可報帳本數字。"""
-    strategy_script_guidance = """【分析順序與雙人分工】全節目以「數據拆解 → 條件式策略劇本 → 長期定投心法」推進。以太喵先依本次報告讀出BTC與ETH結構數據，並說明RSI超賣區段只是歷史動能訊號；穩定幣市值增加或減少不等於資金已買入或賣出BTC。籌碼面須報出可用的全體帳戶與前列交易者多空比、近30日現貨成交量變化及鏈上活躍度變化；分清「放量下跌」與「縮量下跌」，並依恐慌貪婪值、90日回撤及成交額變化交叉描述恐慌換手或縮量沉澱。若某項未取得便明說略過，不補值。這些指標都是代理資料，不能據此確定散戶正在割肉、巨鯨正在吸籌，或長期持有者惜售。接著以太喵提出兩種條件式劇本：若價格站穩30日壓力並有後續價格確認，描述可能改善的結構；若跌破30日支撐，說明回撤風險仍在及需觀察的後續訊號。不可捏造支撐、壓力或確認條件。比特汪以白話總結短線交易者可能退場、長期參與者可能較少換手，但必須標明這不是對巨鯨吸籌的證明；提醒觀眾勿在恐慌中衝動改變計畫，從長期週期談紀律定投、不猜最低點。超賣不保證反彈，歷史表現不保證未來；定期定額須符合個人預算與風險承受度，不可催促觀眾買進。"""
+    strategy_script_guidance = """【分析順序與雙人分工】全節目以「數據拆解 → 條件式策略劇本 → 長期定投心法」推進。以太喵只讀本次資料區已經列出的 BTC 與 ETH 結構數字，並說明 RSI 超賣區段只是歷史動能訊號；穩定幣市值增加或減少不等於資金已買入或賣出 BTC。資料區有列出的全體帳戶、前列交易者多空比、近30日現貨成交量與鏈上活躍度才可以報；分清「放量下跌」與「縮量下跌」，並依已列出的恐慌貪婪值、90日回撤及成交額變化交叉描述恐慌換手或縮量沉澱。資料區沒有的指標直接不存在，整段不要提，不要解釋原因，不要補值。這些指標都是代理資料，不能據此確定散戶正在割肉、巨鯨正在吸籌，或長期持有者惜售。接著以太喵提出兩種條件式劇本：若價格站穩30日壓力並有後續價格確認，描述可能改善的結構；若跌破30日支撐，說明回撤風險仍在及需觀察的後續訊號。不可捏造支撐、壓力或確認條件。比特汪以白話總結短線交易者可能退場、長期參與者可能較少換手，但必須標明這不是對巨鯨吸籌的證明；提醒觀眾勿在恐慌中衝動改變計畫，從長期週期談紀律定投、不猜最低點。超賣不保證反彈，歷史表現不保證未來；定期定額須符合個人預算與風險承受度，不可催促觀眾買進。"""
 
     angle_title, vocab_line, recent_angles, angle_id = load_show_angle()
     learning_line = _learning_prompt_line()
     banned_terms = "、".join(EXCLUDED_PLATFORMS)
-    mvrv_line = mdata.get("mvrv", {}).get("report", "MVRV 未取得")
+    mvrv_line = present_metric((mdata.get("mvrv") or {}).get("report"))
+    mvrv_prompt = (
+        f"【MVRV】{mvrv_line}。必須說出數值與區間判讀，並聲明它不是買賣指令。\n"
+        if mvrv_line else ""
+    )
     p1_prompt = f"""你是財經播客【幣看趨勢】主編。請只寫前半段逐字稿，總長度{target_words}，{"測試模式合計約1分鐘內。" if is_test else "正式版整集兩段合計至少5,200字、以1.2倍速達15至18分鐘。"}
 【今日切入視角】{angle_title}。近 7 日已用視角（今日必須避開）：{recent_angles}。
 【自檢差異化】{learning_line}
 【可自然帶入的術語】{vocab_line}
-【MVRV】{mvrv_line}。必須說出數值與區間判讀，並聲明它不是買賣指令。
-【幣別】所有價格、市值、成交量、定投投入、總值與損益只准使用美元，禁止台幣、NT$、TWD。直接以美元報出的金額一律四捨五入到整數並加千分位，例如 $95,421、-$836，禁止 $95,420.50 這類小數金額。百分比、MVRV、RSI 與 BTC 顆數維持原有小數。
+{mvrv_prompt}【幣別】所有價格、市值、成交量、定投投入、總值與損益只准使用美元，禁止台幣、NT$、TWD。直接以美元報出的金額一律四捨五入到整數並加千分位，例如 $95,421、-$836，禁止 $95,420.50 這類小數金額。百分比、MVRV、RSI 與 BTC 顆數維持原有小數。
 【情緒標記】每一句以「男：」或「女：」開頭的口播，在角色名後可先放一個標籤 [excited]、[serious]、[analytical] 或 [debate]，標籤本身不要念出來。暴跌與風險用 serious，突破與強勢用 excited，拆數字用 analytical，兩人交鋒用 debate。
 【禁忌詞】旁白不得出現：{banned_terms}。角色名只能是比特汪與以太喵。
-【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、多空比、現貨成交量、鏈上活躍度、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。任何欄位若標示未取得或不存在，直接略過，不猜測、不補值、不編造。新聞只可引用有發布時間標記的素材。
+【缺項靜默】下方資料區只會出現今天真正拿到的完整數據。沒有列出的指標就當作不存在，直接圍繞已列出的數字、新聞與背景參考做深度分析。逐字稿、標題、兩欄摘要都禁止出現「抓不到資料」「無法取得數據」「API 異常」「數據缺失」「資料缺失」「連線失敗」「所以不預測」這類暴露系統缺漏的句子，也不要改寫成同義句。禁止猜測、補值或編造。
+【資料依循最高優先級】所有價格、漲跌幅、均線、RSI、多空比、現貨成交量、鏈上活躍度、恐慌貪婪指數與新聞事件，只能依據下方本次資料及其抓取時間播報；嚴禁使用預訓練記憶補入價格、事件日期或新聞。新聞只可引用有發布時間標記的素材。若有外部背景參考，只消化成自己的分析，禁止唸出網站、媒體、作者或網址。
 {full_report}
 【雙人角色與互動】{host_persona_guidance}
 {strategy_script_guidance}
@@ -664,12 +740,18 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
     slide_news_details = align_slide_news_with_dialogue(
         slide_news_details, part1_raw, news_slide_numbers, entries
     )
+    for item in slide_news_details:
+        item["slide_title"] = silence_gap_leaks(item.get("slide_title"))
+        item["positive"] = silence_gap_leaks(item.get("positive"))
+        item["risk"] = silence_gap_leaks(item.get("risk"))
     slide_news = [
         f"利多：{item['positive']}；風險：{item['risk']}"
         for item in slide_news_details
     ]
     t_match = re.search(r'^標題[：:]\s*(.+)', part1_raw, re.M)
-    ai_title = sanitize_text(t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC {format_usd(cur_p)}｜主流幣均線攻防與恐慌指數全解析")
+    ai_title = silence_gap_leaks(sanitize_text(t_match.group(1).strip().replace('「', '').replace('」', '') if t_match else f"BTC {format_usd(cur_p)}｜主流幣均線攻防與恐慌指數全解析"))
+    if not ai_title:
+        ai_title = f"BTC {format_usd(cur_p)}｜主流幣均線攻防與恐慌指數全解析"
     video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
     part2_raw = normalize_long_term_terms(part2_text)
@@ -681,6 +763,16 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
     slide_24h_conditions, part2_raw = extract_slide_notes(
         part2_raw, "SLIDE_WEEK", default_24h_conditions
     )
+    part1_raw = silence_gap_leaks(part1_raw)
+    part2_raw = silence_gap_leaks(part2_raw)
+    cleaned_week = []
+    for index, item in enumerate(slide_24h_conditions):
+        cleaned = silence_gap_leaks(item)
+        if cleaned:
+            cleaned_week.append(cleaned)
+        elif index < len(default_24h_conditions):
+            cleaned_week.append(default_24h_conditions[index])
+    slide_24h_conditions = cleaned_week or list(default_24h_conditions)
 
     full_script = re.sub(r'^標題[：:].*\n?', '', part1_raw, flags=re.M) + "\n" + part2_raw
 
@@ -744,8 +836,12 @@ def _normalize_tutorial(payload, lesson):
     for index, item in enumerate(raw_sections):
         if not isinstance(item, dict):
             raise ValueError("tutorial section is not an object")
-        narration = normalize_long_term_terms(str(item.get("narration") or ""))
-        bullets = [str(bullet).strip() for bullet in (item.get("bullets") or []) if str(bullet).strip()]
+        narration = silence_gap_leaks(normalize_long_term_terms(str(item.get("narration") or "")))
+        bullets = [
+            silence_gap_leaks(str(bullet).strip())
+            for bullet in (item.get("bullets") or [])
+            if silence_gap_leaks(str(bullet).strip())
+        ]
         lines = _dialogue_lines(narration)
         if not lines:
             raise ValueError(f"tutorial section {index + 1} has no dialogue")
@@ -812,7 +908,7 @@ def generate_tutorial_script(lesson, reference_note, config):
 資料邊界：{reference_note}
 {length_rule}
 五段順序必須是：1 好奇提問與痛點鉤子；2 生活化白話比喻；3 鏈上或指標原理拆解；4 歷史週期實證；5 實戰啟示與三大誤區。
-鐵律：繁體中文。角色只有比特汪與以太喵，台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤不要念出來。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。
+鐵律：繁體中文。角色只有比特汪與以太喵，台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤不要念出來。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：
 {{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"short_script":"男：...\\n女：..."}}
 sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
