@@ -2629,7 +2629,10 @@ def _render_tutorial_short(tutorial):
             image.convert("RGBA").save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode("ascii")
 
-    host_assets = create_speaker_avatars()
+    host_assets = create_speaker_avatars({
+        "cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
+        "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None,
+    })
     hosts = [
         f'<img class="host cat" alt="" src="data:image/png;base64,{png_data(host_assets["cat_idle"])}">',
         f'<img class="host dog" alt="" src="data:image/png;base64,{png_data(host_assets["dog_idle"])}">',
