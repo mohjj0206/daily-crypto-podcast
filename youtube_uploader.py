@@ -76,6 +76,90 @@ def _fail_upload(asset, error):
     raise error
 
 
+def _is_auth_error(error):
+    text = f"{type(error).__name__}: {error}"
+    if type(error).__name__ == "RefreshError":
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "invalid_grant",
+            "invalid_client",
+            "invalid_rapt",
+            "unauthorized_client",
+            "Invalid Credentials",
+            "authError",
+        )
+    )
+
+
+def _surface_side_error(asset, error):
+    """授權失效必須中止。其餘附帶動作印出完整錯誤，不再假裝不影響主程式。"""
+    if _is_auth_error(error):
+        _fail_upload(asset, error)
+    print(f"{asset}失敗，完整 API 錯誤：\n{_api_error_text(error)}")
+
+
+def _accepted_upload(response, asset):
+    video_id = (response or {}).get("id")
+    status = (response or {}).get("status") or {}
+    upload_status = str(status.get("uploadStatus") or "")
+    if not is_real_video_id(video_id):
+        _fail_upload(asset, RuntimeError(f"沒有取得 11 碼 video_id：{response!r}"))
+    if upload_status in {"failed", "rejected", "deleted"}:
+        reason = status.get("failureReason") or status.get("rejectionReason") or ""
+        _fail_upload(
+            asset,
+            RuntimeError(
+                f"YouTube 拒絕上傳：uploadStatus={upload_status} reason={reason} response={response!r}"
+            ),
+        )
+    return video_id, upload_status
+
+
+def _confirm_upload_status(youtube, video_id, asset):
+    try:
+        listed = youtube.videos().list(
+            part="status,processingDetails",
+            id=video_id,
+        ).execute()
+    except Exception as error:
+        _fail_upload(asset, error)
+    items = (listed or {}).get("items") or []
+    if not items:
+        _fail_upload(
+            asset,
+            RuntimeError(f"videos.list 查無 {video_id}，無法確認上傳狀態：{listed!r}"),
+        )
+    status = items[0].get("status") or {}
+    processing = items[0].get("processingDetails") or {}
+    upload_status = str(status.get("uploadStatus") or "")
+    processing_status = str(processing.get("processingStatus") or "")
+    failed = upload_status in {"failed", "rejected", "deleted"} or processing_status in {
+        "failed",
+        "terminated",
+    }
+    if failed or upload_status not in {"uploaded", "processed"}:
+        reason = (
+            status.get("failureReason")
+            or status.get("rejectionReason")
+            or processing.get("processingFailureReason")
+            or ""
+        )
+        _fail_upload(
+            asset,
+            RuntimeError(
+                f"YouTube 上傳狀態無法確認：{video_id} uploadStatus={upload_status or 'missing'} "
+                f"processingStatus={processing_status or 'missing'} reason={reason} status={status!r}"
+            ),
+        )
+    print(
+        f"{asset} 上傳狀態已確認：{video_id} "
+        f"uploadStatus={upload_status} processingStatus={processing_status or 'pending'}"
+    )
+    return video_id
+
+
 def build_youtube_client():
     if os.environ.get("TEST_MODE", "").lower() == "true":
         print("[TEST_MODE] 測試模式已啟用：跳過 YouTube OAuth 連線與影片上傳（保留每日上傳配額）。")
@@ -109,26 +193,22 @@ def _build_engagement_comment(cur_p, btc_pct, fng_num, show_dca):
 
 
 def _resolve_playlist_id(youtube):
-    """優先讀環境變數；若未設定則查詢頻道內含「幣看趨勢」的播放清單。"""
+    """優先讀環境變數；若未設定則查詢頻道內含「幣看趨勢」的播放清單。查詢失敗直接拋出。"""
     env_id = os.environ.get("YOUTUBE_PLAYLIST_ID", "").strip()
     if env_id:
         return env_id
-    try:
-        channel_resp = youtube.channels().list(part="id", mine=True).execute()
-        channel_id = (channel_resp.get("items") or [{}])[0].get("id", "")
-        if not channel_id:
-            return None
-        pl_resp = youtube.playlists().list(
-            part="snippet",
-            channelId=channel_id,
-            maxResults=50,
-        ).execute()
-        for item in pl_resp.get("items", []):
-            if "幣看趨勢" in item["snippet"].get("title", ""):
-                return item["id"]
-    except Exception as _pl_lookup_err:
-        if not _playlist_permission_skip(_pl_lookup_err):
-            print(f"查詢播放清單時發生錯誤（不影響主程式）：{_pl_lookup_err}")
+    channel_resp = youtube.channels().list(part="id", mine=True).execute()
+    channel_id = (channel_resp.get("items") or [{}])[0].get("id", "")
+    if not channel_id:
+        return None
+    pl_resp = youtube.playlists().list(
+        part="snippet",
+        channelId=channel_id,
+        maxResults=50,
+    ).execute()
+    for item in pl_resp.get("items", []):
+        if "幣看趨勢" in item["snippet"].get("title", ""):
+            return item["id"]
     return None
 
 
@@ -166,7 +246,7 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(thumb_path)).execute()
             print("Custom thumbnail uploaded successfully!")
         except Exception as e:
-            print(f"Failed to upload custom thumbnail: {e}")
+            _surface_side_error("封面縮圖", e)
 
     # 自動發布互動留言
     try:
@@ -188,9 +268,9 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
             "請至 YouTube Studio 後台手動點選「置頂」。"
         )
     except Exception as _comment_err:
-        print(f"互動留言發佈失敗（不影響主程式）：{_comment_err}")
+        _surface_side_error("互動留言", _comment_err)
 
-    # 自動加入播放清單
+    # 自動加入播放清單。查詢失敗不得誤報成「找不到清單」。
     try:
         playlist_id = _resolve_playlist_id(youtube)
         if playlist_id:
@@ -211,7 +291,7 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
             print("未設定 YOUTUBE_PLAYLIST_ID 且頻道內找不到含「幣看趨勢」的播放清單，略過自動歸類。")
     except Exception as _pl_err:
         if not _playlist_permission_skip(_pl_err):
-            print(f"加入播放清單失敗（不影響主程式）：{_pl_err}")
+            _surface_side_error("播放清單", _pl_err)
 
     return video_id
 
@@ -246,8 +326,10 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         return "TEST_SHORT_VIDEO_ID"
 
     if not is_real_video_id(main_video_id):
-        print(f"警告：主片沒有有效 video_id，略過 Shorts 上傳；成片已保留：{short_path}")
-        return "UPLOAD_SKIPPED_MAIN_VIDEO_FAILED"
+        _fail_upload(
+            "Shorts",
+            RuntimeError(f"主片沒有有效 video_id，無法上傳 Shorts：{main_video_id!r}，成片已保留：{short_path}"),
+        )
 
     short_id = _insert_video(
         youtube,
@@ -305,12 +387,10 @@ def _insert_video(youtube, path, title, description, tags, asset="影片"):
         response = None
         while response is None:
             _, response = request.next_chunk()
-        video_id = (response or {}).get("id")
     except Exception as error:
         _fail_upload(asset, error)
-    if not is_real_video_id(video_id):
-        _fail_upload(asset, RuntimeError(f"沒有取得 11 碼 video_id：{response!r}"))
-    return video_id
+    video_id, _upload_status = _accepted_upload(response, asset)
+    return _confirm_upload_status(youtube, video_id, asset)
 
 
 def upload_tutorial_video(youtube, rendered, tutorial, is_test):
@@ -344,7 +424,7 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
                 videoId=video_id, media_body=MediaFileUpload(rendered["thumb_path"])
             ).execute()
         except Exception as error:
-            print(f"教學縮圖上傳失敗（不影響主片）：{error}")
+            _surface_side_error("教學縮圖", error)
     short_title = f"{tutorial.get('ep_id', 'EP')} 精華｜{tutorial.get('title', '系統教學')} #Shorts"
     short_description = (
         f"完整教學：https://www.youtube.com/watch?v={video_id}\n"
@@ -370,6 +450,6 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
             print(f"已加入播放清單 {PLAYLIST_EVERGREEN}：{playlist_id}")
     except Exception as error:
         if not _playlist_permission_skip(error):
-            print(f"加入教學播放清單失敗（不影響主片）：{error}")
+            _surface_side_error("教學播放清單", error)
     return video_id
 
