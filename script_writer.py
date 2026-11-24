@@ -80,16 +80,22 @@ def split_news_summary(summary):
 # ── Gemini API 調用 ──────────────────────────────────────────
 
 def call_gemini(prompt_txt):
-    models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    models = [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ]
     custom_model = os.environ.get("GEMINI_MODEL", "").strip()
     if custom_model:
         models = [custom_model] + [m for m in models if m != custom_model]
 
     last_err = None
+    overload_waits = (10, 25, 45)
     for model in models:
         g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY'].strip()}"
         body = json.dumps({"contents": [{"parts": [{"text": prompt_txt}]}]}).encode("utf-8")
-        retried_503 = False
+        overload_tries = 0
         retried_timeout = False
         while True:
             req = urllib.request.Request(g_url, data=body, headers={"Content-Type": "application/json"}, method="POST")
@@ -100,9 +106,14 @@ def call_gemini(prompt_txt):
                 err_msg = e.read().decode("utf-8", errors="ignore")
                 print(f"Gemini API Error ({e.code}) for model '{model}': {err_msg}")
                 last_err = e
-                if e.code == 503 and not retried_503:
-                    retried_503 = True
-                    time.sleep(10)
+                if e.code in (404, 429):
+                    print(f"Gemini model '{model}' returned {e.code}; switching immediately.")
+                    break
+                if e.code == 503 and overload_tries < len(overload_waits):
+                    wait = overload_waits[overload_tries]
+                    overload_tries += 1
+                    print(f"Gemini model '{model}' returned 503; retry {overload_tries}/3 in {wait}s.")
+                    time.sleep(wait)
                     continue
                 break
             except (TimeoutError, urllib.error.URLError, ConnectionError) as e:

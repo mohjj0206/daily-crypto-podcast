@@ -345,6 +345,7 @@ def call_gemini(prompt):
     if custom_model:
         models = [custom_model] + [model for model in models if model != custom_model]
     last_error = None
+    overload_waits = (10, 25, 45)
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         payload = json.dumps(
@@ -353,22 +354,35 @@ def call_gemini(prompt):
                 "generationConfig": {"maxOutputTokens": 8192},
             }
         ).encode("utf-8")
-        request = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            response = json.loads(urllib.request.urlopen(request, timeout=180).read().decode("utf-8"))
-            return response["candidates"][0]["content"]["parts"][0]["text"]
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            print(f"Gemini 模型 {model} 回應 HTTP {exc.code}，改試備援模型：{detail[:300]}")
-            last_error = exc
-        except (urllib.error.URLError, TimeoutError, ConnectionError, KeyError, IndexError, ValueError) as exc:
-            print(f"Gemini 模型 {model} 呼叫失敗，改試備援模型：{exc}")
-            last_error = exc
+        overload_tries = 0
+        while True:
+            request = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                response = json.loads(urllib.request.urlopen(request, timeout=180).read().decode("utf-8"))
+                return response["candidates"][0]["content"]["parts"][0]["text"]
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                print(f"Gemini 模型 {model} 回應 HTTP {exc.code}：{detail[:300]}")
+                last_error = exc
+                if exc.code in (404, 429):
+                    print(f"Gemini 模型 {model} 回傳 {exc.code}，立即改試下一個備援。")
+                    break
+                if exc.code == 503 and overload_tries < len(overload_waits):
+                    wait = overload_waits[overload_tries]
+                    overload_tries += 1
+                    print(f"Gemini 模型 {model} 回傳 503，第 {overload_tries}/3 次重試，等待 {wait} 秒。")
+                    time.sleep(wait)
+                    continue
+                break
+            except (urllib.error.URLError, TimeoutError, ConnectionError, KeyError, IndexError, ValueError) as exc:
+                print(f"Gemini 模型 {model} 呼叫失敗，改試備援模型：{exc}")
+                last_error = exc
+                break
     if last_error:
         raise RuntimeError("所有 Gemini 文字模型均無法完成請求。") from None
     raise RuntimeError("沒有可用的 Gemini 模型。")
