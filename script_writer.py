@@ -685,3 +685,137 @@ slide_news 必須恰好 3 筆，slide_week 必須恰好 3 句。"""
     }
     save_cached_script(result)
     return result
+
+
+TUTORIAL_CACHE_PATH = "cache_last_tutorial_script.json"
+TUTORIAL_SECTION_TITLES = (
+    "好奇提問與痛點鉤子",
+    "生活化白話比喻",
+    "鏈上原理與籌碼結構拆解",
+    "歷史週期換手實證",
+    "投資人實戰啟示與三大誤區",
+)
+
+
+def _json_object(raw):
+    text = str(raw or "").strip()
+    text = re.sub(r"^```(?:json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("tutorial response has no JSON object")
+    return json.loads(text[start:end + 1])
+
+
+def _dialogue_lines(narration):
+    lines = []
+    for raw in str(narration or "").splitlines():
+        match = re.match(r"^(男|女)[：:]\s*(.+)", raw.strip())
+        if match:
+            lines.append({"role": match.group(1), "text": normalize_long_term_terms(match.group(2).strip())})
+    return lines
+
+
+def _tutorial_char_count(sections):
+    return sum(len(re.sub(r"\s+", "", section.get("narration", ""))) for section in sections)
+
+
+def _normalize_tutorial(payload, lesson):
+    raw_sections = payload.get("sections")
+    if not isinstance(raw_sections, list) or len(raw_sections) != 5:
+        raise ValueError("tutorial JSON must contain exactly 5 sections")
+    sections = []
+    for index, item in enumerate(raw_sections):
+        if not isinstance(item, dict):
+            raise ValueError("tutorial section is not an object")
+        narration = normalize_long_term_terms(str(item.get("narration") or ""))
+        bullets = [str(bullet).strip() for bullet in (item.get("bullets") or []) if str(bullet).strip()]
+        lines = _dialogue_lines(narration)
+        if not lines:
+            raise ValueError(f"tutorial section {index + 1} has no dialogue")
+        sections.append({
+            "title": str(item.get("title") or TUTORIAL_SECTION_TITLES[index]).strip(),
+            "bullets": bullets[:4] or [TUTORIAL_SECTION_TITLES[index]],
+            "narration": narration,
+            "lines": lines,
+        })
+    short_lines = _dialogue_lines(payload.get("short_script"))
+    if len(short_lines) < 2:
+        raise ValueError("tutorial short script needs at least two dialogue lines")
+    return {
+        "ep_id": lesson.get("ep_id") or "EP",
+        "series": lesson.get("series") or "",
+        "lesson_title": lesson.get("title") or "",
+        "title": sanitize_text(payload.get("title") or lesson.get("title") or "系統教學"),
+        "sections": sections,
+        "short_script": str(payload.get("short_script") or ""),
+        "short_lines": short_lines,
+        "char_count": _tutorial_char_count(sections),
+    }
+
+
+def _tutorial_long_enough(tutorial, is_test):
+    if is_test:
+        return tutorial["char_count"] >= 80
+    return 5800 <= tutorial["char_count"] <= 6500
+
+
+def _load_tutorial_cache():
+    if not reuse_script_enabled() or not os.path.exists(TUTORIAL_CACHE_PATH):
+        return None
+    try:
+        with open(TUTORIAL_CACHE_PATH, encoding="utf-8") as handle:
+            cached = json.load(handle)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(cached, dict) or len(cached.get("sections") or []) != 5:
+        return None
+    print("[REUSE_SCRIPT] 使用 cache_last_tutorial_script.json，教學稿不呼叫 Gemini。")
+    return cached
+
+
+def generate_tutorial_script(lesson, reference_note, config):
+    """五段式常青教學稿。快取命中時不呼叫 Gemini。"""
+    cached = _load_tutorial_cache()
+    if cached is not None:
+        return cached
+    is_test = bool(config.get("is_test"))
+    concepts = "；".join(lesson.get("core_concepts") or [])
+    myths = "；".join(lesson.get("common_misconceptions") or [])
+    length_rule = (
+        "測試模式：五段各兩句以內，總長約 200 字。"
+        if is_test else
+        "正式版五段口播合計 5,800 到 6,500 字，約 16 到 20 分鐘。Shorts 口播 45 到 55 秒，約 180 到 230 字。"
+    )
+    prompt = f"""你是【幣看深潛｜系統教學】主編。請為比特汪與以太喵寫一集常青教學，不要寫成每日新聞。
+課號：{lesson.get("ep_id")}
+系列：{lesson.get("series")}
+題目：{lesson.get("title")}
+核心知識：{concepts}
+常見誤區：{myths}
+資料邊界：{reference_note}
+{length_rule}
+五段順序必須是：1 好奇提問與痛點鉤子；2 生活化白話比喻；3 鏈上或指標原理拆解；4 歷史週期實證；5 實戰啟示與三大誤區。
+鐵律：繁體中文。角色只有比特汪與以太喵，台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤不要念出來。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。
+只輸出一個 JSON，不要 Markdown。格式：
+{{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"short_script":"男：...\\n女：..."}}
+sections 必須恰好 5 段。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
+    raw = call_gemini(prompt, max_output_tokens=65536, timeout=300)
+    try:
+        tutorial = _normalize_tutorial(_json_object(raw), lesson)
+        if not _tutorial_long_enough(tutorial, is_test):
+            raise ValueError(f"tutorial length {tutorial['char_count']} is outside the required range")
+    except (ValueError, json.JSONDecodeError) as error:
+        print(f"教學稿需要補一次請求：{error}")
+        raw = call_gemini(
+            prompt + "\n上次輸出不合格。這次只回傳合法 JSON，並把五段口播補進規定字數。",
+            max_output_tokens=65536,
+            timeout=300,
+        )
+        tutorial = _normalize_tutorial(_json_object(raw), lesson)
+    with open(TUTORIAL_CACHE_PATH, "w", encoding="utf-8") as handle:
+        json.dump(tutorial, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    return tutorial
+

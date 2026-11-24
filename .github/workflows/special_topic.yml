@@ -1,32 +1,37 @@
-name: Deep Dive Coin Topic Publisher
+name: Evergreen Tutorial
 
 on:
   schedule:
-    - cron: '0 0 * * 6'
+    # 每週六台灣時間 09:00。UTC 01:00，與每日 03:15 晨報錯開。
+    - cron: '0 1 * * 6'
   workflow_dispatch:
     inputs:
-      target_coin:
-        description: '專題主角幣種；AUTO 會依近 48 小時新聞選題'
-        required: false
-        type: choice
-        options:
-          - AUTO
-          - BTC
-          - ETH
-          - SOL
-          - XRP
-          - ADA
-          - ZEC
-        default: AUTO
       test_mode:
-        description: '測試模式（縮短逐字稿與影片長度）'
+        description: '測試模式（跑完教學片，不上傳、不回寫進度）'
         required: false
-        type: boolean
         default: false
+        type: boolean
+      reuse_script:
+        description: '重用 cache_last_tutorial_script.json，不呼叫 Gemini'
+        required: false
+        default: false
+        type: boolean
+      target_ep_id:
+        description: '指定課號，例如 EP01。空白則自動選下一堂'
+        required: false
+        default: ''
+        type: string
+      custom_topic:
+        description: '手動加更題目。有填則優先於課號'
+        required: false
+        default: ''
+        type: string
 
 jobs:
-  build:
+  tutorial:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,17 +46,44 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-cjk
 
-      - name: Install Python dependencies
+      - name: Install Python dependencies and Playwright
         run: |
-          pip install feedparser pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib
+          pip install feedparser pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib playwright
+          playwright install chromium --with-deps
 
-      - name: Run special-topic script and upload
+      - name: Render evergreen tutorial
         env:
-          TARGET_COIN: ${{ inputs.target_coin || 'AUTO' }}
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
+          REUSE_SCRIPT: ${{ inputs.reuse_script || 'false' }}
+          TARGET_EP_ID: ${{ inputs.target_ep_id || '' }}
+          CUSTOM_TOPIC: ${{ inputs.custom_topic || '' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python build_special_topic.py
+
+      - name: Upload test preview artifacts
+        if: ${{ inputs.test_mode == true || hashFiles('UPLOAD_FAILED.flag') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tutorial-preview-${{ github.run_number }}
+          path: |
+            tutorial_main.mp4
+            tutorial_short.mp4
+            thumb_tutorial.jpg
+            tutorial_chart.png
+            youtube_metadata.txt
+          retention-days: 5
+
+      - name: Commit tutorial progress
+        if: ${{ inputs.test_mode != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain evergreen_progress.json knowledge_base/evergreen_curriculum.json)" ]; then
+            git add evergreen_progress.json knowledge_base/evergreen_curriculum.json
+            git commit -m "chore: update evergreen tutorial progress"
+            git push
+          fi

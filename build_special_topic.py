@@ -1215,7 +1215,7 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
     print(f"專題已上傳並設定縮圖，YouTube Video ID：{video_id}")
 
 
-def main():
+def run_coin_special():
     required = (
         "GEMINI_API_KEY",
         "GOOGLE_TTS_KEY",
@@ -1290,6 +1290,101 @@ def main():
     )
     create_thumbnail(coin_code, title, market, topic_icon)
     upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slides, market)
+
+
+def _load_json(path, fallback):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return fallback
+
+
+def select_evergreen_lesson():
+    curriculum = _load_json(
+        os.path.join("knowledge_base", "evergreen_curriculum.json"),
+        {"lessons": []},
+    )
+    lessons = curriculum.get("lessons") or []
+    custom = os.environ.get("CUSTOM_TOPIC", "").strip()
+    if custom:
+        return {
+            "ep_id": "CUSTOM",
+            "series": "加更",
+            "title": custom,
+            "core_concepts": [custom, "用結構解釋，不用單日新聞"],
+            "common_misconceptions": ["把一次敘事當成必然結果", "把示意圖當成即時普查"],
+            "chart_type": "concept_bars",
+            "status": "pending",
+        }
+    target = os.environ.get("TARGET_EP_ID", "").strip().upper()
+    if target:
+        for lesson in lessons:
+            if str(lesson.get("ep_id", "")).upper() == target:
+                return lesson
+        raise RuntimeError(f"課表找不到 {target}")
+    progress = _load_json("evergreen_progress.json", {"completed": []})
+    done = {item.get("ep_id") for item in progress.get("completed") or []}
+    for lesson in lessons:
+        if lesson.get("ep_id") not in done and lesson.get("status") != "done":
+            return lesson
+    if lessons:
+        print("課表都已完成，改從 EP01 再講一輪。")
+        return lessons[0]
+    raise RuntimeError("evergreen_curriculum.json 沒有課程")
+
+
+def mark_evergreen_complete(lesson):
+    ep_id = lesson.get("ep_id")
+    if not ep_id or ep_id == "CUSTOM":
+        return
+    today = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    progress = _load_json("evergreen_progress.json", {"completed": []})
+    completed = [item for item in progress.get("completed") or [] if item.get("ep_id") != ep_id]
+    completed.append({"ep_id": ep_id, "date": today, "title": lesson.get("title")})
+    remaining = []
+    curriculum_path = os.path.join("knowledge_base", "evergreen_curriculum.json")
+    curriculum = _load_json(curriculum_path, {"lessons": []})
+    for item in curriculum.get("lessons") or []:
+        if item.get("ep_id") == ep_id:
+            item["status"] = "done"
+        elif item.get("status") != "done":
+            remaining.append(item.get("ep_id"))
+    progress["completed"] = completed
+    progress["next_ep_id"] = remaining[0] if remaining else None
+    progress["updated_at"] = today
+    for path, payload in (("evergreen_progress.json", progress), (curriculum_path, curriculum)):
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+    print(f"已更新教學進度：{ep_id}，下一堂 {progress['next_ep_id']}")
+
+
+def main():
+    """常青教學總指揮。原本的幣種專題仍可呼叫 run_coin_special()。"""
+    import chart_maker
+    import media_engine
+    import script_writer
+    import youtube_uploader
+
+    is_test = os.environ.get("TEST_MODE", "").strip().lower() == "true"
+    lesson = select_evergreen_lesson()
+    print(f"本集教學：{lesson.get('ep_id')} {lesson.get('title')}")
+    reference = (
+        "沒有另抓即時報價。禁止編造今日成交價。"
+        "圖上的 $1、$100、$10,000、$30,000、$90,000 都是早期週期或成本帶的區間示意，不是即時普查。"
+    )
+    chart_path = chart_maker.generate_tutorial_chart(lesson)
+    tutorial = script_writer.generate_tutorial_script(
+        lesson, reference, {"is_test": is_test}
+    )
+    rendered = media_engine.render_tutorial_episode(tutorial, chart_path)
+    youtube = youtube_uploader.build_youtube_client()
+    video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
+    if not is_test and video_id and not str(video_id).startswith(("TEST", "UPLOAD")):
+        mark_evergreen_complete(lesson)
+    else:
+        print("測試模式或上傳未成功，不更新 evergreen_progress.json。")
 
 
 if __name__ == "__main__":

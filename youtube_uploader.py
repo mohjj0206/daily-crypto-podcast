@@ -233,3 +233,102 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         if "uploadLimitExceeded" in str(err):
             return "UPLOAD_LIMIT_EXCEEDED"
         return "UPLOAD_FAILED_SHORT_VIDEO"
+
+
+PLAYLIST_EVERGREEN = "【幣看深潛｜加密貨幣百科】"
+LEDGER_URL = "https://mohjj0206.github.io/daily-crypto-podcast/"
+
+
+def _playlist_by_title(youtube, title):
+    channel_resp = youtube.channels().list(part="id", mine=True).execute()
+    channel_id = (channel_resp.get("items") or [{}])[0].get("id", "")
+    if not channel_id:
+        return None
+    response = youtube.playlists().list(part="snippet", channelId=channel_id, maxResults=50).execute()
+    for item in response.get("items", []):
+        if item["snippet"].get("title") == title:
+            return item["id"]
+    created = youtube.playlists().insert(
+        part="snippet,status",
+        body={
+            "snippet": {"title": title, "description": "幣看深潛常青教學，不隨每日新聞過期。"},
+            "status": {"privacyStatus": "unlisted"},
+        },
+    ).execute()
+    return created.get("id")
+
+
+def _insert_video(youtube, path, title, description, tags):
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body={
+            "snippet": {
+                "title": title[:95],
+                "description": description,
+                "tags": tags,
+                "categoryId": "27",
+            },
+            "status": {"privacyStatus": "unlisted"},
+        },
+        media_body=MediaFileUpload(path, chunksize=1024 * 1024 * 5, resumable=True),
+    )
+    response = None
+    while response is None:
+        _, response = request.next_chunk()
+    return response["id"]
+
+
+def upload_tutorial_video(youtube, rendered, tutorial, is_test):
+    """上傳教學長片與精華 Shorts，並放進幣看深潛播放清單。"""
+    title = f"{presentation.tutorial_badge(tutorial.get('ep_id', 'EP'))}｜{tutorial.get('title', '系統教學')}"
+    description = (
+        f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：{LEDGER_URL}\n\n"
+        f"{presentation.tutorial_badge(tutorial.get('ep_id', 'EP'))}\n"
+        f"{tutorial.get('lesson_title') or tutorial.get('title')}\n\n"
+        "本集圖表是教學結構示意，不是即時持倉普查，也不構成投資建議。\n"
+        "模擬定期定額不是真實成交。加密貨幣波動劇烈，請自行研究。\n\n"
+        "⏱️ 章節\n" + "\n".join(rendered.get("chapters") or [])
+    )
+    _write_metadata("教學長片", title, description, "w")
+    if is_test or youtube is None:
+        print(f"[TEST_MODE] 教學長片不上傳：{rendered['output_path']}")
+        print(f"[TEST_MODE] 精華 Shorts 不上傳：{rendered['short_path']}")
+        print(title)
+        print(description)
+        return "TEST_TUTORIAL_VIDEO_ID"
+    video_id = _insert_video(
+        youtube, rendered["output_path"], title, description,
+        ["幣看深潛", "比特幣", "UTXO", "系統教學", tutorial.get("ep_id", "EP")],
+    )
+    if rendered.get("thumb_path") and os.path.exists(rendered["thumb_path"]):
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id, media_body=MediaFileUpload(rendered["thumb_path"])
+            ).execute()
+        except Exception as error:
+            print(f"教學縮圖上傳失敗（不影響主片）：{error}")
+    short_title = f"{tutorial.get('ep_id', 'EP')} 精華｜{tutorial.get('title', '系統教學')} #Shorts"
+    short_description = (
+        f"完整教學：https://www.youtube.com/watch?v={video_id}\n"
+        f"📊 公開帳本：{LEDGER_URL}\n\n"
+        "結構示意，不構成投資建議。\n#Shorts #幣看深潛 #比特幣"
+    )
+    try:
+        _insert_video(youtube, rendered["short_path"], short_title, short_description, ["Shorts", "幣看深潛"])
+    except Exception as error:
+        _record_upload_failure("教學Shorts", error)
+    try:
+        playlist_id = _playlist_by_title(youtube, PLAYLIST_EVERGREEN)
+        if playlist_id:
+            youtube.playlistItems().insert(
+                part="snippet",
+                body={"snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                }},
+            ).execute()
+            print(f"已加入播放清單 {PLAYLIST_EVERGREEN}：{playlist_id}")
+    except Exception as error:
+        print(f"加入教學播放清單失敗（不影響主片）：{error}")
+    return video_id
+

@@ -52,6 +52,11 @@ def round_usd(value):
     return int(Decimal(cleaned).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+def tutorial_badge(ep_id):
+    """教學片標題列：系列徽章與課號。"""
+    return f"【幣看深潛｜系統教學】{ep_id}"
+
+
 def format_usd(value):
     """具體美元金額四捨五入到整數，並加上千分位。負號放在錢字符號前面。"""
     rounded = round_usd(value)

@@ -1,0 +1,263 @@
+{
+  "series_name": "幣看深潛｜加密貨幣與週期實戰百科",
+  "lessons": [
+    {
+      "ep_id": "EP01",
+      "series": "A. 鏈上與估值指標實戰",
+      "title": "鏈上大解密：現在還有成本低於 $1 的比特幣嗎？還是經過多年換手，大家成本都差不多了？",
+      "core_concepts": [
+        "比特幣用 UTXO 帳本記錄每一筆尚未花掉的輸出",
+        "最後一次移動成本可以理解成這批幣上次換手時的價格帶",
+        "公開研究常提到仍有約 170 萬顆成本低於 $1 的遠古沉睡幣，其中包含早期挖礦與可能遺失私鑰的幣",
+        "活躍流通盤的平均成本會隨多輪牛熊換手墊高，形成遠古化石與現代高成本籌碼的雙峰"
+      ],
+      "common_misconceptions": [
+        "鏈上還有大量低價幣，代表今天還能用 $1 買到比特幣",
+        "平均成本接近，就代表所有人的成本都一樣",
+        "沉睡幣下一刻一定會賣出"
+      ],
+      "chart_type": "urpd_bands",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP02",
+      "series": "A. 鏈上與估值指標實戰",
+      "title": "MVRV 估值溫度計：市值與實現市值在比什麼",
+      "core_concepts": [
+        "MVRV 是市值除以實現市值的倍數",
+        "低於 1、1 到 2.4、2.4 到 3.5、高於 3.5 對應不同冷熱區間",
+        "它描述週期溫度，不是買賣指令"
+      ],
+      "common_misconceptions": [
+        "MVRV 低於 1 就保證見底",
+        "高於 3.5 就必須立刻全部賣出"
+      ],
+      "chart_type": "mvrv_zones",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP03",
+      "series": "A. 鏈上與估值指標實戰",
+      "title": "恐慌貪婪指數心理學：情緒數字怎麼看才不會被帶著跑",
+      "core_concepts": [
+        "指數把波動、動能與市場情緒壓成 0 到 100",
+        "極端讀數描述擁擠，不證明下一根價格方向",
+        "要跟價格結構與成交一起看"
+      ],
+      "common_misconceptions": [
+        "極度恐慌就等於最低點",
+        "極度貪婪就等於明天必跌"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP04",
+      "series": "A. 鏈上與估值指標實戰",
+      "title": "SMA200 與 RSI：長均線和動能指標怎麼一起用",
+      "core_concepts": [
+        "200 日均線描述長週期成本帶",
+        "RSI 描述一段時間的漲跌動能",
+        "超賣不是見底，跌破均線也要等後續價格確認"
+      ],
+      "common_misconceptions": [
+        "站上 200 日線就可以放槓桿",
+        "RSI 低於 30 必有反彈"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP05",
+      "series": "A. 鏈上與估值指標實戰",
+      "title": "穩定幣總市值流向：購買力增加不等於已經買進",
+      "core_concepts": [
+        "穩定幣供給變化只代表場內購買力增減",
+        "增加不代表已經換成比特幣",
+        "要搭配現貨成交與價格確認"
+      ],
+      "common_misconceptions": [
+        "穩定幣變多就等於主力正在吸籌",
+        "供給減少就等於崩盤已確定"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP06",
+      "series": "B. 主流幣種深度百科",
+      "title": "比特幣百科：固定供給、減半與它實際解決的記帳問題",
+      "core_concepts": [
+        "比特幣用工作量證明維持一套公開帳本",
+        "供給上限與減半改變新增發行速度",
+        "敘事不等於未來價格路徑"
+      ],
+      "common_misconceptions": [
+        "減半當月就一定大漲",
+        "數位黃金的比喻等於沒有回撤"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP07",
+      "series": "B. 主流幣種深度百科",
+      "title": "以太坊百科：世界計算機在算什麼，以及費用與供給怎麼變",
+      "core_concepts": [
+        "以太坊讓程式在公開網路上按規則執行",
+        "手續費與質押改變使用成本與發行",
+        "升級成功不保證代幣價格上漲"
+      ],
+      "common_misconceptions": [
+        "應用變多就等於持幣必賺",
+        "手續費高就代表需求永遠不會掉"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP08",
+      "series": "B. 主流幣種深度百科",
+      "title": "Solana 百科：高吞吐鏈在換取什麼，風險要分開看",
+      "core_concepts": [
+        "高吞吐降低單筆使用摩擦",
+        "停機、客戶端集中與解鎖日程是不同風險",
+        "速度不是估值的充分條件"
+      ],
+      "common_misconceptions": [
+        "交易快就不會有鏈上故障",
+        "生態熱鬧等於長期供給沒有壓力"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP09",
+      "series": "B. 主流幣種深度百科",
+      "title": "XRP 百科：支付敘事、供給與訴訟預期要拆開",
+      "core_concepts": [
+        "支付橋接敘事與代幣實際用途不一定同一件事",
+        "供給釋放與託管安排會影響流通",
+        "法律消息是事件，不是永久方向"
+      ],
+      "common_misconceptions": [
+        "一則勝訴新聞等於長期需求已被證實",
+        "支付場景越大，幣價就越線性上漲"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP10",
+      "series": "B. 主流幣種深度百科",
+      "title": "ADA 百科：研究導向鏈如何從論文走到鏈上使用",
+      "core_concepts": [
+        "正式驗證與緩慢升級是設計取捨",
+        "質押參與不等於鏈上應用已經普及",
+        "路線圖延期要看交付，不看口號"
+      ],
+      "common_misconceptions": [
+        "學術路線等於沒有執行風險",
+        "質押人數多就代表需求已經足夠"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP11",
+      "series": "B. 主流幣種深度百科",
+      "title": "ZEC 百科：隱私幣的用途、監管壓力與流動性折價",
+      "core_concepts": [
+        "屏蔽交易解決的是轉帳隱私，不是投資保證",
+        "監管與下架風險會直接影響流動性",
+        "隱私功能要和合規成本一起看"
+      ],
+      "common_misconceptions": [
+        "有隱私功能就不會被交易所下架",
+        "隱私需求上升等於價格沒有額外折價"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP12",
+      "series": "C. 長期主義與定期定額實證",
+      "title": "定期定額跨週期：它在平滑什麼，又保證不了什麼",
+      "core_concepts": [
+        "定期定額把資金拆進不同價格，降低單一時點的運氣比重",
+        "它不能取消標的長期下跌",
+        "節目帳本是模擬紀錄，不是真實成交"
+      ],
+      "common_misconceptions": [
+        "定投越久就一定回本",
+        "帳面浮盈代表方法已經被證明永遠有效"
+      ],
+      "chart_type": "dca_vs_lump",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP13",
+      "series": "C. 長期主義與定期定額實證",
+      "title": "長期持有的紀律：預算、再平衡與什麼時候不該加碼",
+      "core_concepts": [
+        "部位大小應先由虧得起的預算決定",
+        "再平衡是風險管理，不是預測頂底",
+        "不借貸、不加槓桿是這個頻道的行動邊界"
+      ],
+      "common_misconceptions": [
+        "長期看多就可以把生活費全部投入",
+        "越跌越加碼不需要上限"
+      ],
+      "chart_type": "concept_bars",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP14",
+      "series": "D. 錢包私鑰與防詐安全",
+      "title": "私鑰與助記詞：誰能簽名，誰就擁有那筆幣",
+      "core_concepts": [
+        "私鑰能授權花掉對應的幣",
+        "助記詞是私鑰的備份，洩漏等於把控制權交出去",
+        "截圖、雲端筆記與傳訊軟體都不是安全備份"
+      ],
+      "common_misconceptions": [
+        "記在相册裡就只是自己看得到",
+        "客服會合法地跟你索取助記詞"
+      ],
+      "chart_type": "security_checklist",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP15",
+      "series": "D. 錢包私鑰與防詐安全",
+      "title": "授權與簽名詐騙：為什麼連官方頁面也要再核對一次",
+      "core_concepts": [
+        "錢包簽名可能是在授權別人動用資產",
+        "網址、合約與授權額度要分開檢查",
+        "保證獲利與代操幾乎都是騙局腳本"
+      ],
+      "common_misconceptions": [
+        "頁面長得像官方就不必再看網址",
+        "小額授權不會被事後擴大"
+      ],
+      "chart_type": "security_checklist",
+      "status": "pending"
+    },
+    {
+      "ep_id": "EP16",
+      "series": "D. 錢包私鑰與防詐安全",
+      "title": "冷錢包實務：離線保管會解決什麼，又留下什麼操作風險",
+      "core_concepts": [
+        "冷錢包降低日常連網暴露",
+        "購買來源、初始化與韌體仍要核對",
+        "遺失備份與把備份放在熱裝置是另一種損失"
+      ],
+      "common_misconceptions": [
+        "買了冷錢包就不會被騙",
+        "設備本身被看到就等於幣已經被偷"
+      ],
+      "chart_type": "security_checklist",
+      "status": "pending"
+    }
+  ]
+}

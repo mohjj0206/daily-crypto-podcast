@@ -532,19 +532,20 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
     remaining = max(0.0, float(dur_sec) - record_seconds)
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
     insights = slide_data.get("insights") or {}
+    insight_labels = slide_data.get("insight_labels") or {}
     mvrv_pct = int(insights.get("mvrv_pct") or 40)
     insight_markup = (
-        "<article><small>MVRV 溫度</small>"
+        f"<article><small>{html.escape(str(insight_labels.get('mvrv', 'MVRV 溫度')))}</small>"
         f"<strong>{html.escape(str(insights.get('mvrv', '—')))}</strong>"
         f"<em>{html.escape(str(insights.get('zone', '')))}</em>"
         "<div class=\"mvrv-bar\"><i></i></div></article>"
-        "<article><small>支撐 / 壓力</small>"
+        f"<article><small>{html.escape(str(insight_labels.get('level', '支撐 / 壓力')))}</small>"
         f"<strong class=\"pulse\">{html.escape(str(insights.get('support', '—')))}</strong>"
-        f"<em>壓力 {html.escape(str(insights.get('resistance', '—')))}</em></article>"
-        "<article><small>RSI / 均線</small>"
-        f"<strong>RSI {html.escape(str(insights.get('rsi', '—')))}</strong>"
+        f"<em>{html.escape(str(insights.get('resistance', '—')))}</em></article>"
+        f"<article><small>{html.escape(str(insight_labels.get('indicator', 'RSI / 均線')))}</small>"
+        f"<strong>{html.escape(str(insights.get('rsi', '—')))}</strong>"
         f"<em>{html.escape(str(insights.get('sma', '')))}</em></article>"
-        "<article><small>今日結論</small>"
+        f"<article><small>{html.escape(str(insight_labels.get('conclusion', '今日結論')))}</small>"
         f"<strong>{html.escape(str(insights.get('headline', '紀律觀察')))}</strong>"
         f"<em>{html.escape(str(insights.get('detail', '')))}</em></article>"
     )
@@ -2214,3 +2215,169 @@ window.fitShortLayout = () => {{
     )
     subprocess.run(mux_command, check=True)
     return "short.mp4"
+
+
+def _concat_media(list_name, output_name):
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_name, "-c", "copy", output_name],
+        check=True,
+    )
+
+
+def _write_tutorial_thumb(tutorial):
+    font_path = get_system_font_path()
+    image = Image.new("RGB", (1280, 720), "#090d16")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((24, 24, 1256, 696), outline="#f59e0b", width=6)
+    badge_font = ImageFont.truetype(font_path, 36)
+    title_font = ImageFont.truetype(font_path, 54)
+    draw.text((56, 70), presentation.tutorial_badge(tutorial.get("ep_id", "EP")), fill="#f59e0b", font=badge_font)
+    title = str(tutorial.get("title") or tutorial.get("lesson_title") or "系統教學")
+    draw.text((56, 180), title[:42], fill="#f8fafc", font=title_font)
+    image.save("thumb_tutorial.jpg", "JPEG", quality=92)
+    return "thumb_tutorial.jpg"
+
+
+def _render_tutorial_short(tutorial):
+    lines = tutorial.get("short_lines") or []
+    if len(lines) < 2:
+        raise RuntimeError("Tutorial short script is missing dialogue lines.")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(
+            lambda item: synth_audio_segment((item[0], (item[1]["role"], item[1]["text"])), "tshort"),
+            list(enumerate(lines)),
+        ))
+    results.sort(key=lambda item: item[0])
+    with open("tutorial_short_audio.txt", "w", encoding="utf-8") as handle:
+        for _, filename, _, _ in results:
+            handle.write(f"file '{filename}'\n")
+    _concat_media("tutorial_short_audio.txt", "tutorial_short.mp3")
+    duration = float(subprocess.check_output(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", "tutorial_short.mp3"]
+    ).decode().strip())
+    font_path = get_system_font_path()
+    frame = Image.new("RGB", (1080, 1920), "#090d16")
+    draw = ImageDraw.Draw(frame)
+    draw.rectangle((36, 36, 1044, 1884), outline="#f59e0b", width=8)
+    badge_font = ImageFont.truetype(font_path, 42)
+    body_font = ImageFont.truetype(font_path, 54)
+    draw.text((72, 120), presentation.tutorial_badge(tutorial.get("ep_id", "EP")), fill="#f59e0b", font=badge_font)
+    y = 280
+    for line in lines[:4]:
+        text = presentation.display_text(line["text"])[:42]
+        draw.text((72, y), text, fill="#f8fafc", font=body_font)
+        y += 120
+    draw.text((72, 1680), "完整教學與公開帳本見說明欄", fill="#fbbf24", font=badge_font)
+    frame.save("tutorial_short_frame.png")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loop", "1", "-framerate", str(VIDEO_FPS),
+            "-i", "tutorial_short_frame.png", "-i", "tutorial_short.mp3",
+            "-vf", f"scale=1080:1920:flags=lanczos,fps={VIDEO_FPS},format=yuv420p",
+            "-r", str(VIDEO_FPS), "-c:v", "libx264", "-preset", "medium",
+            "-crf", VIDEO_CRF, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-shortest", "tutorial_short.mp4",
+        ],
+        check=True,
+    )
+    return "tutorial_short.mp4", duration
+
+
+def render_tutorial_episode(tutorial, chart_path):
+    """用每日簡報的 1920×1080 動畫層，合成五段教學長片與一支精華 Shorts。"""
+    sections = tutorial.get("sections") or []
+    if len(sections) != 5:
+        raise RuntimeError("Tutorial render requires 5 sections.")
+    flat = []
+    for section_index, section in enumerate(sections):
+        for line in section.get("lines") or []:
+            flat.append((section_index, line["role"], line["text"]))
+    if not flat:
+        raise RuntimeError("Tutorial script has no spoken lines.")
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = list(pool.map(
+            lambda item: synth_audio_segment((item[0], (item[1][1], item[1][2])), "tseg"),
+            list(enumerate(flat)),
+        ))
+    results.sort(key=lambda item: item[0])
+    section_duration = [0.0] * 5
+    with open("tutorial_audio.txt", "w", encoding="utf-8") as handle:
+        for index, (_, filename, _, duration) in enumerate(results):
+            section_duration[flat[index][0]] += duration
+            handle.write(f"file '{filename}'\n")
+    _concat_media("tutorial_audio.txt", "tutorial.mp3")
+    badge = presentation.tutorial_badge(tutorial.get("ep_id", "EP"))
+    ticker_items = [
+        {"label": "課程", "value": tutorial.get("ep_id", "EP"), "detail": tutorial.get("series", ""), "tone": "neutral"},
+        {"label": "形式", "value": "結構示意", "detail": "不是即時報價", "tone": "neutral"},
+        {"label": "主持人", "value": "比特汪", "detail": "以太喵", "tone": "neutral"},
+        {"label": "帳本", "value": "模擬定投", "detail": "公開頁可追蹤", "tone": "neutral"},
+    ]
+    insights = {
+        "mvrv": tutorial.get("ep_id", "EP"),
+        "zone": tutorial.get("series", ""),
+        "mvrv_pct": 35,
+        "support": "結構示意",
+        "resistance": "不是即時普查",
+        "rsi": "教學",
+        "sma": "不承諾獲利",
+        "headline": "先懂結構",
+        "detail": "價格帶是區間示意",
+    }
+    labels = {
+        "mvrv": "課號",
+        "level": "圖表性質",
+        "indicator": "系列提醒",
+        "conclusion": "本集結論",
+    }
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            for index, section in enumerate(sections, 1):
+                use_chart = index == 3 and chart_path and os.path.exists(chart_path)
+                slide = {
+                    "label": badge,
+                    "title": section["title"],
+                    "highlights": section.get("bullets") or [section["title"]],
+                    "chart_path": chart_path if use_chart else None,
+                    "layout": "chart" if use_chart else "hero",
+                    "accent": "#f59e0b",
+                    "caption": "結構示意，不是即時持倉或收益保證" if use_chart else "",
+                    "ticker_items": ticker_items,
+                    "insights": insights,
+                    "insight_labels": labels,
+                }
+                render_animated_slide(
+                    index, slide, max(1.0, section_duration[index - 1]), f"tutorial_p{index}.mp4", browser
+                )
+        finally:
+            browser.close()
+    with open("tutorial_video.txt", "w", encoding="utf-8") as handle:
+        for index in range(1, 6):
+            handle.write(f"file 'tutorial_p{index}.mp4'\n")
+    _concat_media("tutorial_video.txt", "tutorial_visual.mp4")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", "tutorial_visual.mp4", "-i", "tutorial.mp3",
+            "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+            "-r", str(VIDEO_FPS), "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-shortest", "tutorial_main.mp4",
+        ],
+        check=True,
+    )
+    short_path, short_duration = _render_tutorial_short(tutorial)
+    thumb_path = _write_tutorial_thumb(tutorial)
+    chapters = []
+    cursor = 0.0
+    for section, duration in zip(sections, section_duration):
+        chapters.append(f"{int(cursor) // 60:02d}:{int(cursor) % 60:02d} {section['title']}")
+        cursor += duration
+    return {
+        "output_path": "tutorial_main.mp4",
+        "short_path": short_path,
+        "thumb_path": thumb_path,
+        "chapters": chapters,
+        "short_duration": short_duration,
+    }
+

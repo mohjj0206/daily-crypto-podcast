@@ -339,3 +339,91 @@ def generate_bars_chart(cdata, output_path="chart_bars.png"):
     plt.savefig(output_path, facecolor="#111827")
     plt.close()
     return output_path
+
+
+def _tutorial_canvas(title, footnote):
+    font = get_chart_font()
+    fig, axis = plt.subplots(figsize=(13, 7.5), dpi=300)
+    fig.patch.set_facecolor("#0B0F19")
+    axis.set_facecolor("#101827")
+    axis.set_title(title, color="#F8FAFC", fontsize=20, fontweight="bold", fontproperties=font, pad=16)
+    fig.text(0.02, 0.02, footnote, color="#94A3B8", fontsize=11, fontproperties=font)
+    return fig, axis, font
+
+
+def _save_tutorial(fig, output_path):
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(output_path, facecolor="#0B0F19", dpi=300)
+    plt.close(fig)
+    return output_path
+
+
+def generate_tutorial_chart(lesson, output_path="tutorial_chart.png"):
+    """教學示意圖。價格帶是課綱區間，不是即時持倉普查。"""
+    chart_type = lesson.get("chart_type") or "concept_bars"
+    if chart_type == "urpd_bands":
+        fig, axis, font = _tutorial_canvas(
+            "鏈上籌碼成本分布結構示意",
+            "結構示意，不是即時 URPD 普查。低於 $1 的量級沿用公開研究常引用的約 170 萬顆說法。",
+        )
+        labels = [
+            f"遠古沉睡\n成本低於 {presentation.format_usd(1)}",
+            f"早期持有\n{presentation.format_usd(100)} 到 {presentation.format_usd(10000)}",
+            f"現代換手\n{presentation.format_usd(30000)} 到 {presentation.format_usd(90000)}+",
+        ]
+        weights = [2, 5, 8]
+        colors = ["#64748B", "#38BDF8", "#F59E0B"]
+        bars = axis.barh(labels, weights, color=colors, height=0.62)
+        axis.set_xlabel("分布密度示意（非即時顆數）", color="#CBD5E1", fontproperties=font)
+        for bar, note in zip(bars, ["約 170 萬顆量級（示意）", "多輪換手前的舊成本帶", "活躍流通盤成本墊高區"]):
+            axis.text(
+                bar.get_width() + 0.15, bar.get_y() + bar.get_height() / 2,
+                note, va="center", color="#F8FAFC", fontsize=12, fontproperties=font,
+            )
+        axis.set_xlim(0, 12)
+    elif chart_type == "mvrv_zones":
+        fig, axis, font = _tutorial_canvas(
+            "MVRV 估值溫度帶示意",
+            "區間定義沿用節目規則。沒有接入當日即時 MVRV 時，不畫今日位置。",
+        )
+        labels = ["低於 1 底部區", "1 到 2.4 健康區", "2.4 到 3.5 過熱區", "高於 3.5 泡沫區"]
+        axis.barh(labels, [1, 2.4, 3.5, 4.2], color=["#34D399", "#38BDF8", "#F59E0B", "#F87171"])
+        axis.set_xlabel("MVRV 區間上緣示意", color="#CBD5E1", fontproperties=font)
+    elif chart_type == "dca_vs_lump":
+        fig, axis, font = _tutorial_canvas(
+            "定期定額與單筆追高的教學模擬",
+            "指數從 100 起算的教材曲線，不是任何人的真實成交，也不是收益保證。",
+        )
+        months = list(range(1, 13))
+        lump = [100, 130, 90, 150, 110, 80, 70, 120, 160, 140, 100, 180]
+        dca = [100, 104, 101, 108, 106, 103, 102, 109, 114, 116, 113, 121]
+        axis.plot(months, lump, color="#F87171", linewidth=2.4, marker="o", label="單筆追高模擬")
+        axis.plot(months, dca, color="#F59E0B", linewidth=2.4, marker="o", label="定期定額模擬")
+        axis.legend(facecolor="#1e293b", edgecolor="none", labelcolor="white", prop=font)
+        axis.set_ylabel("教材指數", color="#CBD5E1", fontproperties=font)
+    elif chart_type == "security_checklist":
+        fig, axis, font = _tutorial_canvas(
+            "私鑰與防詐必做項目",
+            "這張圖是行動清單，不是風險評分，也不代表做完就不會虧損。",
+        )
+        labels = ["離線備份助記詞", "先看清授權對象", "拒絕代操與保證獲利"]
+        axis.barh(labels, [1, 1, 1], color="#F59E0B")
+        axis.set_xlabel("必做（示意）", color="#CBD5E1", fontproperties=font)
+    else:
+        fig, axis, font = _tutorial_canvas(
+            str(lesson.get("title", "教學概念對照"))[:28],
+            "概念對照示意，不是即時報價，也不是投資評級。",
+        )
+        concepts = list(lesson.get("core_concepts") or ["原理", "歷史", "行動"])[:4]
+        axis.barh(concepts[::-1], list(range(1, len(concepts) + 1)), color="#38BDF8")
+        axis.set_xlabel("教學推進順序（示意）", color="#CBD5E1", fontproperties=font)
+    for tick in axis.get_xticklabels() + axis.get_yticklabels():
+        tick.set_fontproperties(font)
+        tick.set_color("#E2E8F0")
+    axis.tick_params(colors="#CBD5E1")
+    axis.grid(axis="x", color="#263244", linewidth=0.6)
+    for spine in ("top", "right"):
+        axis.spines[spine].set_visible(False)
+    for spine in ("bottom", "left"):
+        axis.spines[spine].set_color("#334155")
+    return _save_tutorial(fig, output_path)
