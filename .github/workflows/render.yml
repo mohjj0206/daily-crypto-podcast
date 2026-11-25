@@ -75,10 +75,8 @@ jobs:
 
           if [ ${#FILES[@]} -gt 0 ]; then
             echo "正在發布預覽至 latest-preview Release..."
-            gh release create latest-preview "${FILES[@]}" \
-              --title "幣看趨勢 最新預覽 (Latest Preview)" \
-              --notes "每日自動渲染預覽檔案（含主片 MP4、短片 MP4、封面圖與逐字稿/說明欄），無需解壓 ZIP 即可直接在線觀看或下載。" \
-              --clobber
+            gh release view latest-preview >/dev/null 2>&1 || gh release create latest-preview --title "Latest Preview" --notes "Automated video preview"
+            gh release upload latest-preview "${FILES[@]}" --clobber
           else
             echo "找不到預覽影音檔案，略過 Release 發布。"
           fi
