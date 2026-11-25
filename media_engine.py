@@ -540,16 +540,23 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
                 '</div>'
             )
 
-    layout = slide_data.get("layout")
-    if layout not in {"chart", "compare", "hero", "summary"}:
-        layout = "chart" if chart_markup else "hero"
-    if layout == "chart" and not chart_markup:
-        layout = "hero"
-    if layout == "chart":
+    raw_layout = slide_data.get("layout")
+    layout_alias = {
+        "compare": "versus_clash",
+        "chart": "chart_spotlight",
+        "hero": "impact_quote",
+        "summary": "impact_quote",
+    }
+    layout = layout_alias.get(raw_layout, raw_layout)
+    if layout not in {"impact_quote", "versus_clash", "chart_spotlight", "timeline_steps"}:
+        layout = "chart_spotlight" if chart_markup else "impact_quote"
+    if layout == "chart_spotlight" and not chart_markup:
+        layout = "impact_quote"
+    if layout == "chart_spotlight":
         highlights = highlights[:5]
 
     list_markup = ""
-    if layout != "compare":
+    if layout == "chart_spotlight":
         list_markup = "".join(
             f"<li>{highlight_key_numbers(script_writer.clean_slide_text(item), highlight_state)}</li>"
             for item in highlights
@@ -558,42 +565,91 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
     slide_caption = script_writer.clean_slide_text(str(slide_data.get("caption", ""))).strip()
     chart_caption_markup = (
         f'<li class="chart-caption">{html.escape(slide_caption)}</li>'
-        if slide_caption and layout == "chart"
+        if slide_caption and layout == "chart_spotlight"
         else ""
     )
 
-    if layout == "compare":
+    if layout == "versus_clash":
+        pos_raw = slide_data.get("compare_positive") or (highlights[0] if highlights else slide_data.get("title", ""))
+        risk_raw = slide_data.get("compare_risk") or (highlights[1] if len(highlights) > 1 else "短線量能未確認前，波動與回撤風險仍在。")
         positive_markup = highlight_key_numbers(
-            script_writer.clean_slide_text(slide_data.get("compare_positive", "")), highlight_state
+            script_writer.clean_slide_text(pos_raw), highlight_state
         )
         risk_markup = highlight_key_numbers(
-            script_writer.clean_slide_text(slide_data.get("compare_risk", "")), highlight_state
+            script_writer.clean_slide_text(risk_raw), highlight_state
         )
         content_markup = (
-            '<section class="content compare-layout">'
-            '<article class="compare-panel positive">'
-            '<h2>市場焦點與利多敘事</h2>'
-            f'<ul><li>{positive_markup}</li></ul></article>'
-            '<article class="compare-panel risk">'
-            '<h2>以太喵理性打折與隱藏風險</h2>'
-            f'<ul><li>{risk_markup}</li></ul></article>'
+            '<section class="content versus-clash-layout">'
+            '<article class="versus-panel bear">'
+            '<header class="versus-badge bear-badge">空方論點 ／ 籌碼風險</header>'
+            f'<div class="versus-body"><ul><li>{risk_markup}</li></ul></div></article>'
+            '<div class="vs-emblem" aria-hidden="true"><span>VS</span></div>'
+            '<article class="versus-panel bull">'
+            '<header class="versus-badge bull-badge">多方反擊 ／ 支撐依據</header>'
+            f'<div class="versus-body"><ul><li>{positive_markup}</li></ul></div></article>'
             '</section>'
         )
-    elif layout == "chart":
+    elif layout == "chart_spotlight":
         content_markup = (
-            '<section class="content chart-layout">'
-            f'{chart_markup}<ul>{list_markup}{chart_caption_markup}</ul></section>'
+            '<section class="content chart-spotlight-layout">'
+            f'<div class="spotlight-visual">{chart_markup}</div>'
+            '<aside class="spotlight-card">'
+            '<div class="spotlight-badge"><i class="pulse-dot"></i>關鍵價位與結構結論</div>'
+            f'<ul>{list_markup}{chart_caption_markup}</ul>'
+            '</aside></section>'
         )
-    elif layout == "summary":
+    elif layout == "timeline_steps":
+        default_step_tags = ["情境一：放量突破", "情境二：縮量回測", "情境三：跌破防守線"]
+        step_tones = ["step-bull", "step-neutral", "step-bear"]
+        cards_html = []
+        step_items = [str(item).strip() for item in highlights if str(item).strip()][:3]
+        if not step_items:
+            step_items = [str(slide_data.get("title") or "觀察關鍵價位與量能變化")]
+        for s_idx, raw_step in enumerate(step_items):
+            tag_label = default_step_tags[s_idx % len(default_step_tags)]
+            body_text = raw_step
+            for sep in ("｜", "："):
+                if sep in raw_step:
+                    parts = raw_step.split(sep, 1)
+                    if 2 <= len(parts[0].strip()) <= 16 and parts[1].strip():
+                        tag_label = parts[0].strip()
+                        body_text = parts[1].strip()
+                        break
+            tone_cls = step_tones[s_idx % len(step_tones)]
+            body_markup = highlight_key_numbers(script_writer.clean_slide_text(body_text), highlight_state)
+            if s_idx > 0:
+                cards_html.append('<div class="timeline-arrow" aria-hidden="true">➔</div>')
+            cards_html.append(
+                f'<article class="timeline-card {tone_cls}" style="--step-idx:{s_idx}">'
+                f'<div class="step-pill">{html.escape(tag_label)}</div>'
+                f'<p class="step-text">{body_markup}</p>'
+                '</article>'
+            )
         content_markup = (
-            f'<section class="content summary-layout"><ul>{list_markup}</ul></section>'
+            '<section class="content timeline-steps-layout">'
+            + "".join(cards_html)
+            + '</section>'
         )
     else:
+        clean_items = [str(item).strip() for item in highlights if str(item).strip()]
+        core_quote = clean_items[0] if clean_items else str(slide_data.get("title") or "")
+        sub_lines = clean_items[1:3] if len(clean_items) > 1 else []
+        quote_markup = highlight_key_numbers(script_writer.clean_slide_text(core_quote), highlight_state)
+        sub_markup = "".join(
+            f'<p class="impact-sub">{highlight_key_numbers(script_writer.clean_slide_text(sub), highlight_state)}</p>'
+            for sub in sub_lines
+        )
         content_markup = (
-            f'<section class="content hero-layout"><ul>{list_markup}</ul></section>'
+            '<section class="content impact-quote-layout">'
+            '<div class="impact-quote-box">'
+            '<span class="impact-tag">CORE INSIGHT // 核心洞察</span>'
+            f'<blockquote class="impact-quote-text">{quote_markup}</blockquote>'
+            '<div class="impact-divider"></div>'
+            f'{sub_markup}'
+            '</div></section>'
         )
 
-    frame_class = "frame compact" if slide_data.get("compact") else "frame"
+    frame_class = f"frame layout-{layout}" + (" compact" if slide_data.get("compact") else "")
     label_markup = html.escape(str(slide_data.get("label", "")))
     accent = html.escape(str(slide_data.get("accent", "#fbbf24")))
     ticker_markup = "".join(
@@ -690,15 +746,23 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 48px; right: 48px; top: 100px; bottom: 145px;
-  padding: 28px 40px; border: 2px solid rgba(251,191,36,.78);
-  border-radius: 18px; background: rgba(15,23,42,.86);
-  box-shadow: 0 0 34px rgba(56,189,248,.12), inset 0 0 34px rgba(251,191,36,.035);
+  position: absolute; left: 48px; right: 48px; top: 110px; bottom: 245px;
+  padding: 24px 36px; border: 2px solid rgba(251,191,36,.72);
+  border-radius: 18px; background: rgba(11,17,32,.9);
+  box-shadow: 0 0 36px rgba(56,189,248,.14), inset 0 0 36px rgba(251,191,36,.04);
   display: flex; flex-direction: column; overflow: hidden;
 }}
+.frame.layout-impact_quote {{
+  border-color: rgba(245,158,11,.85);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(245,158,11,.10), transparent 60%),
+    radial-gradient(circle at 80% 20%, rgba(244,63,94,.08), transparent 45%),
+    rgba(9,13,24,.94);
+  box-shadow: 0 0 46px rgba(245,158,11,.18), inset 0 0 48px rgba(244,63,94,.08);
+}}
 h1 {{
-  position: relative; flex: 0 0 auto; max-width: 100%; margin: 0 0 20px;
-  color: #fff7d6; font-size: 44px; line-height: 1.18; font-weight: 800;
+  position: relative; flex: 0 0 auto; max-width: 100%; margin: 0 0 18px;
+  color: #fff7d6; font-size: 42px; line-height: 1.18; font-weight: 800;
   text-shadow: 0 2px 0 #111827, 0 0 18px rgba(245, 158, 11, .45);
   animation: titleIn .8s cubic-bezier(.2,.8,.2,1) both;
 }}
@@ -710,12 +774,10 @@ h1 {{
   min-height: 0; flex: 1 1 auto; display: grid;
   grid-template-columns: minmax(0, 1fr); align-items: stretch;
 }}
-.chart-layout {{ grid-template-columns: minmax(0, 54fr) minmax(0, 46fr); gap: 18px; }}
-.compare-layout {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: stretch; }}
 ul {{ list-style: none; margin: 0; padding: 0; min-width: 0; }}
 li {{
-  position: relative; margin: 0 0 12px; padding-left: 26px;
-  color: #e2e8f0; font-size: 26px; line-height: 1.36; overflow-wrap: anywhere;
+  position: relative; margin: 0 0 12px; padding-left: 24px;
+  color: #e2e8f0; font-size: 24px; line-height: 1.38; overflow-wrap: anywhere;
   animation: fadeInUp calc(var(--pace) * 1.4) ease-out both;
 }}
 li::before {{
@@ -724,55 +786,26 @@ li::before {{
   box-shadow: 0 0 12px var(--accent);
 }}
 li:nth-child(1) {{ animation-delay: calc(var(--pace) * 0.35); }}
-li:nth-child(2) {{ animation-delay: calc(var(--pace) * 1.1); }}
-li:nth-child(3) {{ animation-delay: calc(var(--pace) * 1.85); }}
-li:nth-child(4) {{ animation-delay: calc(var(--pace) * 2.6); }}
-li:nth-child(5) {{ animation-delay: calc(var(--pace) * 3.35); }}
-li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
+li:nth-child(2) {{ animation-delay: calc(var(--pace) * 1.0); }}
+li:nth-child(3) {{ animation-delay: calc(var(--pace) * 1.65); }}
+li:nth-child(4) {{ animation-delay: calc(var(--pace) * 2.3); }}
+li:nth-child(5) {{ animation-delay: calc(var(--pace) * 2.95); }}
+li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .frame.compact h1,
 .frame.fit-compact h1,
 .frame.fit-tight h1,
-.frame.fit-min h1 {{ font-size: 40px; margin-bottom: 12px; }}
-.frame.compact li {{ margin-bottom: 5px; padding-left: 22px; font-size: 20px; line-height: 1.2; }}
+.frame.fit-min h1 {{ font-size: 38px; margin-bottom: 10px; }}
+.frame.compact li {{ margin-bottom: 6px; padding-left: 20px; font-size: 20px; line-height: 1.24; }}
 .frame.compact li::before {{ width: 7px; height: 7px; }}
-.chart-layout > ul {{
-  display: grid; grid-template-columns: 1fr; align-content: center;
-  gap: 12px; text-align: left;
-}}
-.frame .chart-layout > ul li {{
-  margin: 0; font-size: 23px; line-height: 1.45;
-}}
-.chart-layout > ul li.chart-caption {{
-  margin-top: 2px; padding: 10px 12px; border: 1px solid rgba(251,191,36,.42);
-  border-radius: 10px; color: #fde68a; background: rgba(120,83,9,.18);
-  font-size: 17px; line-height: 1.35;
-}}
-.chart-layout > ul li.chart-caption::before {{ display: none; }}
-.content.dense-grid ul {{
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start; gap: 8px 12px; text-align: left;
-}}
-.content.dense-grid li {{ margin: 0; padding: 8px 12px; font-size: 22px; }}
-.frame.fit-compact {{ padding: 18px 24px; }}
-.frame.fit-compact h1 {{ margin-bottom: 12px; font-size: 40px; }}
-.frame.fit-compact .content {{ row-gap: 10px; column-gap: 12px; }}
-.frame.fit-tight {{ padding: 10px 14px; }}
-.frame.fit-tight h1 {{ margin-bottom: 6px; font-size: 40px; }}
-.frame.fit-tight .chart-layout, .frame.fit-tight .compare-layout {{ gap: 8px; }}
-.frame.fit-tight .compare-panel {{ padding: 12px; }}
-.frame.fit-tight .compare-panel h2 {{ margin-bottom: 8px; font-size: 18px; }}
-.frame.fit-tight .content.dense-grid ul {{ gap: 8px; }}
-.frame.fit-tight .content.dense-grid li {{ padding: 8px 10px; }}
-.frame.fit-tight .chart-layout > ul li.chart-caption {{ padding: 7px 9px; font-size: 15px; }}
-.frame.fit-min {{ padding: 4px 8px; }}
-.frame.fit-min h1 {{ margin-bottom: 3px; font-size: 40px; }}
-.frame.fit-min .chart-layout, .frame.fit-min .compare-layout {{ gap: 4px; }}
-.frame.fit-min .compare-panel {{ padding: 6px; }}
-.frame.fit-min .compare-panel h2 {{ margin-bottom: 4px; font-size: 15px; }}
-.frame.fit-min li {{ margin-bottom: 1px; padding-left: 10px; font-size: 18px; line-height: 1.05; }}
-.frame.fit-min .content.dense-grid ul {{ gap: 4px; }}
-.frame.fit-min .content.dense-grid li {{ padding: 4px 6px; }}
-.frame.fit-min .chart-layout > ul li.chart-caption {{ padding: 4px 6px; font-size: 13px; }}
+.frame.fit-compact {{ padding: 16px 24px; }}
+.frame.fit-tight {{ padding: 12px 16px; }}
+.frame.fit-tight .versus-clash-layout {{ gap: 20px; }}
+.frame.fit-tight .versus-panel {{ padding: 14px; }}
+.frame.fit-tight .timeline-steps-layout {{ gap: 14px; }}
+.frame.fit-tight .timeline-card {{ padding: 14px; }}
+.frame.fit-min {{ padding: 8px 12px; }}
+.frame.fit-min h1 {{ margin-bottom: 6px; font-size: 34px; }}
+.frame.fit-min li {{ margin-bottom: 3px; font-size: 18px; line-height: 1.15; }}
 @keyframes fadeInUp {{
   from {{ opacity: 0; transform: translateY(24px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -785,21 +818,189 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
   animation: highlightIn .65s ease-out .45s forwards;
 }}
 @keyframes highlightIn {{ to {{ transform: scaleX(1); }} }}
+
+/* ── 版型一：impact_quote（巨幅新聞頭條金句幕） ── */
+.impact-quote-layout {{
+  display: flex; align-items: center; justify-content: center;
+  padding: 10px 24px;
+}}
+.impact-quote-box {{
+  position: relative; width: 100%; max-width: 1520px;
+  padding: 34px 48px; border-radius: 20px; text-align: center;
+  border: 1px solid rgba(251, 191, 36, .42);
+  background: linear-gradient(160deg, rgba(15, 23, 42, .85), rgba(10, 15, 28, .92));
+  box-shadow: 0 0 40px rgba(251, 191, 36, .12), inset 0 0 28px rgba(244, 63, 94, .06);
+  animation: heroPop calc(var(--pace) * 1.8) cubic-bezier(.16,1,.3,1) both;
+}}
+.impact-quote-box::before, .impact-quote-box::after {{
+  content: ""; position: absolute; width: 32px; height: 32px;
+  border-color: #fbbf24; border-style: solid; opacity: .85;
+}}
+.impact-quote-box::before {{ top: -2px; left: -2px; border-width: 4px 0 0 4px; border-radius: 12px 0 0 0; }}
+.impact-quote-box::after {{ bottom: -2px; right: -2px; border-width: 0 4px 4px 0; border-radius: 0 0 12px 0; }}
+.impact-tag {{
+  display: inline-block; margin-bottom: 16px; padding: 6px 18px;
+  border-radius: 999px; font-size: 16px; font-weight: 800; letter-spacing: 2px;
+  color: #fde68a; background: rgba(245, 158, 11, .16);
+  border: 1px solid rgba(251, 191, 36, .45);
+}}
+.impact-quote-text {{
+  margin: 0; color: #ffffff; font-size: 56px; font-weight: 900; line-height: 1.26;
+  text-shadow: 0 4px 24px rgba(251, 191, 36, .35), 0 0 42px rgba(244, 63, 94, .22);
+  animation: quoteGlow 4s ease-in-out infinite;
+}}
+@keyframes quoteGlow {{
+  0%, 100% {{ text-shadow: 0 4px 20px rgba(251, 191, 36, .28), 0 0 32px rgba(244, 63, 94, .18); }}
+  50% {{ text-shadow: 0 4px 32px rgba(251, 191, 36, .52), 0 0 48px rgba(244, 63, 94, .34); }}
+}}
+.impact-divider {{
+  width: 140px; height: 4px; margin: 22px auto 18px; border-radius: 99px;
+  background: linear-gradient(90deg, #f43f5e, #fbbf24, #38bdf8);
+}}
+.impact-sub {{
+  margin: 6px auto 0; max-width: 88%; color: #cbd5e1;
+  font-size: 27px; font-weight: 600; line-height: 1.42;
+  animation: fadeInUp calc(var(--pace) * 1.6) ease-out calc(var(--pace) * 0.7) both;
+}}
+
+/* ── 版型二：versus_clash（多空硬核對決 VS 分割幕） ── */
+.versus-clash-layout {{
+  position: relative; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 34px; align-items: stretch;
+}}
+.versus-panel {{
+  min-width: 0; padding: 26px 28px; border-radius: 18px; border: 2px solid;
+  display: flex; flex-direction: column; overflow: hidden;
+}}
+.versus-panel.bear {{
+  border-color: rgba(244, 63, 94, .82);
+  background: linear-gradient(150deg, rgba(69, 10, 26, .84), rgba(15, 23, 42, .92));
+  box-shadow: 0 0 30px rgba(244, 63, 94, .18), inset 0 0 24px rgba(244, 63, 94, .08);
+  animation: compareLeft calc(var(--pace) * 1.6) cubic-bezier(.2,.8,.2,1) .15s both;
+}}
+.versus-panel.bull {{
+  border-color: rgba(52, 211, 153, .82);
+  background: linear-gradient(150deg, rgba(6, 78, 59, .76), rgba(15, 23, 42, .92));
+  box-shadow: 0 0 30px rgba(52, 211, 153, .18), inset 0 0 24px rgba(52, 211, 153, .08);
+  animation: compareRight calc(var(--pace) * 1.6) cubic-bezier(.2,.8,.2,1) .45s both;
+}}
+.versus-badge {{
+  display: inline-block; align-self: flex-start; margin-bottom: 18px; padding: 7px 18px;
+  border-radius: 999px; font-size: 21px; font-weight: 800; letter-spacing: 1px;
+}}
+.bear-badge {{ color: #fecdd3; background: rgba(244, 63, 94, .24); border: 1px solid rgba(244, 63, 94, .65); }}
+.bull-badge {{ color: #a7f3d0; background: rgba(16, 185, 129, .24); border: 1px solid rgba(52, 211, 153, .65); }}
+.versus-body {{ flex: 1 1 auto; display: flex; align-items: center; }}
+.versus-panel li {{ margin: 0; padding-left: 22px; font-size: 27px; line-height: 1.48; color: #f1f5f9; }}
+.versus-panel.bear li::before {{ background: #fb7185; box-shadow: 0 0 12px #fb7185; }}
+.versus-panel.bull li::before {{ background: #34d399; box-shadow: 0 0 12px #34d399; }}
+.vs-emblem {{
+  position: absolute; left: 50%; top: 50%; z-index: 8;
+  width: 78px; height: 78px; transform: translate(-50%, -50%);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle, #fde047, #f59e0b 65%, #ea580c);
+  color: #090d16; font-size: 32px; font-weight: 900; font-style: italic;
+  box-shadow: 0 0 28px rgba(251, 191, 36, .85), 0 0 0 8px rgba(9, 13, 22, .94);
+  animation: vsPulse 2.4s ease-in-out infinite;
+}}
+@keyframes vsPulse {{
+  0%, 100% {{ transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 24px rgba(251, 191, 36, .75), 0 0 0 8px rgba(9, 13, 22, .94); }}
+  50% {{ transform: translate(-50%, -50%) scale(1.08); box-shadow: 0 0 40px rgba(251, 191, 36, 1), 0 0 0 8px rgba(9, 13, 22, .94); }}
+}}
+@keyframes compareLeft {{ from {{ opacity: 0; transform: translateX(-36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
+@keyframes compareRight {{ from {{ opacity: 0; transform: translateX(36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
+
+/* ── 版型三：chart_spotlight（全屏數據圖表焦點幕 72% / 28%） ── */
+.chart-spotlight-layout {{
+  grid-template-columns: minmax(0, 72fr) minmax(0, 28fr);
+  gap: 24px; align-items: stretch;
+}}
+.spotlight-visual {{
+  min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center;
+  padding: 12px; border-radius: 16px;
+  border: 1px solid rgba(56, 189, 248, .35);
+  background: rgba(8, 13, 24, .78);
+  animation: chartIn .8s cubic-bezier(.2,.8,.2,1) .25s both;
+}}
+.spotlight-visual .visual {{ max-height: 550px; height: 100%; }}
+.spotlight-visual .chart img {{ max-height: 520px; width: 100%; height: 100%; object-fit: contain; }}
+.spotlight-card {{
+  min-width: 0; padding: 20px 22px; border-radius: 16px;
+  border: 1px solid rgba(251, 191, 36, .52);
+  background: linear-gradient(170deg, rgba(15, 23, 42, .92), rgba(9, 14, 26, .95));
+  box-shadow: 0 0 26px rgba(251, 191, 36, .12);
+  display: flex; flex-direction: column; justify-content: center; gap: 14px;
+}}
+.spotlight-badge {{
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  padding: 6px 14px; border-radius: 999px; font-size: 16px; font-weight: 800;
+  color: #fde68a; background: rgba(245, 158, 11, .18);
+  border: 1px solid rgba(251, 191, 36, .55);
+  box-shadow: 0 0 16px rgba(245, 158, 11, .28);
+}}
+.pulse-dot {{
+  width: 9px; height: 9px; border-radius: 50%; background: #fbbf24;
+  box-shadow: 0 0 10px #fbbf24; animation: dotPulse 1.5s ease-in-out infinite;
+}}
+@keyframes dotPulse {{
+  0%, 100% {{ opacity: 1; transform: scale(1); }}
+  50% {{ opacity: .45; transform: scale(1.35); }}
+}}
+.spotlight-card ul {{ display: grid; grid-template-columns: 1fr; gap: 10px; }}
+.spotlight-card li {{ margin: 0; padding-left: 18px; font-size: 21px; line-height: 1.4; }}
+.spotlight-card li::before {{ top: .52em; width: 7px; height: 7px; }}
+.spotlight-card li.chart-caption {{
+  margin-top: 4px; padding: 10px 12px; border: 1px solid rgba(251,191,36,.42);
+  border-radius: 10px; color: #fde68a; background: rgba(120,83,9,.18);
+  font-size: 16px; line-height: 1.35;
+}}
+.spotlight-card li.chart-caption::before {{ display: none; }}
+
+/* ── 版型四：timeline_steps（因果推演／24小時驗證劇本幕） ── */
+.timeline-steps-layout {{
+  display: flex; align-items: stretch; justify-content: space-between; gap: 16px;
+  padding: 10px 4px;
+}}
+.timeline-card {{
+  flex: 1 1 0; min-width: 0; padding: 24px 22px; border-radius: 18px;
+  border: 2px solid; background: rgba(11, 18, 34, .88);
+  display: flex; flex-direction: column; gap: 16px;
+  animation: heroPop calc(var(--pace) * 1.5) cubic-bezier(.16,1,.3,1) both;
+  animation-delay: calc(var(--step-idx) * var(--pace) * 0.9);
+}}
+.timeline-card.step-bull {{ border-color: rgba(52, 211, 153, .75); box-shadow: 0 0 24px rgba(52, 211, 153, .14); }}
+.timeline-card.step-neutral {{ border-color: rgba(251, 191, 36, .75); box-shadow: 0 0 24px rgba(251, 191, 36, .14); }}
+.timeline-card.step-bear {{ border-color: rgba(244, 63, 94, .75); box-shadow: 0 0 24px rgba(244, 63, 94, .14); }}
+.step-pill {{
+  display: inline-block; align-self: flex-start; padding: 7px 16px;
+  border-radius: 999px; font-size: 19px; font-weight: 800;
+}}
+.step-bull .step-pill {{ color: #a7f3d0; background: rgba(16, 185, 129, .24); border: 1px solid rgba(52, 211, 153, .65); }}
+.step-neutral .step-pill {{ color: #fde68a; background: rgba(245, 158, 11, .24); border: 1px solid rgba(251, 191, 36, .65); }}
+.step-bear .step-pill {{ color: #fecdd3; background: rgba(244, 63, 94, .24); border: 1px solid rgba(244, 63, 94, .65); }}
+.step-text {{
+  margin: 0; color: #f1f5f9; font-size: 24px; font-weight: 600; line-height: 1.48;
+  overflow-wrap: anywhere;
+}}
+.timeline-arrow {{
+  flex: 0 0 auto; align-self: center; font-size: 32px; font-weight: 900;
+  color: #fbbf24; text-shadow: 0 0 14px rgba(251, 191, 36, .65);
+  animation: fadeInUp calc(var(--pace) * 1.2) ease both;
+}}
+
 .visual {{
-  position: relative; width: 100%; min-width: 0; height: 100%; max-height: 300px;
+  position: relative; width: 100%; min-width: 0; height: 100%;
   display: flex; align-items: center; justify-content: center;
   animation: chartIn .9s cubic-bezier(.2,.8,.2,1) .45s both, breathe 5s ease-in-out 1.4s infinite;
 }}
-.chart-layout .visual {{ min-height: 300px; max-height: none; }}
 .chart img {{
-  display: block; width: 100%; height: 100%; max-height: 410px; object-fit: contain;
+  display: block; width: 100%; height: 100%; object-fit: contain;
   animation: revealRight calc(var(--pace) * 5) ease-out both;
 }}
 @keyframes revealRight {{
   from {{ clip-path: inset(0 100% 0 0); }}
   to {{ clip-path: inset(0 0 0 0); }}
 }}
-.metric-spacer {{ flex: 0 0 168px; }}
 .metric-rail {{
   position: absolute; left: 290px; right: 290px; bottom: 152px; z-index: 6;
 }}
@@ -838,7 +1039,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 @keyframes breathe {{ 0%, 100% {{ filter: drop-shadow(0 0 8px rgba(56,189,248,.16)); }} 50% {{ filter: drop-shadow(0 0 18px rgba(56,189,248,.34)); }} }}
 .gauge {{ flex-direction: column; gap: 22px; }}
 .gauge-title {{ color: #cbd5e1; font-size: 30px; font-weight: 700; }}
-.gauge-track {{ width: 100%; height: 28px; display: flex; overflow: hidden; border-radius: 16px; }}
+.gauge-track {{ width: 90%; height: 28px; display: flex; overflow: hidden; border-radius: 16px; }}
 .gauge-track span {{ flex: 1; }}
 .fear {{ background: #ef4444; }} .caution {{ background: #f97316; }}
 .neutral {{ background: #eab308; }} .greed {{ background: #84cc16; }}
@@ -846,48 +1047,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 .gauge-marker {{ position: absolute; top: 43%; width: 5px; height: 42px; background: white; box-shadow: 0 0 12px white; }}
 .gauge-value {{ color: #fbbf24; font-size: 64px; font-weight: 800; }}
 .gauge-value small {{ color: #94a3b8; font-size: 24px; font-weight: 700; }}
-.compare-panel {{
-  min-width: 0; padding: 22px 24px; border: 2px solid; border-radius: 16px;
-  background: rgba(8, 15, 28, .72); overflow: hidden;
-}}
-.compare-panel.positive {{ border-color: rgba(56, 189, 248, .82); animation: compareLeft .8s cubic-bezier(.2,.8,.2,1) .25s both; }}
-.compare-panel.risk {{ border-color: rgba(251, 191, 36, .82); animation: compareRight .8s cubic-bezier(.2,.8,.2,1) .65s both; }}
-.compare-panel h2 {{ margin: 0 0 20px; font-size: 22px; color: #7dd3fc; }}
-.compare-panel.risk h2 {{ color: #fbbf24; }}
-.compare-panel li {{ margin: 0; padding-left: 22px; font-size: 25px; }}
-.compare-panel li::before {{ width: 7px; height: 7px; }}
-@keyframes compareLeft {{ from {{ opacity: 0; transform: translateX(-36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
-@keyframes compareRight {{ from {{ opacity: 0; transform: translateX(36px); }} to {{ opacity: 1; transform: translateX(0); }} }}
-.hero-layout ul {{ width: 100%; height: 100%; display: flex; flex-direction: column; align-items: stretch; gap: 10px; text-align: center; }}
-.hero-layout li {{
-  flex: 1 1 auto; max-width: 100%; margin: 0; padding: 18px 28px; border: 1px solid rgba(251,191,36,.38);
-  border-radius: 14px; background: rgba(15,23,42,.72);
-  box-shadow: 0 0 24px rgba(251,191,36,.08);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 48px; font-weight: 750; line-height: 1.28;
-  animation: heroPop .75s cubic-bezier(.16,1,.3,1) both;
-}}
-.hero-layout li::before {{ display: none; }}
-.hero-layout li:nth-child(1) {{ animation-delay: .35s; }}
-.hero-layout li:nth-child(2) {{ animation-delay: .6s; }}
-.hero-layout li:nth-child(3) {{ animation-delay: .85s; }}
-.summary-layout ul {{
-  width: 100%; height: 100%; display: flex; flex-direction: column;
-  justify-content: center; gap: 16px; text-align: left;
-}}
-.summary-layout li {{
-  flex: 0 1 auto; margin: 0; padding: 22px 28px;
-  border: 1px solid rgba(56, 189, 248, .5); border-radius: 16px;
-  background: rgba(8, 15, 28, .82);
-  display: flex; align-items: center;
-  font-size: 34px; font-weight: 750; line-height: 1.35;
-  animation: heroPop .75s cubic-bezier(.16,1,.3,1) both;
-}}
-.summary-layout li::before {{ display: none; }}
-.summary-layout li:nth-child(2) {{
-  border-color: rgba(251, 191, 36, .55); animation-delay: .2s;
-}}
-@keyframes heroPop {{ from {{ opacity: 0; transform: scale(.86) translateY(20px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
+@keyframes heroPop {{ from {{ opacity: 0; transform: scale(.88) translateY(18px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
 </style>
 </head>
 <body>
@@ -896,7 +1056,6 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
   {content_markup}
-  <div class="metric-spacer"></div>
 </main>
 <div class="metric-rail">
   <p class="disclaimer-line">公開資訊整理，不構成投資建議。</p>
@@ -908,7 +1067,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
     const frame = document.querySelector(".frame");
     const title = document.querySelector("h1");
     const content = document.querySelector(".content");
-    const items = [...document.querySelectorAll("li")];
+    const items = [...document.querySelectorAll("li, .impact-quote-text, .impact-sub, .step-text")];
     const overflows = () => {{
       const contentBox = content.getBoundingClientRect();
       return content.scrollHeight > content.clientHeight + 1 ||
@@ -919,16 +1078,13 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
         title.getBoundingClientRect().bottom > contentBox.top - 8 ||
         frame.scrollHeight > frame.clientHeight + 1;
     }};
-    if (items.length >= 6 && !content.classList.contains("chart-layout")) {{
-      content.classList.add("dense-grid");
-    }}
-    for (let attempt = 0; attempt < 12 && overflows(); attempt++) {{
+    for (let attempt = 0; attempt < 14 && overflows(); attempt++) {{
       if (attempt === 0) frame.classList.add("fit-compact");
       if (attempt === 3) frame.classList.add("fit-tight");
       if (attempt === 6) frame.classList.add("fit-min");
       const titleSize = parseFloat(getComputedStyle(title).fontSize);
-      if (titleSize > 40) title.style.fontSize = `${{Math.max(40, titleSize - 2)}}px`;
-      const minBodySize = content.classList.contains("chart-layout") ? 22 : 18;
+      if (titleSize > 34) title.style.fontSize = `${{Math.max(34, titleSize - 2)}}px`;
+      const minBodySize = content.classList.contains("chart-spotlight-layout") ? 18 : 18;
       for (const item of items) {{
         const bodySize = parseFloat(getComputedStyle(item).fontSize);
         if (bodySize > minBodySize) {{
@@ -938,7 +1094,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 4.1); }}
     }}
     if (!overflows()) return true;
 
-    document.querySelectorAll(".compare-panel").forEach(panel => {{
+    document.querySelectorAll(".versus-panel, .timeline-card").forEach(panel => {{
       panel.style.overflow = "visible";
     }});
     frame.style.overflow = "visible";
@@ -1843,20 +1999,29 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                     else chart_paths.get("rsi") if ctype == "btc_rsi"
                     else None
                 )
-                layout = (
-                    "compare" if ctype == "compare"
-                    else "summary" if ctype == "summary"
-                    else "chart" if chart_path or ctype == "gauge"
-                    else "hero"
+                planned_item = planned_slides[idx - 1] if planned_slides and idx - 1 < len(planned_slides) else {}
+                layout = planned_item.get("layout") or presentation.assign_daily_layout(
+                    {"title": title, "chart": ctype, "role": planned_item.get("role", "")},
+                    idx - 1,
                 )
-                compare_positive, compare_risk = (
-                    script_writer.split_news_summary(body) if layout == "compare" else ("", "")
-                )
+                if layout == "chart_spotlight" and not (chart_path or ctype == "gauge"):
+                    layout = "impact_quote"
+
+                if layout == "versus_clash":
+                    if "利多" in body or "風險" in body:
+                        compare_positive, compare_risk = script_writer.split_news_summary(body)
+                    else:
+                        body_lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+                        compare_positive = body_lines[0] if body_lines else title
+                        compare_risk = body_lines[1] if len(body_lines) > 1 else "若關鍵均線或量能未能確認，短線波動與回撤風險仍在。"
+                else:
+                    compare_positive, compare_risk = ("", "")
+
                 slide_data = {
                     "label": f"幣看趨勢｜比特幣與加密貨幣情報　{today_str}",
                     "title": title,
                     "highlights": (
-                        [] if layout == "compare"
+                        [] if layout == "versus_clash"
                         else [line for line in body.splitlines() if line.strip()]
                     ),
                     "chart_path": chart_path,

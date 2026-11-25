@@ -58,6 +58,7 @@ def tutorial_badge(ep_id):
 
 
 TUTORIAL_LAYOUTS = ("impact", "compare", "steps", "chart")
+DAILY_LAYOUTS = ("impact_quote", "versus_clash", "chart_spotlight", "timeline_steps")
 
 DAILY_STORY_BEATS = {
     "debate": [
@@ -130,6 +131,27 @@ def opening_conflict_body(mdata):
     return f"{conflict}\n{focus}"
 
 
+def assign_daily_layout(slide, index=0):
+    """依每頁內容性質與圖表類型，動態切換四大財經紀錄片／雜誌級視覺版型。"""
+    slide = slide or {}
+    chart = slide.get("chart")
+    title = str(slide.get("title") or "")
+    role = slide.get("role") or ""
+
+    if chart in ("dual", "bars", "dca", "btc_structure", "btc_rsi", "gauge"):
+        return "chart_spotlight"
+    if chart == "summary" and role == "thermometer":
+        return "impact_quote"
+    if any(kw in title for kw in ("三點", "一天", "條件", "驗證", "推演", "連鎖", "劇本", "步驟")):
+        return "timeline_steps"
+    if chart == "compare" or any(kw in title for kw in ("反駁", "對決", "迷思", "風險", "分歧", "多頭", "空頭", "利多")):
+        return "versus_clash"
+
+    # 其餘深度頁依序輪替（避開連續重複）
+    non_chart_layouts = ("impact_quote", "versus_clash", "timeline_steps")
+    return non_chart_layouts[index % len(non_chart_layouts)]
+
+
 def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
     """開頭三頁快篩，其餘八頁留給當日模式。週五或 26 日再加一頁帳本。"""
     mdata = mdata or {}
@@ -184,11 +206,13 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
             "body": show_format.get("title") or title,
             "chart": chart,
         })
+    for idx, slide in enumerate(slides):
+        slide["layout"] = assign_daily_layout(slide, idx)
     return slides
 
 
 def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
-    """深度頁放主軸、一則新聞與三個觀察條件，不再拆成七頁報表。"""
+    """依版型填入對應結構化文案：金句幕、VS對決幕、圖表焦點幕、三步驟推演幕。"""
     news = [item for item in (news_details or []) if isinstance(item, dict)]
     weeks = [str(item).strip() for item in (week_lines or []) if str(item).strip()]
     lead = strip_bracket_tags(editorial) or "今天的主軸"
@@ -196,13 +220,18 @@ def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
     if news:
         news_body = f"利多：{news[0].get('positive') or lead}；風險：{news[0].get('risk') or '單則消息不是買賣指令。'}"
     week_body = "\n".join(weeks[:3]) or lead
-    for slide in slides or []:
+    for idx, slide in enumerate(slides or []):
         if slide.get("role") != "story":
             continue
         title = str(slide.get("title") or "")
-        if slide.get("chart") == "compare" and news_body:
-            slide["body"] = news_body
-        elif "三點" in title or "一天" in title:
+        layout = slide.get("layout") or assign_daily_layout(slide, idx)
+        slide["layout"] = layout
+        if layout == "versus_clash":
+            if news_body:
+                slide["body"] = news_body
+            else:
+                slide["body"] = f"利多：{lead}；風險：短線量能若未跟上結構確認，回撤壓力仍在。"
+        elif layout == "timeline_steps":
             slide["body"] = week_body
         else:
             slide["body"] = f"{lead}\n{title}"
