@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      enable_youtube_upload:
+        description: '是否上傳至 YouTube（預設關閉，僅發布至 GitHub Releases latest-preview）'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -41,6 +46,7 @@ jobs:
       - name: Run render and upload script
         env:
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
+          ENABLE_YOUTUBE_UPLOAD: ${{ vars.ENABLE_YOUTUBE_UPLOAD || inputs.enable_youtube_upload || 'false' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
           COINMARKETCAP_API_KEY: ${{ secrets.COINMARKETCAP_API_KEY }}
@@ -49,8 +55,36 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python build_and_upload.py
 
+      - name: Publish preview to GitHub Releases
+        if: ${{ success() || failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 確保產出標準預覽檔名
+          [ -f output.mp4 ] && [ ! -f daily_main.mp4 ] && cp output.mp4 daily_main.mp4
+          [ -f short.mp4 ] && [ ! -f daily_short.mp4 ] && cp short.mp4 daily_short.mp4
+          [ -f thumb.jpg ] && [ ! -f daily_thumb.jpg ] && cp thumb.jpg daily_thumb.jpg
+
+          FILES=()
+          [ -f daily_main.mp4 ] && FILES+=(daily_main.mp4)
+          [ -f daily_short.mp4 ] && FILES+=(daily_short.mp4)
+          [ -f daily_thumb.jpg ] && FILES+=(daily_thumb.jpg)
+          [ -f thumb.jpg ] && [ ! -f daily_thumb.jpg ] && FILES+=(thumb.jpg)
+          [ -f transcript.txt ] && FILES+=(transcript.txt)
+          [ -f youtube_metadata.txt ] && FILES+=(youtube_metadata.txt)
+
+          if [ ${#FILES[@]} -gt 0 ]; then
+            echo "正在發布預覽至 latest-preview Release..."
+            gh release create latest-preview "${FILES[@]}" \
+              --title "幣看趨勢 最新預覽 (Latest Preview)" \
+              --notes "每日自動渲染預覽檔案（含主片 MP4、短片 MP4、封面圖與逐字稿/說明欄），無需解壓 ZIP 即可直接在線觀看或下載。" \
+              --clobber
+          else
+            echo "找不到預覽影音檔案，略過 Release 發布。"
+          fi
+
       - name: Upload test preview artifacts
-        if: ${{ always() && (inputs.test_mode == true || hashFiles('UPLOAD_FAILED.flag') != '') }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: podcast-preview-${{ github.run_number }}
@@ -58,7 +92,7 @@ jobs:
             *.mp4
             *.jpg
             *.png
-            youtube_metadata.txt
+            *.txt
             !avatar.png
             !info.mp4
             !cat_vtober.mp4

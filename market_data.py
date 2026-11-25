@@ -229,6 +229,106 @@ def fetch_rss_news(tw_tz):
     return entries
 
 
+def enrich_top_news_with_full_text(news_list, max_articles=4):
+    """
+    對篩選出的前 max_articles 則核心新聞發送 HTTP 請求（含完整 User-Agent 與 10 秒逾時防呆），
+    提取 <article> 或 <p> 內的完整新聞正文（每篇 1,200～2,500 字真實細節、人物引述、機構數據與事件脈絡）。
+    若某網頁無法抓取則靜默保留原摘要，絕不報錯中斷。
+    """
+    if not news_list:
+        return news_list
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+
+    count = min(len(news_list), max_articles)
+    for i in range(count):
+        item = news_list[i]
+        entry = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+        if not isinstance(entry, dict):
+            continue
+
+        url = entry.get("link") or entry.get("url") or ""
+        if not url:
+            continue
+
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw_bytes = resp.read()
+                charset = resp.headers.get_content_charset() or "utf-8"
+                html_text = raw_bytes.decode(charset, errors="replace")
+
+            # 清理干擾標籤
+            html_cleaned = re.sub(
+                r"(?is)<(script|style|noscript|header|footer|nav|aside|form)[^>]*>.*?</\1>",
+                " ",
+                html_text,
+            )
+
+            # 優先搜尋 <article> 或主要內容容器
+            article_match = re.search(r"(?is)<article[^>]*>(.*?)</article>", html_cleaned)
+            if not article_match:
+                article_match = re.search(
+                    r'(?is)<div[^>]+class=["\'][^"\']*(?:entry-content|post-content|article-content|story-content)[^"\']*["\'][^>]*>(.*?)</div>',
+                    html_cleaned,
+                )
+            container = article_match.group(1) if article_match else html_cleaned
+
+            # 抓取 <p> 段落
+            p_matches = re.findall(r"(?is)<p[^>]*>(.*?)</p>", container)
+            paragraphs = []
+            for p_html in p_matches:
+                clean_p = re.sub(r"(?is)<[^>]+>", "", p_html)
+                clean_p = html.unescape(clean_p).strip()
+                if len(clean_p) < 15:
+                    continue
+                # 過濾常見網站版權與社群宣傳廢話
+                if any(
+                    banned in clean_p
+                    for banned in (
+                        "延伸閱讀",
+                        "這篇文章最早發佈於",
+                        "版權所有",
+                        "All rights reserved",
+                        "追蹤動區",
+                        "加入動區",
+                        "TG 頻道",
+                        "Line 社群",
+                    )
+                ):
+                    continue
+                paragraphs.append(clean_p)
+
+            full_text = "\n".join(paragraphs).strip()
+            if len(full_text) < 150:
+                # 若段落過少，回退使用正文純文字提取
+                full_text = _html_to_text(container)
+
+            full_text = re.sub(r"\s+", " ", full_text).strip()
+            # 限制長度在 1,200～2,500 字以內，保留核心論據
+            if len(full_text) > 2500:
+                full_text = full_text[:2500]
+
+            if len(full_text) >= 150:
+                entry["full_text"] = full_text
+                print(f"[News FullText] 成功抓取第 {i+1} 則全文 ({len(full_text)} 字)：{entry.get('title', '')[:30]}")
+            else:
+                print(f"[News FullText] 提取文字過短，保留原摘要：{entry.get('title', '')[:30]}")
+        except Exception as err:
+            # 靜默保留原摘要，絕不報錯中斷
+            print(f"[News FullText] 抓取略過 ({url[:45]}...): {err}")
+
+    return news_list
+
+
 # ── 恐慌與貪婪指數 ──────────────────────────────────────────
 
 def parse_source_datetime(value):
@@ -1732,8 +1832,9 @@ def fetch_all_market_data(now_tw, is_test):
     today_str = now_tw.strftime("%Y年%m月%d日")
     data_fetched_at = now_tw.strftime("%Y-%m-%d %H:%M 台灣時間")
 
-    # 1. 抓取 RSS 新聞
+    # 1. 抓取 RSS 新聞並提取焦點新聞完整全文
     entries = fetch_rss_news(tw_tz)
+    entries = enrich_top_news_with_full_text(entries, max_articles=4)
 
     # 2. 恐慌貪婪指數
     today_fng, yest_fng = fetch_fear_and_greed()

@@ -78,33 +78,48 @@ def main():
     audit = daily_learner.audit_episode(sdata.get("full_script", ""), "subs.ass", is_test)
 
     # ── 5. 上傳 YouTube、發布留言與播放清單歸類 ───────────────
-    print("[5/5] 上傳至 YouTube 並發布頻道互動...")
-    youtube = youtube_uploader.build_youtube_client()
-    main_video_id = youtube_uploader.upload_main_video(
-        youtube,
-        video_path=main_render["output_path"],
-        thumb_path=main_render["thumb_path"],
-        title=main_render["video_title"],
-        description=f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://mohjj0206.github.io/daily-crypto-podcast/\n\n{main_render['v_desc']}",
-        tags=["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
-        show_dca=show_dca,
-        cur_p=mdata["cur_p"],
-        btc_pct=mdata["btc_pct"],
-        fng_num=mdata["fng_num"],
-        is_test=is_test,
-    )
+    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    if enable_yt:
+        print("[5/5] 上傳至 YouTube 並發布頻道互動...")
+        youtube = youtube_uploader.build_youtube_client()
+        main_video_id = youtube_uploader.upload_main_video(
+            youtube,
+            video_path=main_render["output_path"],
+            thumb_path=main_render["thumb_path"],
+            title=main_render["video_title"],
+            description=f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://mohjj0206.github.io/daily-crypto-podcast/\n\n{main_render['v_desc']}",
+            tags=["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
+            show_dca=show_dca,
+            cur_p=mdata["cur_p"],
+            btc_pct=mdata["btc_pct"],
+            fng_num=mdata["fng_num"],
+            is_test=is_test,
+        )
 
-    youtube_uploader.upload_short_video(
-        youtube,
-        short_path=short_video_path,
-        main_video_id=main_video_id,
-        cur_p=mdata["cur_p"],
-        fng_num=mdata["fng_num"],
-        today_str=today_str,
-    )
+        youtube_uploader.upload_short_video(
+            youtube,
+            short_path=short_video_path,
+            main_video_id=main_video_id,
+            cur_p=mdata["cur_p"],
+            fng_num=mdata["fng_num"],
+            today_str=today_str,
+        )
+    else:
+        print("[5/5] ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留成片供 GitHub Releases 預覽。")
+        main_video_id = "PREVIEW_NO_UPLOAD"
+        youtube_uploader._write_metadata("主片", main_render["video_title"], main_render["v_desc"], "w")
+
+    # 確保產出標準預覽檔名供 GitHub Releases 發布
+    import shutil
+    if os.path.exists(main_render["output_path"]):
+        shutil.copyfile(main_render["output_path"], "daily_main.mp4")
+    if os.path.exists(short_video_path):
+        shutil.copyfile(short_video_path, "daily_short.mp4")
+    if os.path.exists(main_render["thumb_path"]):
+        shutil.copyfile(main_render["thumb_path"], "daily_thumb.jpg")
 
     daily_learner.archive_episode(
-        is_test=is_test,
+        is_test=is_test or not enable_yt,
         upload_id=main_video_id,
         mdata=mdata,
         sdata=sdata,

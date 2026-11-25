@@ -161,6 +161,9 @@ def _confirm_upload_status(youtube, video_id, asset):
 
 
 def build_youtube_client():
+    if os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() != "true":
+        print("[ENABLE_YOUTUBE_UPLOAD=false] YouTube 上傳已停用：跳過 YouTube OAuth 驗證與影片上傳。")
+        return None
     if os.environ.get("TEST_MODE", "").lower() == "true":
         print("[TEST_MODE] 測試模式已啟用：跳過 YouTube OAuth 連線與影片上傳（保留每日上傳配額）。")
         return None
@@ -314,9 +317,10 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
     _write_metadata("Shorts", short_title, short_description, "a")
 
     if (
-        os.environ.get("TEST_MODE", "").lower() == "true"
+        os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() != "true"
+        or os.environ.get("TEST_MODE", "").lower() == "true"
         or youtube is None
-        or main_video_id == "TEST_MAIN_VIDEO_ID"
+        or str(main_video_id or "").startswith(("TEST", "PREVIEW"))
     ):
         print("\n" + "=" * 50)
         print(f"[TEST_MODE] Shorts 短片已成功渲染完成：{short_path}")

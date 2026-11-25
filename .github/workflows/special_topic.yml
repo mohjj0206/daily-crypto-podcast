@@ -11,6 +11,11 @@ on:
         required: false
         default: false
         type: boolean
+      enable_youtube_upload:
+        description: '是否上傳至 YouTube（預設關閉，僅發布至 GitHub Releases latest-preview）'
+        required: false
+        default: false
+        type: boolean
       reuse_script:
         description: '重用 cache_last_tutorial_script.json，不呼叫 Gemini'
         required: false
@@ -55,6 +60,7 @@ jobs:
         env:
           MODE: evergreen
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
+          ENABLE_YOUTUBE_UPLOAD: ${{ vars.ENABLE_YOUTUBE_UPLOAD || inputs.enable_youtube_upload || 'false' }}
           REUSE_SCRIPT: ${{ inputs.reuse_script || 'false' }}
           TARGET_EP_ID: ${{ inputs.target_ep_id || '' }}
           CUSTOM_TOPIC: ${{ inputs.custom_topic || '' }}
@@ -65,8 +71,31 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python build_special_topic.py
 
+      - name: Publish preview to GitHub Releases
+        if: ${{ success() || failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILES=()
+          [ -f tutorial_main.mp4 ] && FILES+=(tutorial_main.mp4)
+          [ -f tutorial_short.mp4 ] && FILES+=(tutorial_short.mp4)
+          [ -f thumb_tutorial.jpg ] && FILES+=(thumb_tutorial.jpg)
+          [ -f tutorial_chart.png ] && FILES+=(tutorial_chart.png)
+          [ -f transcript.txt ] && FILES+=(transcript.txt)
+          [ -f youtube_metadata.txt ] && FILES+=(youtube_metadata.txt)
+
+          if [ ${#FILES[@]} -gt 0 ]; then
+            echo "正在發布教學預覽至 latest-preview Release..."
+            gh release create latest-preview "${FILES[@]}" \
+              --title "幣看深潛 最新預覽 (Latest Preview)" \
+              --notes "常青教學自動渲染預覽檔案（含主片 MP4、短片 MP4、封面圖與逐字稿/說明欄），無需解壓 ZIP 即可直接在線觀看或下載。" \
+              --clobber
+          else
+            echo "找不到預覽影音檔案，略過 Release 發布。"
+          fi
+
       - name: Upload test preview artifacts
-        if: ${{ always() && (inputs.test_mode == true || hashFiles('UPLOAD_FAILED.flag') != '') }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: tutorial-preview-${{ github.run_number }}
@@ -75,6 +104,7 @@ jobs:
             tutorial_short.mp4
             thumb_tutorial.jpg
             tutorial_chart.png
+            transcript.txt
             youtube_metadata.txt
           retention-days: 5
 

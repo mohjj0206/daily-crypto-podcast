@@ -1177,6 +1177,9 @@ def create_thumbnail(coin_code, topic_title, market, topic_icon):
 
 
 def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slides, market):
+    if os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() != "true":
+        print("[ENABLE_YOUTUBE_UPLOAD=false] 跳過 YouTube 上傳，保留 output_topic.mp4 與 thumb_topic.jpg。")
+        return
     credentials = Credentials(
         None,
         refresh_token=os.environ["YT_REFRESH_TOKEN"].strip(),
@@ -1233,13 +1236,10 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
 
 
 def run_coin_special():
-    required = (
-        "GEMINI_API_KEY",
-        "GOOGLE_TTS_KEY",
-        "YT_CLIENT_ID",
-        "YT_CLIENT_SECRET",
-        "YT_REFRESH_TOKEN",
-    )
+    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    required = ["GEMINI_API_KEY", "GOOGLE_TTS_KEY"]
+    if enable_yt:
+        required.extend(["YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"])
     missing = [key for key in required if not os.environ.get(key, "").strip()]
     if missing:
         raise RuntimeError(f"缺少必要環境變數：{', '.join(missing)}")
@@ -1403,15 +1403,27 @@ def main():
     rendered = media_engine.render_tutorial_episode(
         tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5,
     )
-    youtube = youtube_uploader.build_youtube_client()
+    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    # 輸出完整逐字稿到 transcript.txt 供 Releases 與預覽
+    try:
+        with open("transcript.txt", "w", encoding="utf-8") as f:
+            f.write(f"【教學主題】：{tutorial.get('title', '')}\n\n")
+            f.write("【教學完整逐字稿】：\n")
+            f.write(tutorial.get("full_script", ""))
+            f.write("\n")
+    except Exception as e:
+        print(f"寫入 transcript.txt 略過：{e}")
+
+    if not enable_yt:
+        print("ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留教學成片供 GitHub Releases 預覽。")
+        return
     if is_test:
         print("TEST_MODE=true，跳過教學長片與教學 Shorts 上傳。")
-    else:
-        print("TEST_MODE=false，上傳教學長片與教學 Shorts。")
-    video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
-    if is_test:
-        print("測試模式，不更新 evergreen_progress.json。")
         return
+
+    youtube = youtube_uploader.build_youtube_client()
+    print("ENABLE_YOUTUBE_UPLOAD=true，上傳教學長片與教學 Shorts。")
+    video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
     if not youtube_uploader.is_real_video_id(video_id):
         print(f"教學長片沒有 11 碼 video_id（{video_id!r}），不更新進度。")
         raise RuntimeError(f"教學上傳未取得有效 video_id：{video_id!r}")
