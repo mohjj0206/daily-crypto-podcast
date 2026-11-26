@@ -514,7 +514,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; }}
 .dark-mask {{ position: absolute; inset: 0; z-index: 1;
-  background: rgba(3, 6, 15, 0.65); }}
+  background: rgba(3, 6, 15, 0.55); }}
 .page-label {{ position: absolute; top: 54px; left: 50%; transform: translateX(-50%);
   z-index: 3; color: #8fa6c8; font-size: 26px; letter-spacing: 6px; font-weight: 700; }}
 .center {{ position: absolute; z-index: 3; left: 50%; top: 50%;
@@ -746,9 +746,6 @@ def _ensure_nonempty_file(path, label):
 def render_main_story(story):
     pages = build_pages(story)
     broll_engine.reset_episode_rotation()
-    broll_path = broll_engine.fetch_pixabay_broll(
-        story.get("broll_keywords"), broll_engine.HORIZONTAL
-    )
 
     # 1. 逐頁合成 TTS，算出每頁時長與字幕事件。
     page_data = []
@@ -796,6 +793,10 @@ def render_main_story(story):
             slide_videos = []
             for i, item in enumerate(page_data):
                 label = "開場" if i == 0 else f"{i:02d}"
+                # 每一頁都輪替呼叫 Pixabay，確保每頁投影片都有實景動態底片。
+                broll_path = broll_engine.fetch_pixabay_broll(
+                    story.get("broll_keywords"), broll_engine.HORIZONTAL
+                )
                 out = render_slide_video(
                     i, item["page"], item["dur"], item["reveal"],
                     broll_path, browser, label,
@@ -920,20 +921,23 @@ def create_thumbnail(story):
         y += 96
     image.save("story_thumb.jpg", "JPEG", quality=92)
 # ── Shorts 直式精華（9:16） ──────────────────────────────
-def _short_html(page, reveal_seconds):
+def _short_html(page, reveal_seconds, broll_path=None):
     big = html.escape(page["big"])
     line_markup = "".join(
         f'<div class="line">{html.escape(ln)}</div>' for ln in page["lines"]
     )
     reveal_json = json.dumps([round(x, 3) for x in reveal_seconds])
     SW, SH = media_engine.SHORT_VIDEO_WIDTH, media_engine.SHORT_VIDEO_HEIGHT
+    broll_markup = _broll_background_html(broll_path) if broll_path else ""
     return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
 <style>
 html,body{{margin:0;width:{SW}px;height:{SH}px;overflow:hidden;background:#05070f;
 font-family:"Noto Sans CJK TC","Microsoft JhengHei",sans-serif;}}
 .stage{{position:relative;width:100%;height:100%;
 background:radial-gradient(120% 90% at 50% 20%,#0d1830 0%,#0a1122 45%,#05070f 100%);}}
-.center{{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:92%;text-align:center;}}
+.broll{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;}}
+.dark-mask{{position:absolute;inset:0;z-index:1;background:rgba(3,6,15,0.55);}}
+.center{{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:92%;text-align:center;z-index:3;}}
 .big{{color:#fbbf24;font-size:88px;font-weight:900;line-height:1.12;margin-bottom:70px;
 text-shadow:0 6px 40px rgba(251,191,36,.45);}}
 .lines{{display:flex;flex-direction:column;gap:46px;align-items:center;}}
@@ -942,7 +946,7 @@ transition:color .5s,opacity .5s,text-shadow .5s,transform .5s;}}
 .line.active{{color:#fff;opacity:1;transform:scale(1.05);
 text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
 .line.done{{color:#3b4656;opacity:.5;}}
-</style></head><body><div class="stage"><div class="center">
+</style></head><body><div class="stage">{broll_markup}<div class="center">
 <div class="big">{big}</div><div class="lines">{line_markup}</div></div></div>
 <script>(function(){{
 const nodes=[].slice.call(document.querySelectorAll(".line"));const times={reveal_json};
@@ -966,7 +970,11 @@ def render_short_story(story, main_result):
         try:
             clips = []
             for i, item in enumerate(short_pages):
-                doc = _short_html(item["page"], item["reveal"])
+                # 每頁 Shorts 也輪替套用直式 Pixabay 實景動態底片。
+                short_broll_path = broll_engine.fetch_pixabay_broll(
+                    story.get("broll_keywords"), broll_engine.VERTICAL
+                )
+                doc = _short_html(item["page"], item["reveal"], short_broll_path)
                 out = f"story_short_p{i}.mp4"
                 rec_sec = item["dur"] + 0.4
                 with tempfile.TemporaryDirectory() as rd:

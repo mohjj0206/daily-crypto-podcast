@@ -1,33 +1,51 @@
-==================== 靜默工作流執行報告 ====================
-執行時間：2026-11-26 14:41:44 (Asia/Taipei)
+【執行時間】
+2026-11-26 15:39:57
 
 【讀取的任務摘要】
-1. 緊急修復 build_minimal_story.py 中 build_pages(story) 對 story 為 None 的崩潰，
-   確保 _normalize_story() 與 build_story() 所有路徑 100% 回傳有效 dict（絕不回傳 None）。
-2. 建立根目錄 CHATGPT.txt 自訂深度素材接入口：
-   - 啟動時優先讀取 CHATGPT.txt（過濾 # 註解與空白行）。
-   - 有效內文 > 100 字時進入專屬主題製片模式（AI 改寫為 9 頁《投資家富士》風格雙人生活化比喻深度長談）。
-   - 內文不足 100 字時維持原自動抓取當日新聞流程。
-   - 製片成功後自動把 CHATGPT.txt 還原為預設註解狀態並由 workflow 以 [skip ci] 推回 main。
+打通 Pixabay 1080p 實景動態影片（B-Roll）在「每日晨報」與「極簡故事線」的真實顯示：
+1. 升級 broll_engine.py：關鍵字為空或含中文時，自動改採內建高質感英文金融／科技關鍵字池
+   輪替保底，並印出明確狀態日誌（無金鑰／成功／失敗）。
+2. 解除 HTML 投影片不透明遮擋：有 B-Roll 時 html/body/.slide-container 改為 transparent，
+   讓底層已壓暗 55% 的 Pixabay 實景影片透出；無 B-Roll 時才用實心 #070B14 防白屏。
+3. 同步修復 build_minimal_story.py 的 FFmpeg exit status 234，並讓每一頁投影片與 Shorts
+   都接入透明字卡＋Pixabay 實景底片。
 
 【修改的檔案清單】
+- broll_engine.py
+  * 新增 import re 與 _CJK_RE（偵測中文字元）。
+  * 新增 ENGLISH_KEYWORD_POOL 高質感英文池：
+    ["stock market chart", "cryptocurrency bitcoin", "server room data center",
+     "modern city night", "financial trading screen", "digital network technology"]。
+  * 新增 _keyword_rotation 輪替序位與 _next_fallback_keyword()；reset_episode_rotation()
+    同步重置輪替序位。
+  * _clean_keywords()：含中文字元的項目一律丟棄，確保保底機制接手。
+  * _query_pixabay()：以 _LAST_QUERY_ERROR 記錄失敗原因。
+  * fetch_pixabay_broll()：無金鑰印「警告：未偵測到 PIXABAY_API_KEY 環境變數」；
+    成功印「成功套用實景動態影片：<關鍵字> -> <本地檔名>」；
+    全失敗印「查詢失敗 (<原因>)，退回預設暗底」。查詢順序＝使用者英文關鍵字→輪替保底池→備援池。
+- presentation.py
+  * 新增 GLOBAL_TRANSPARENT_CSS（html/body/.slide-container background: transparent !important）。
+  * 新增 dark_css(has_broll=False)：有 B-Roll 回傳透明版、無 B-Roll 回傳 GLOBAL_DARK_CSS。
+- media_engine.py
+  * 主片投影片 html 改用 presentation.dark_css(bool(broll_markup))。
+  * Shorts 直式 html 改用 presentation.dark_css(bool(short_broll_markup))。
+  * 每日晨報 broll_query 透 assign_broll_query 注入，非純圖表頁皆呼叫 fetch_pixabay_broll（既有串接確認）。
 - build_minimal_story.py
-  * 新增常數：CHATGPT_FILENAMES / CHATGPT_MIN_CHARS / CHATGPT_DEFAULT_CONTENT。
-  * 新增函式：_chatgpt_path()、read_chatgpt_material()、reset_chatgpt_file()。
-  * 新增函式：_build_custom_prompt()、build_custom_story()（自訂素材專屬寫稿，失敗回退保底 dict）。
-  * main()：啟動優先讀取 CHATGPT.txt，>100 字走 build_custom_story 並印出專屬模式日誌；
-    製片成功後呼叫 reset_chatgpt_file() 還原素材檔。
-  * 既有 None 防呆（build_pages / _normalize_story / build_story）確認已存在（commit d90b7ea），本次保留驗證。
-- CHATGPT.TXT（根目錄）：寫入預設註解內容（UTF-8 無 BOM）。
-- .github/workflows/minimal_story.yml
-  * 確認 permissions: contents: write（原已具備）。
-  * 新增步驟「Reset CHATGPT.txt after deep-dive production」：成功後若 CHATGPT 檔有變動，
-    以 [skip ci] commit 並 push 回 main，避免重複觸發。
+  * render_main_story()：改為「每一頁」輪替呼叫 fetch_pixabay_broll(HORIZONTAL)。
+  * _slide_html() 主片暗角 dark-mask 由 0.65 調整為 0.55（底片暗化 55%）。
+  * _short_html()：新增 broll_path 參數，注入 .broll/.dark-mask(0.55) 與透明大字卡逐行亮起。
+  * render_short_story()：每頁 Shorts 輪替呼叫 fetch_pixabay_broll(VERTICAL)。
+  * FFmpeg exit 234 修復（既有）：_escape_filter_path 絕對路徑＋跳脫、_ensure_nonempty_file
+    驗證 story_base.mp4／story_subs.ass／頭像存在且非空、capture_output 印 stderr[-2000:]、
+    build_ass 無 Dialogue 時補空白佔位。
+- .github/workflows/{render,special_topic,minimal_story}.yml
+  * 確認 env 皆已注入 PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}（無需改動）。
 
 【語法檢查結果】
-- python -m py_compile build_minimal_story.py  →  EXIT=0（通過）
-- 純邏輯驗證：預設 CHATGPT.TXT（僅註解）→ 有效字數 0、used=False，正確退回當日新聞流程。
+python -m py_compile 全部 .py 檔案：EXIT=0（全數通過）。
+功能自測：無金鑰→印警告回傳 None；中文關鍵字→清空觸發保底；英文關鍵字保留；
+輪替池依序取詞；dark_css(False)=實心暗底、dark_css(True)=透明。
 
-【Git Commit Hash】
-- 2d3e187d983070662ee25007286ded671be7dc16
-============================================================
+【Git Commit】
+cc37a7f535971f04dfd0789dce397eae282efcc2
+已 push 至 origin/main。

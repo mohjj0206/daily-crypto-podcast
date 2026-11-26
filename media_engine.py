@@ -805,7 +805,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
 <meta charset="utf-8">
 <meta name="viewport" content="width={MAIN_VIDEO_WIDTH}, initial-scale=1">
 <style>
-{presentation.GLOBAL_DARK_CSS}
+{presentation.dark_css(bool(broll_markup))}
 * {{ box-sizing: border-box; }}
 html, body {{ width: {MAIN_VIDEO_WIDTH}px; height: {MAIN_VIDEO_HEIGHT}px; margin: 0; overflow: hidden; }}
 body {{
@@ -2676,7 +2676,7 @@ def render_short_video(sdata, mdata, config):
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width={SHORT_VIDEO_WIDTH}, initial-scale=1">
 <style>
-{presentation.GLOBAL_DARK_CSS}
+{presentation.dark_css(bool(short_broll_markup))}
 * {{ box-sizing: border-box; }}
 html, body {{ width:{SHORT_VIDEO_WIDTH}px; height:{SHORT_VIDEO_HEIGHT}px; margin:0; overflow:hidden; }}
 body {{

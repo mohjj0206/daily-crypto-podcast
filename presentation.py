@@ -38,10 +38,24 @@ EXCLUDED_TERMS = list(EXCLUDED_PLATFORMS)
 
 # 全片強制深邃暗底：注入到所有投影片 HTML 最頂端，避免網頁載入空檔露出
 # 瀏覽器預設白底造成「整片反白」。從第 0 秒到最後一秒都維持護眼暗底。
+# 僅在「該頁沒有 B-Roll 實景底片」時使用，作為防白屏保護。
 GLOBAL_DARK_CSS = (
     "html, body, .slide-container { background-color: #070B14 !important; "
     "color: #F8FAFC !important; }"
 )
+
+# 當該頁有 B-Roll 實景動態影片時，HTML 最外層必須完全透明，讓底層已壓暗的
+# Pixabay 1080p 實景影片清晰透出、在文字與卡片後方流動；前景文字與卡片仍保有
+# 半透明深色毛玻璃底框（rgba(7, 11, 20, 0.72)）維持高對比可讀。
+GLOBAL_TRANSPARENT_CSS = (
+    "html, body, .slide-container { background: transparent !important; "
+    "color: #F8FAFC !important; }"
+)
+
+
+def dark_css(has_broll=False):
+    """依該頁是否有 B-Roll 底片，回傳透明或實心暗底的頂層 CSS。"""
+    return GLOBAL_TRANSPARENT_CSS if has_broll else GLOBAL_DARK_CSS
 
 # 男主播唯一名稱為「比特汪」。任何「位元汪／位元犬」等錯誤譯名一律強制修正。
 _WRONG_DOG_NAME = re.compile(r"位元[汪犬]")
