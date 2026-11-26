@@ -182,7 +182,7 @@ def _build_engagement_comment(cur_p, btc_pct, fng_num, show_dca):
     if show_dca:
         return (
             f"🐾 今天 BTC 站在 {presentation.format_usd(cur_p)}，DCA 帳本繼續紀律執行中！\n"
-            "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://mohjj0206.github.io/daily-crypto-podcast/\n\n"
+            "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
             "你這個月選擇「繼續定期定額、不管短線波動」還是「暫停一個月先觀望」？\n"
             "留言告訴比特汪與以太喵，讓我們一起追蹤你的策略！👇"
         )
@@ -308,7 +308,7 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
     )
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
-        "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://mohjj0206.github.io/daily-crypto-podcast/\n\n"
+        "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
         f"▶️ 完整 15 分鐘市場解析：{main_video_url}\n\n"
         "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
         "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
@@ -349,7 +349,7 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
 
 
 PLAYLIST_EVERGREEN = "【幣看深潛｜加密貨幣百科】"
-LEDGER_URL = "https://mohjj0206.github.io/daily-crypto-podcast/"
+LEDGER_URL = "https://is.gd/2JOYTF"
 
 
 def _playlist_by_title(youtube, title):
