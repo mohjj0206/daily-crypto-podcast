@@ -36,6 +36,16 @@ EXCLUDED_PLATFORMS = [
 
 EXCLUDED_TERMS = list(EXCLUDED_PLATFORMS)
 
+# 全片強制深邃暗底：注入到所有投影片 HTML 最頂端，避免網頁載入空檔露出
+# 瀏覽器預設白底造成「整片反白」。從第 0 秒到最後一秒都維持護眼暗底。
+GLOBAL_DARK_CSS = (
+    "html, body, .slide-container { background-color: #070B14 !important; "
+    "color: #F8FAFC !important; }"
+)
+
+# 男主播唯一名稱為「比特汪」。任何「位元汪／位元犬」等錯誤譯名一律強制修正。
+_WRONG_DOG_NAME = re.compile(r"位元[汪犬]")
+
 _EMOTION = {
     "excited": {"rate": "108%", "pitch": "+1.5st", "break": "180ms"},
     "serious": {"rate": "92%", "pitch": "-1.5st", "break": "320ms"},
@@ -545,10 +555,13 @@ def sanitize_text(text):
         ("比特王", "比特汪"),
         ("比特旺", "比特汪"),
         ("比特網", "比特汪"),
+        ("位元汪", "比特汪"),
+        ("位元犬", "比特汪"),
         ("以太貓", "以太喵"),
         ("以太猫", "以太喵"),
     ):
         cleaned = cleaned.replace(wrong, right)
+    cleaned = _WRONG_DOG_NAME.sub("比特汪", cleaned)
     cleaned = re.sub(r"\bHODLers?\b", "長期持有者", cleaned, flags=re.I)
     cleaned = re.sub(r"\bHODL\b", "長期持有", cleaned, flags=re.I)
     for term in sorted(EXCLUDED_PLATFORMS, key=len, reverse=True):

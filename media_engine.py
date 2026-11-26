@@ -805,6 +805,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
 <meta charset="utf-8">
 <meta name="viewport" content="width={MAIN_VIDEO_WIDTH}, initial-scale=1">
 <style>
+{presentation.GLOBAL_DARK_CSS}
 * {{ box-sizing: border-box; }}
 html, body {{ width: {MAIN_VIDEO_WIDTH}px; height: {MAIN_VIDEO_HEIGHT}px; margin: 0; overflow: hidden; }}
 body {{
@@ -839,8 +840,8 @@ body {{
 .broll-veil {{
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background:
-    radial-gradient(ellipse at 50% 42%, rgba(9,13,22,.30), rgba(9,13,22,.72) 78%),
-    rgba(9, 13, 22, .55);
+    radial-gradient(ellipse at 50% 42%, rgba(7,11,20,.58), rgba(7,11,20,.88) 78%),
+    rgba(7, 11, 20, .82);
 }}
 .ticker {{
   position: absolute; inset: 0 0 auto; z-index: 2; height: 84px;
@@ -870,7 +871,7 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 48px; right: 48px; top: 110px; bottom: 245px;
+  position: absolute; left: 48px; right: 48px; top: 110px; bottom: 250px;
   z-index: 3;
   padding: 24px 36px; border: 2px solid rgba(251,191,36,.72);
   border-radius: 18px; background: rgba(11,17,32,.9);
@@ -1127,27 +1128,27 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   to {{ clip-path: inset(0 0 0 0); }}
 }}
 .metric-rail {{
-  position: absolute; left: 290px; right: 290px; bottom: 28px; z-index: 6;
+  position: absolute; left: 290px; right: 290px; bottom: 155px; z-index: 6;
   overflow: visible;
 }}
 .disclaimer-line {{
-  margin: 0 0 6px; text-align: center; color: #94a3b8;
-  font-size: 15px; line-height: 1.2; font-weight: 600;
+  margin: 0 0 4px; text-align: center; color: #94a3b8;
+  font-size: 13px; line-height: 1.2; font-weight: 600;
 }}
 .insight-dock {{
   display: grid; grid-template-columns: 1.15fr 1fr 1.15fr 1.2fr; gap: 12px;
 }}
 .insight-dock article {{
-  border: 1px solid rgba(245, 158, 11, .45); border-radius: 12px; padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, .45); border-radius: 12px; padding: 8px 12px;
   background: rgba(8, 12, 22, .78); animation: fadeInUp calc(var(--pace) * 2) ease both;
 }}
 .insight-dock article:nth-child(2) {{ animation-delay: calc(var(--pace)); }}
 .insight-dock article:nth-child(3) {{ animation-delay: calc(var(--pace) * 2); }}
 .insight-dock article:nth-child(4) {{ animation-delay: calc(var(--pace) * 3); }}
-.insight-dock small {{ display: block; color: #94a3b8; font-size: 14px; margin-bottom: 4px; }}
-.insight-dock strong {{ display: block; color: #f59e0b; font-size: 26px; line-height: 1.25; }}
+.insight-dock small {{ display: block; color: #94a3b8; font-size: 12px; margin-bottom: 2px; }}
+.insight-dock strong {{ display: block; color: #f59e0b; font-size: 21px; line-height: 1.2; }}
 .insight-dock strong.pulse {{ animation: levelPulse 1.6s ease-in-out infinite; }}
-.insight-dock em {{ display: block; margin-top: 4px; color: #e2e8f0; font-style: normal; font-size: 16px; }}
+.insight-dock em {{ display: block; margin-top: 2px; color: #e2e8f0; font-style: normal; font-size: 13px; }}
 .mvrv-bar {{ height: 12px; margin-top: 8px; border-radius: 99px; background: #1e293b; overflow: hidden; }}
 .mvrv-bar i {{
   display: block; height: 100%; width: 0;
@@ -1887,6 +1888,9 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 ]
             ).decode().strip()
         )
+        # 投影片時間軸與字幕共用同一個「真實片頭秒數」，避免片頭 15.0s 銜接處
+        # 因音檔實際長度與硬寫 15.0 的微小落差而讓簡報與播報逐漸脫鉤。
+        intro_video_duration = intro_dur
 
     with open("audio_list.txt", "w", encoding="utf-8") as f:
         if intro_dur > 0:
@@ -2672,6 +2676,7 @@ def render_short_video(sdata, mdata, config):
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width={SHORT_VIDEO_WIDTH}, initial-scale=1">
 <style>
+{presentation.GLOBAL_DARK_CSS}
 * {{ box-sizing: border-box; }}
 html, body {{ width:{SHORT_VIDEO_WIDTH}px; height:{SHORT_VIDEO_HEIGHT}px; margin:0; overflow:hidden; }}
 body {{
@@ -2702,8 +2707,8 @@ body {{
 .broll-veil {{
   position:absolute; inset:0; z-index:1; pointer-events:none;
   background:
-    radial-gradient(ellipse at 50% 42%,rgba(9,13,22,.30),rgba(9,13,22,.72) 78%),
-    rgba(9,13,22,.55);
+    radial-gradient(ellipse at 50% 42%,rgba(7,11,20,.58),rgba(7,11,20,.88) 78%),
+    rgba(7,11,20,.82);
 }}
 .brand {{
   position:absolute; top:24px; width:100%; text-align:center; z-index:3;
@@ -3163,6 +3168,7 @@ def _render_tutorial_short(tutorial):
         clock += segment_duration
     avatars = "".join(hosts)
     short_html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><style>
+{presentation.GLOBAL_DARK_CSS}
 html,body {{ margin:0; width:1080px; height:1920px; overflow:hidden; color:#f8fafc; font-family:'Noto Sans CJK TC',sans-serif; }}
 body {{ background:#070b14; }}
 body::before {{ content:""; position:absolute; inset:-8%;
