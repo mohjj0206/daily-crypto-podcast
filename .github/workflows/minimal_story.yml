@@ -74,6 +74,7 @@ jobs:
           [ -f story_short.mp4 ] && FILES+=(story_short.mp4)
           [ -f story_thumb.jpg ] && FILES+=(story_thumb.jpg)
           [ -f story_metadata.txt ] && FILES+=(story_metadata.txt)
+          [ -f publish_bundle.json ] && FILES+=(publish_bundle.json)
 
           if [ ${#FILES[@]} -gt 0 ]; then
             echo "正在發布極簡故事預覽至 latest-preview Release..."

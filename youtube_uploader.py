@@ -1,9 +1,43 @@
+import json
 import os
 import re
 import presentation
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+
+
+def write_publish_bundle(
+    pipeline_type,
+    main_video_path,
+    short_video_path,
+    thumb_path,
+    main_title,
+    main_description,
+    short_title,
+    short_description,
+    tags,
+    first_comment,
+    bundle_path="publish_bundle.json",
+):
+    """輸出標準化的發佈清單，供雲端一鍵發佈腳本（publish_preview_to_youtube.py）讀取。"""
+    bundle = {
+        "pipeline_type": pipeline_type,
+        "main_video_path": main_video_path,
+        "short_video_path": short_video_path,
+        "thumb_path": thumb_path,
+        "main_title": main_title,
+        "main_description": main_description,
+        "short_title": short_title,
+        "short_description": short_description,
+        "tags": list(tags or []),
+        "first_comment": first_comment,
+    }
+    with open(bundle_path, "w", encoding="utf-8") as bundle_file:
+        json.dump(bundle, bundle_file, ensure_ascii=False, indent=2)
+        bundle_file.write("\n")
+    print(f"已輸出發佈清單：{bundle_path}")
+    return bundle
 
 
 def _write_metadata(section, title, description, mode):

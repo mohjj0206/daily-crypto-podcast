@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import market_data
 import chart_maker
+import presentation
 import script_writer
 import media_engine
 import youtube_uploader
@@ -119,6 +120,35 @@ def main():
         print("[5/5] ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留成片供 GitHub Releases 預覽。")
         main_video_id = "PREVIEW_NO_UPLOAD"
         youtube_uploader._write_metadata("主片", yt_title, yt_description, "w")
+
+    # 輸出標準化發佈清單，供雲端一鍵發佈腳本（publish_preview_to_youtube.py）使用。
+    main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
+    short_title = (
+        f"BTC {presentation.format_usd(mdata['cur_p'])}｜恐慌指數 {mdata['fng_num']} 點，這個訊號別忽略！ #Shorts"
+        if mdata.get("fng_num") is not None else
+        f"BTC {presentation.format_usd(mdata['cur_p'])}｜幣圈最新市場焦點與風險解析 #Shorts"
+    )
+    short_description = (
+        f"{today_str} 幣圈市場 50 秒快訊。\n\n"
+        "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
+        f"▶️ 完整市場解析：{main_video_url}\n\n"
+        "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
+        "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
+    )
+    youtube_uploader.write_publish_bundle(
+        pipeline_type="daily",
+        main_video_path="daily_main.mp4",
+        short_video_path="daily_short.mp4",
+        thumb_path="daily_thumb.jpg",
+        main_title=yt_title,
+        main_description=yt_description,
+        short_title=short_title,
+        short_description=short_description,
+        tags=["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
+        first_comment=youtube_uploader._build_engagement_comment(
+            mdata["cur_p"], mdata["btc_pct"], mdata["fng_num"], show_dca
+        ),
+    )
 
     # 確保產出標準預覽檔名供 GitHub Releases 發布
     import shutil

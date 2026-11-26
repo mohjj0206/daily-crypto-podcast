@@ -1,0 +1,59 @@
+name: Publish Preview to YouTube
+
+on:
+  workflow_dispatch:
+    inputs:
+      privacy_status:
+        description: '影片發佈隱私狀態'
+        required: false
+        default: 'public'
+        type: choice
+        options:
+          - public
+          - unlisted
+          - private
+      upload_shorts:
+        description: '是否一併發佈對應 Shorts'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+
+      - name: Download latest preview release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download latest-preview --clobber || {
+            echo "找不到 latest-preview Release，請先完成一支預覽成片。";
+            exit 1;
+          }
+          echo "已下載的預覽素材："
+          ls -lh
+
+      - name: Publish to YouTube
+        env:
+          ENABLE_YOUTUBE_UPLOAD: 'true'
+          YT_PRIVACY_STATUS: ${{ inputs.privacy_status }}
+          UPLOAD_SHORTS: ${{ inputs.upload_shorts }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YOUTUBE_PLAYLIST_ID: ${{ vars.YOUTUBE_PLAYLIST_ID }}
+        run: python publish_preview_to_youtube.py

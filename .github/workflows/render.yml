@@ -74,6 +74,7 @@ jobs:
           [ -f thumb.jpg ] && [ ! -f daily_thumb.jpg ] && FILES+=(thumb.jpg)
           [ -f transcript.txt ] && FILES+=(transcript.txt)
           [ -f youtube_metadata.txt ] && FILES+=(youtube_metadata.txt)
+          [ -f publish_bundle.json ] && FILES+=(publish_bundle.json)
 
           if [ ${#FILES[@]} -gt 0 ]; then
             echo "正在發布預覽至 latest-preview Release..."

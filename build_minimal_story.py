@@ -867,10 +867,11 @@ def render_main_story(story):
     result = subprocess.run(
         [
             "ffmpeg", "-y", "-i", "story_base.mp4", "-i", cat_img, "-i", dog_img,
-            "-filter_complex", filter_complex, "-map", "[vout]", "-map", "0:a",
+            "-i", mixed,
+            "-filter_complex", filter_complex, "-map", "[vout]", "-map", "3:a",
             "-c:v", "libx264", "-preset", "medium", "-crf", media_engine.VIDEO_CRF,
             "-pix_fmt", "yuv420p", "-r", str(FPS),
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest",
             "story_main.mp4",
         ],
         capture_output=True,
@@ -1072,6 +1073,32 @@ def main():
     print("[Minimal 4/4] 輸出 metadata...")
     write_metadata(story, main_result)
 
+    # 輸出標準化發佈清單，供雲端一鍵發佈腳本（publish_preview_to_youtube.py）使用。
+    import youtube_uploader
+    story_description = (
+        open("story_metadata.txt", encoding="utf-8").read()
+        if os.path.exists("story_metadata.txt") else ""
+    )
+    youtube_uploader.write_publish_bundle(
+        pipeline_type="story",
+        main_video_path="story_main.mp4",
+        short_video_path="story_short.mp4",
+        thumb_path="story_thumb.jpg",
+        main_title=story["yt_title"],
+        main_description=story_description,
+        short_title=f"{story['yt_title']}｜60 秒精華 #Shorts",
+        short_description=(
+            f"完整極簡故事：https://is.gd/2JOYTF\n\n"
+            "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
+            "本節目為市場資訊分享，不構成任何投資建議。\n#Shorts #比特幣 #加密貨幣 #幣看趨勢"
+        ),
+        tags=["加密貨幣", "比特幣", "以太幣", "區塊鏈", "極簡故事", "幣看趨勢"],
+        first_comment=(
+            "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n"
+            f"你對「{story['yt_title']}」這集的看法是？留言告訴比特汪與以太喵！👇"
+        ),
+    )
+
     # 製片成功後，若使用了 CHATGPT.txt 自訂素材，還原為預設註解狀態（防止重複製片）。
     if used_chatgpt:
         reset_chatgpt_file(chatgpt_path)
@@ -1079,7 +1106,6 @@ def main():
     if not enable_yt:
         print("[ENABLE_YOUTUBE_UPLOAD=false] 跳過 YouTube 上傳，保留 story_main.mp4 等供 Releases 預覽。")
         return
-    import youtube_uploader
     youtube = youtube_uploader.build_youtube_client()
     if youtube is None:
         return

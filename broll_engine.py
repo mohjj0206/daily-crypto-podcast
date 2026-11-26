@@ -56,6 +56,9 @@ _episode_used = {HORIZONTAL: [], VERTICAL: []}
 # 英文保底關鍵字輪替序位（每呼叫一次取下一個，讓每頁底片畫面有變化）。
 _keyword_rotation = {"index": 0}
 
+# 使用者關鍵字起始輪替序位（每呼叫一次順移，避免每頁都用同一組詞命中同一支底片）。
+_query_rotation = {"index": 0}
+
 # 最近一次 API 查詢失敗原因（供日誌印出）。
 _LAST_QUERY_ERROR = ""
 
@@ -68,6 +71,7 @@ def reset_episode_rotation():
     _episode_used[HORIZONTAL] = []
     _episode_used[VERTICAL] = []
     _keyword_rotation["index"] = 0
+    _query_rotation["index"] = 0
 
 
 def _next_fallback_keyword():
@@ -202,6 +206,12 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
         if fallback not in queries:
             queries.append(fallback)
 
+    # 每頁順移查詢起點，避免連續多頁都用同一組關鍵字命中同一支底片。
+    if queries:
+        shift = _query_rotation["index"] % len(queries)
+        queries = queries[shift:] + queries[:shift]
+        _query_rotation["index"] += 1
+
     last_reason = "查無結果"
     for query in queries:
         hits = _query_pixabay(query, orient)
@@ -216,6 +226,9 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
         )
         for hit in ordered_hits:
             video_id = hit.get("id")
+            # 同集已用過的影片，只要還有未用過的候選就跳過，避免連續重複。
+            if video_id in used and len(ordered_hits) > 1:
+                continue
             video_url = _pick_video_url(hit)
             if not video_url:
                 continue

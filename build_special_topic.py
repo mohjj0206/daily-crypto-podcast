@@ -1381,6 +1381,48 @@ def mark_evergreen_complete(lesson):
     print(f"已更新教學進度：{ep_id}，下一堂 {progress['next_ep_id']}")
 
 
+def _write_tutorial_publish_bundle(rendered, tutorial, main_video_id):
+    """輸出教學線標準化發佈清單 publish_bundle.json。"""
+    import youtube_uploader
+
+    ep_id = tutorial.get("ep_id", "EP")
+    title = f"{presentation.tutorial_badge(ep_id)}｜{tutorial.get('title', '系統教學')}"
+    description = (
+        f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：{youtube_uploader.LEDGER_URL}\n\n"
+        f"{presentation.tutorial_badge(ep_id)}\n"
+        f"{tutorial.get('lesson_title') or tutorial.get('title')}\n\n"
+        "本集圖表是教學結構示意，不是即時持倉普查，也不構成投資建議。\n"
+        "模擬定期定額不是真實成交。加密貨幣波動劇烈，請自行研究。\n\n"
+        "⏱️ 章節\n" + "\n".join(rendered.get("chapters") or [])
+    )
+    main_url = (
+        f"https://www.youtube.com/watch?v={main_video_id}"
+        if youtube_uploader.is_real_video_id(main_video_id)
+        else "https://is.gd/2JOYTF"
+    )
+    short_title = f"{ep_id} 精華｜{tutorial.get('title', '系統教學')} #Shorts"
+    short_description = (
+        f"完整教學：{main_url}\n"
+        f"📊 公開帳本：{youtube_uploader.LEDGER_URL}\n\n"
+        "結構示意，不構成投資建議。\n#Shorts #幣看深潛 #比特幣"
+    )
+    youtube_uploader.write_publish_bundle(
+        pipeline_type="tutorial",
+        main_video_path="tutorial_main.mp4",
+        short_video_path="tutorial_short.mp4",
+        thumb_path="thumb_tutorial.jpg",
+        main_title=title,
+        main_description=description,
+        short_title=short_title,
+        short_description=short_description,
+        tags=["幣看深潛", "比特幣", "UTXO", "系統教學", ep_id],
+        first_comment=(
+            f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：{youtube_uploader.LEDGER_URL}\n"
+            f"你對「{tutorial.get('title', '系統教學')}」還有哪個環節想更深入？留言告訴我們！"
+        ),
+    )
+
+
 def main():
     """預設走常青教學。只有 MODE=coin_special 才走舊的單一幣種新聞。"""
     if os.environ.get("MODE", "").strip().lower() == "coin_special":
@@ -1420,14 +1462,17 @@ def main():
 
     if not enable_yt:
         print("ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留教學成片供 GitHub Releases 預覽。")
+        _write_tutorial_publish_bundle(rendered, tutorial, "PREVIEW_NO_UPLOAD")
         return
     if is_test:
         print("TEST_MODE=true，跳過教學長片與教學 Shorts 上傳。")
+        _write_tutorial_publish_bundle(rendered, tutorial, "TEST_TUTORIAL_VIDEO_ID")
         return
 
     youtube = youtube_uploader.build_youtube_client()
     print("ENABLE_YOUTUBE_UPLOAD=true，上傳教學長片與教學 Shorts。")
     video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
+    _write_tutorial_publish_bundle(rendered, tutorial, video_id)
     if not youtube_uploader.is_real_video_id(video_id):
         print(f"教學長片沒有 11 碼 video_id（{video_id!r}），不更新進度。")
         raise RuntimeError(f"教學上傳未取得有效 video_id：{video_id!r}")
