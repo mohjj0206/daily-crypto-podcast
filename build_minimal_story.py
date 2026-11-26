@@ -666,6 +666,10 @@ def build_ass(events, out_path):
         lines.append(
             f"Dialogue: 0,{_fmt_ass(start)},{_fmt_ass(end)},Main,,0,0,0,,{safe}"
         )
+    # libass 對完全沒有 Dialogue 的 ASS 會報錯退出（exit status 234），
+    # 因此若沒有任何有效事件，補一行 1 秒的空白佔位對白，確保表頭完整可用。
+    if not lines:
+        lines.append("Dialogue: 0,0:00:00.00,0:00:01.00,Main,,0,0,0,,")
     with open(out_path, "w", encoding="utf-8") as handle:
         handle.write(header + "\n".join(lines) + "\n")
     return out_path
@@ -713,6 +717,32 @@ def build_pages(story):
         )
     return pages
 # ── 主片合成 ─────────────────────────────────────────────
+def _escape_filter_path(path):
+    r"""把檔案路徑轉成 FFmpeg filtergraph 內可安全使用的形式。
+
+    `subtitles=`/`ass=` 濾鏡的路徑若含 `:`、`\`、`'` 會被 filtergraph 解析器
+    誤判，導致 libass 打不開檔案而回傳 exit status 234。這裡統一轉為絕對
+    路徑、正斜線，並跳脫 filtergraph 保留字元。
+    """
+    absolute = os.path.abspath(path).replace("\\", "/")
+    return absolute.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def _ensure_nonempty_file(path, label):
+    """確認輸入檔案存在且大小 > 0，否則丟出含檢查重點的錯誤。"""
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"[Minimal] 主片合成缺少輸入 [{label}]：{path} 不存在。"
+            "請檢查前一步驟是否成功產出該檔案。"
+        )
+    size = os.path.getsize(path)
+    if size <= 0:
+        raise RuntimeError(
+            f"[Minimal] 主片合成輸入 [{label}] 為空檔（0 bytes）：{path}。"
+        )
+    return size
+
+
 def render_main_story(story):
     pages = build_pages(story)
     broll_engine.reset_episode_rotation()
@@ -789,11 +819,20 @@ def render_main_story(story):
         for fn in slide_videos:
             handle.write(f"file '{os.path.abspath(fn)}'\n")
         handle.write(f"file '{os.path.abspath('outro.mp4')}'\n")
-    subprocess.run(
+    base_result = subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
          "-c", "copy", "story_base.mp4"],
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    if base_result.returncode != 0:
+        print("[Minimal] 底片拼接（story_base.mp4）失敗，stderr 末尾內容：")
+        print(base_result.stderr[-2000:])
+        raise subprocess.CalledProcessError(
+            base_result.returncode, base_result.args,
+            output=base_result.stdout, stderr=base_result.stderr,
+        )
+    _ensure_nonempty_file("story_base.mp4", "主片底片")
 
     # 5. 字幕 + 雙頭像 + 混音合成最終主片。
     ass_path = build_ass(subtitle_events, "story_subs.ass")
@@ -808,16 +847,23 @@ def render_main_story(story):
     )
     cat_img = resolve_avatar_input(avatars["cat_idle"], "cat")
     dog_img = resolve_avatar_input(avatars["dog_idle"], "dog")
+
+    # 執行 FFmpeg 前，逐一確認所有輸入檔案存在且非空，避免盲猜 exit status 234。
+    _ensure_nonempty_file("story_base.mp4", "主片底片")
+    _ensure_nonempty_file(ass_path, "字幕檔")
+    _ensure_nonempty_file(cat_img, "貓頭像")
+    _ensure_nonempty_file(dog_img, "狗頭像")
+
     margin = 48
     bottom = MAIN_H - avatar_size - 150
     filter_complex = (
-        f"[0:v]subtitles={ass_path}[base];"
+        f"[0:v]subtitles='{_escape_filter_path(ass_path)}'[base];"
         f"[1:v]scale={avatar_size}:{avatar_size}[cat];"
         f"[2:v]scale={avatar_size}:{avatar_size}[dog];"
         f"[base][cat]overlay={margin}:{bottom}[v1];"
         f"[v1][dog]overlay={MAIN_W - avatar_size - margin}:{bottom}[vout]"
     )
-    subprocess.run(
+    result = subprocess.run(
         [
             "ffmpeg", "-y", "-i", "story_base.mp4", "-i", cat_img, "-i", dog_img,
             "-filter_complex", filter_complex, "-map", "[vout]", "-map", "0:a",
@@ -826,8 +872,15 @@ def render_main_story(story):
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
             "story_main.mp4",
         ],
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        print("[Minimal] FFmpeg 主片合成失敗，stderr 末尾內容：")
+        print(result.stderr[-2000:])
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
     print(f"[Minimal] 主片完成：story_main.mp4（口播 {dialogue_end:.1f}s + 片尾）")
     return {"dialogue_end": dialogue_end, "pages": page_data}
 
