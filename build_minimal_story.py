@@ -45,6 +45,53 @@ OUTRO_PAUSE = 1.5
 MAIN_W, MAIN_H = media_engine.MAIN_VIDEO_WIDTH, media_engine.MAIN_VIDEO_HEIGHT
 FPS = media_engine.VIDEO_FPS
 
+
+# ── 頭像路徑解析（含檔案存在檢查與圓形裁切備援） ──────────────
+def _circularize_avatar(path):
+    """把任意頭像圖裁成正方形並套用圓形遮罩，輸出帶 alpha 的過場 PNG。"""
+    with Image.open(path) as source:
+        avatar = source.convert("RGBA")
+    width, height = avatar.size
+    crop = min(width, height)
+    left = (width - crop) // 2
+    top = (height - crop) // 2
+    avatar = avatar.crop((left, top, left + crop, top + crop)).resize(
+        (225, 225), Image.LANCZOS
+    )
+    mask = Image.new("L", (225, 225), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, 224, 224), fill=255)
+    out = Image.new("RGBA", (225, 225), (0, 0, 0, 0))
+    out.paste(avatar, (0, 0), mask)
+    out_path = f"avatar_fallback_{os.getpid()}.png"
+    out.save(out_path)
+    return out_path
+
+
+def resolve_avatar_input(preferred, speaker):
+    """確保傳給 FFmpeg -i 的頭像一定存在。
+
+    優先採用 create_speaker_avatars 產生的圓形頭像（preferred）；若不存在，
+    依序備援根目錄 `<speaker>_single.png`、`<speaker>_single.png.png`、
+    `avatar.png`，並把備援圖裁為圓形後回傳。
+    """
+    if preferred and os.path.exists(preferred):
+        return preferred
+    candidates = (
+        f"{speaker}_single.png",
+        f"{speaker}_single.png.png",
+        "avatar.png",
+    )
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            print(
+                f"[Minimal] 找不到產製頭像 {preferred}，"
+                f"改用圓形備援頭像 {candidate}。"
+            )
+            return _circularize_avatar(candidate)
+    raise FileNotFoundError(
+        f"No avatar available for {speaker}: tried {preferred} and {candidates}."
+    )
+
 # 單一主題總口播字數目標（不含開場報價與片尾）。
 TARGET_MIN_CHARS = 2600
 TARGET_MAX_CHARS = 3400
@@ -743,8 +790,8 @@ def render_main_story(story):
         {"cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
          "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None}
     )
-    cat_img = avatars["cat_idle"]
-    dog_img = avatars["dog_idle"]
+    cat_img = resolve_avatar_input(avatars["cat_idle"], "cat")
+    dog_img = resolve_avatar_input(avatars["dog_idle"], "dog")
     margin = 48
     bottom = MAIN_H - avatar_size - 150
     filter_complex = (
