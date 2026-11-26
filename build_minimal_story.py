@@ -47,7 +47,7 @@ FPS = media_engine.VIDEO_FPS
 
 
 # ── 頭像路徑解析（含檔案存在檢查與圓形裁切備援） ──────────────
-def _circularize_avatar(path):
+def _circularize_avatar(path, out_path):
     """把任意頭像圖裁成正方形並套用圓形遮罩，輸出帶 alpha 的過場 PNG。"""
     with Image.open(path) as source:
         avatar = source.convert("RGBA")
@@ -62,34 +62,50 @@ def _circularize_avatar(path):
     ImageDraw.Draw(mask).ellipse((0, 0, 224, 224), fill=255)
     out = Image.new("RGBA", (225, 225), (0, 0, 0, 0))
     out.paste(avatar, (0, 0), mask)
-    out_path = f"avatar_fallback_{os.getpid()}.png"
     out.save(out_path)
     return out_path
 
 
 def resolve_avatar_input(preferred, speaker):
-    """確保傳給 FFmpeg -i 的頭像一定存在。
+    """確保傳給 FFmpeg -i 的頭像一定存在且為圓形。
 
-    優先採用 create_speaker_avatars 產生的圓形頭像（preferred）；若不存在，
-    依序備援根目錄 `<speaker>_single.png`、`<speaker>_single.png.png`、
-    `avatar.png`，並把備援圖裁為圓形後回傳。
+    依序檢查 `<speaker>_avatar.png`、`<speaker>_single.png`、
+    `<speaker>_single.png.png`、`avatar.png`，取第一個存在的檔案，
+    重新裁為圓形後**確認產出檔案存在**再回傳；若某來源損壞（如 CI 產生的
+    0 位元或截圖失敗），自動跳到下一個候選，避免 FFmpeg 拿到不存在的
+    `cat_avatar.png`／`dog_avatar.png` 而 exit status 234。
     """
-    if preferred and os.path.exists(preferred):
-        return preferred
-    candidates = (
+    candidates = [
+        preferred or f"{speaker}_avatar.png",
+        f"{speaker}_avatar.png",
         f"{speaker}_single.png",
         f"{speaker}_single.png.png",
         "avatar.png",
-    )
+    ]
+    seen = set()
+    out_path = f"{speaker}_avatar_overlay.png"
     for candidate in candidates:
-        if os.path.exists(candidate):
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if not os.path.exists(candidate):
+            continue
+        try:
+            produced = _circularize_avatar(candidate, out_path)
+        except (OSError, ValueError) as error:
             print(
-                f"[Minimal] 找不到產製頭像 {preferred}，"
-                f"改用圓形備援頭像 {candidate}。"
+                f"[Minimal] 頭像來源 {candidate} 無法讀取（{error}），"
+                "改用下一個候選。"
             )
-            return _circularize_avatar(candidate)
+            continue
+        if os.path.exists(produced):
+            if candidate != preferred:
+                print(
+                    f"[Minimal] 使用圓形備援頭像 {candidate} -> {produced}。"
+                )
+            return produced
     raise FileNotFoundError(
-        f"No avatar available for {speaker}: tried {preferred} and {candidates}."
+        f"No usable avatar for {speaker}: tried {list(seen)}."
     )
 
 # 單一主題總口播字數目標（不含開場報價與片尾）。
