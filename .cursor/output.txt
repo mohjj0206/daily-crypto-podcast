@@ -159,3 +159,31 @@ Git Commit
 è¨Šæ¯ï¼šfeat(phase3): Pixabay B-Roll engine, dual-track TTS pronunciation,
 and 12s outro
 ï¼ˆæœ¬éšæ®µåƒ…å»ºç«‹æœ¬åœ° commitï¼Œæœª pushï¼‰
+
+================================================================
+Phase 4 ³Ì²×¦¬§À»P¸ó¼Ò²Õ¾ã¦XÅçÃÒ³ø§i¡]ÀRÀq¤u§@¬y¡^
+================================================================
+°õ¦æ®É¶¡¡G2026-11-26
+¤À¤ä¡Gfeat/ultimate-overhaul
+Git Commit Hash¡G07620b41d21997d23a39f9987b2caca35614070e
+»·ºİ±À°eª¬ºA¡G¤w¦¨¥\±À°e¦Ü origin/feat/ultimate-overhaul
+
+----------------------------------------------------------------
+1. GitHub Actions Àô¹ÒÅÜ¼Æ»P B-Roll §Ö¨ú³]©w
+----------------------------------------------------------------
+- .github/workflows/render.yml¡G¤w©ó build job ªº env °Ï¶ô¥[¤J PIXABAY_API_KEY
+- .github/workflows/special_topic.yml¡G¤w©ó tutorial job ªº env °Ï¶ô¥[¤J PIXABAY_API_KEY
+- .gitignore¡G¤w¥[¤J assets/broll_cache/¡B__pycache__/¡B*.pyc ¥H¤Î©Ò¦³¼È¦s¼v­µ»P°ÊºA¿é¥XÀÉ
+
+----------------------------------------------------------------
+2. youtube_metadata.txt §¹¾ã¿é¥XÅçÃÒ
+----------------------------------------------------------------
+- youtube_uploader.py / build_and_upload.py / build_special_topic.py ¬Ò½T»{§¹¾ã¿é¥X§¹¾ã¼ĞÃD¡B»¡©úÄæ»P®É¶¡¶b¦Ü youtube_metadata.txt
+
+----------------------------------------------------------------
+3. ¸ó¼Ò²Õ¾ã¦X»P¥ş±M®×½sÄ¶ÀË¬dµ²ªG
+----------------------------------------------------------------
+- ¸ó¼Ò²Õ©I¥s°Ñ¼Æ¡B¦^¶Ç«¬§O»P import ¥ş³¡¤@­PµL¿òº|
+- ¥ş±M®× 10 ­Ó .py ÀÉ®×°õ¦æ python -m py_compile¡GALL_EXIT=0¡]¹s»yªk¿ù»~¡^
+================================================================
+
