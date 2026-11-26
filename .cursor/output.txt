@@ -161,29 +161,72 @@ and 12s outro
 （本階段僅建立本地 commit，未 push）
 
 ================================================================
-Phase 4 �̲צ����P��Ҳվ�X���ҳ��i�]�R�q�u�@�y�^
+Phase 4 �̲צ����P��Ҳվ�X���ҳ��i�]�R�q�u�@�y�^
 ================================================================
-����ɶ��G2026-11-26
-����Gfeat/ultimate-overhaul
-Git Commit Hash�G07620b41d21997d23a39f9987b2caca35614070e
-���ݱ��e���A�G�w���\���e�� origin/feat/ultimate-overhaul
+����ɶ��G2026-11-26
+����Gfeat/ultimate-overhaul
+Git Commit Hash�G07620b41d21997d23a39f9987b2caca35614070e
+���ݱ��e���A�G�w���\���e�� origin/feat/ultimate-overhaul
 
 ----------------------------------------------------------------
-1. GitHub Actions �����ܼƻP B-Roll �֨��]�w
+1. GitHub Actions �����ܼƻP B-Roll �֨��]�w
 ----------------------------------------------------------------
-- .github/workflows/render.yml�G�w�� build job �� env �϶��[�J PIXABAY_API_KEY
-- .github/workflows/special_topic.yml�G�w�� tutorial job �� env �϶��[�J PIXABAY_API_KEY
-- .gitignore�G�w�[�J assets/broll_cache/�B__pycache__/�B*.pyc �H�ΩҦ��Ȧs�v���P�ʺA��X��
+- .github/workflows/render.yml�G�w�� build job �� env �϶��[�J PIXABAY_API_KEY
+- .github/workflows/special_topic.yml�G�w�� tutorial job �� env �϶��[�J PIXABAY_API_KEY
+- .gitignore�G�w�[�J assets/broll_cache/�B__pycache__/�B*.pyc �H�ΩҦ��Ȧs�v���P�ʺA��X��
 
 ----------------------------------------------------------------
-2. youtube_metadata.txt �����X����
+2. youtube_metadata.txt �����X����
 ----------------------------------------------------------------
-- youtube_uploader.py / build_and_upload.py / build_special_topic.py �ҽT�{�����X������D�B������P�ɶ��b�� youtube_metadata.txt
+- youtube_uploader.py / build_and_upload.py / build_special_topic.py �ҽT�{�����X������D�B������P�ɶ��b�� youtube_metadata.txt
 
 ----------------------------------------------------------------
-3. ��Ҳվ�X�P���M�׽sĶ�ˬd���G
+3. ��Ҳվ�X�P���M�׽sĶ�ˬd���G
 ----------------------------------------------------------------
-- ��ҲթI�s�ѼơB�^�ǫ��O�P import �����@�P�L��|
-- ���M�� 10 �� .py �ɮװ��� python -m py_compile�GALL_EXIT=0�]�s�y�k���~�^
+- ��ҲթI�s�ѼơB�^�ǫ��O�P import �����@�P�L��|
+- ���M�� 10 �� .py �ɮװ��� python -m py_compile�GALL_EXIT=0�]�s�y�k���~�^
 ================================================================
 
+================================================================
+緊急熱修復報告（靜默工作流）
+================================================================
+執行時間：2026-11-26
+任務：修正 script_writer.py 動態 YouTube 標題 f-string 崩潰
+      ValueError: Unknown format code 'f' for object of type 'str'
+
+----------------------------------------------------------------
+真正根因（與原始指令假設不同）
+----------------------------------------------------------------
+崩潰指向 script_writer.py:913 _generate_yt_title 的 f-string。
+經追查，根因並非「未跳脫大括號」，而是「型別錯誤」：
+  - market_data.py:2029  cur_p = str(presentation.round_usd(...)) → cur_p 為字串
+  - 新 code 對字串套用數值格式 '{cur_p:,.0f}' → 執行期拋 ValueError
+  （若真為未跳脫大括號，Python 會在 import/compile 階段即 SyntaxError；
+   事前 py_compile 已全數通過，可佐證非括號問題。）
+
+----------------------------------------------------------------
+修改內容
+----------------------------------------------------------------
+- script_writer.py
+  * L924 _generate_yt_title 提示詞：${cur_p:,.0f} → {format_usd(cur_p)}
+  * L958 _generate_yt_highlights：${cur_p:,.0f} → {format_usd(cur_p)}
+  format_usd 已於檔首 from presentation import 匯入，可處理字串並輸出「$97,234」。
+
+----------------------------------------------------------------
+全面檢查（其餘 f-string 無需改動）
+----------------------------------------------------------------
+- build_and_upload.py：無含字面大括號的 prompt/三重引號 f-string。
+- build_special_topic.py：p2_prompt 已正確以 {{part1}} 跳脫；其餘 :.2f 等格式
+  皆作用於真正數值（rsi_14、drawdown、duration 等），非字串。
+- script_writer.py / media_engine.py：其餘 numeric format 皆為數值型別，安全。
+
+----------------------------------------------------------------
+驗證
+----------------------------------------------------------------
+- 對所有 .py 執行 python -m py_compile：全部通過（PY_COMPILE_DONE，無 COMPILE FAIL）。
+- 以字串 cur_p='97234' 隔離重現修正後邏輯，輸出正確、不再拋 ValueError：
+    title: - BTC 現價：$97,234，24H 漲跌：+1.23%
+    highlight: BTC $97,234（24H +1.23%），撐住關鍵均線
+  （完整 import script_writer 的 runtime 測試因本機缺 feedparser 無法執行，
+    與本次修正無關；改以 presentation.format_usd 隔離驗證。）
+================================================================

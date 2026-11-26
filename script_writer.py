@@ -921,7 +921,7 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
 5. 嚴格控制在 65–88 字元
 
 當日數據：
-- BTC 現價：${cur_p:,.0f}，24H 漲跌：{btc_pct:+.2f}%
+- BTC 現價：{format_usd(cur_p)}，24H 漲跌：{btc_pct:+.2f}%
 - 恐慌貪婪指數：{fng}
 - 核心矛盾：{core_conflict}
 - 開場鉤子：{opening_hook}
@@ -955,7 +955,7 @@ def _generate_yt_highlights(mdata, editorial_brief, slide_titles, is_test):
         highlights.append(f"核心矛盾：{core_conflict[:60]}")
     cur_p = mdata.get("cur_p", 0)
     btc_pct = mdata.get("btc_pct", 0)
-    highlights.append(f"BTC ${cur_p:,.0f}（24H {btc_pct:+.2f}%），{'撐住' if btc_pct >= 0 else '失守'}關鍵均線")
+    highlights.append(f"BTC {format_usd(cur_p)}（24H {btc_pct:+.2f}%），{'撐住' if btc_pct >= 0 else '失守'}關鍵均線")
     if slide_titles and len(slide_titles) > 3:
         highlights.append(f"本集重點：{slide_titles[3][:50]}")
     elif len(highlights) < 3:
