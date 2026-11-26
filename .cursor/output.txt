@@ -32,7 +32,8 @@ python -m py_compile 全數 .py 通過（EXIT=0）。
 0.6、27.53%）/ create_thumbnail / _normalize_story 全部 ALL_OK。
 
 【Git Commit Hash】
-（見下方 push 結果）
+ce3a36a（feat: fix existing slide visibility and add standalone minimal storytelling pipeline）
+已 push 至 origin/main。
 
 【備註】
 本線完全獨立，未改動任何舊程式；CI 環境已具備 feedparser / opencc / playwright
