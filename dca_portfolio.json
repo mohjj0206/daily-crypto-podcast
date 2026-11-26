@@ -116,6 +116,15 @@
       "twd_rate": 32.597,
       "btc_bought": 0.00383356,
       "usd_invested": 306.78
+    },
+    {
+      "date": "2026-11-25",
+      "twd_invested": 10000,
+      "usd_invested": 303.76,
+      "btc_price_usd": 59747.77,
+      "btc_price_twd": 1966956.28,
+      "twd_rate": 32.921,
+      "btc_bought": 0.005084
     }
   ],
   "start_date": "2025-10-25",
@@ -175,21 +184,25 @@
     "2026-10": {
       "twd_invested": 10000.0,
       "btc_bought": "0.00383356"
+    },
+    "2026-11": {
+      "twd_invested": 10000.0,
+      "btc_bought": "0.00508400"
     }
   },
-  "total_twd": 130000.0,
-  "total_btc": "0.05279016",
-  "avg_buy_price_twd": 2462580.15,
-  "avg_buy_price_usd": 77742.52,
-  "current_btc_usd": 61901.0,
-  "current_twd_rate": 32.924,
-  "current_market_value_usd": 3267.76,
-  "current_market_value_twd": 107587.85,
-  "unrealized_pnl_usd": -836.28,
-  "unrealized_pnl_twd": -22412.15,
-  "total_return_pct": -17.24,
-  "total_invested_usd": 4104.04,
-  "current_value_usd": 3267.76,
-  "roi_pct": -20.38,
+  "total_twd": 140000.0,
+  "total_btc": "0.05787416",
+  "avg_buy_price_twd": 2419041.59,
+  "avg_buy_price_usd": 76161.8,
+  "current_btc_usd": 60924.0,
+  "current_twd_rate": 33.15,
+  "current_market_value_usd": 3525.93,
+  "current_market_value_twd": 116884.43,
+  "unrealized_pnl_usd": -881.87,
+  "unrealized_pnl_twd": -23115.57,
+  "total_return_pct": -16.51,
+  "total_invested_usd": 4407.8,
+  "current_value_usd": 3525.93,
+  "roi_pct": -20.01,
   "contribution_note": "自 2025-10-25 起，每月 25 日固定投入 NT$10,000（依當日 USD/TWD 匯率換算為美元買進 BTC）。"
 }
