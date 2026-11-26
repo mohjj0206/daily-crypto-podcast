@@ -5,6 +5,7 @@ import json
 import time
 import calendar
 import math
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -229,10 +230,54 @@ def fetch_rss_news(tw_tz):
     return entries
 
 
+_NEWS_BODY_PATTERNS = (
+    r"(?is)<article\b[^>]*>(.*?)</article>",
+    r'(?is)<(?:div|section|article|main)\b[^>]*class=["\'][^"\']*article[^"\']*["\'][^>]*>(.*?)</(?:div|section|article|main)>',
+    r'(?is)<(?:div|section|article|main)\b[^>]*class=["\'][^"\']*content[^"\']*["\'][^>]*>(.*?)</(?:div|section|article|main)>',
+    r'(?is)<(?:div|section|article|main)\b[^>]*class=["\'][^"\']*post[^"\']*["\'][^>]*>(.*?)</(?:div|section|article|main)>',
+    r"(?is)<main\b[^>]*>(.*?)</main>",
+)
+
+_NEWS_PARAGRAPH_BANS = (
+    "延伸閱讀",
+    "這篇文章最早發佈於",
+    "版權所有",
+    "All rights reserved",
+    "追蹤動區",
+    "加入動區",
+    "TG 頻道",
+    "Line 社群",
+)
+
+
+def _news_body_candidates(html_cleaned):
+    candidates = []
+    for pattern in _NEWS_BODY_PATTERNS:
+        match = re.search(pattern, html_cleaned)
+        if match:
+            candidates.append(match.group(1))
+    candidates.append(html_cleaned)
+    return candidates
+
+
+def _paragraphs_from_html(container):
+    paragraphs = []
+    for p_html in re.findall(r"(?is)<p[^>]*>(.*?)</p>", container):
+        clean_p = re.sub(r"(?is)<[^>]+>", "", p_html)
+        clean_p = html.unescape(clean_p).strip()
+        if len(clean_p) < 15:
+            continue
+        if any(banned in clean_p for banned in _NEWS_PARAGRAPH_BANS):
+            continue
+        paragraphs.append(clean_p)
+    return paragraphs
+
+
 def enrich_top_news_with_full_text(news_list, max_articles=4):
     """
     對篩選出的前 max_articles 則核心新聞發送 HTTP 請求（含完整 User-Agent 與 10 秒逾時防呆），
-    提取 <article> 或 <p> 內的完整新聞正文（每篇 1,200～2,500 字真實細節、人物引述、機構數據與事件脈絡）。
+    依序從 <article>、class 含 article/content/post 的容器，以及 <main> 內的 <p> 提取正文
+    （每篇 1,200～2,500 字真實細節、人物引述、機構數據與事件脈絡）。
     若某網頁無法抓取則靜默保留原摘要，絕不報錯中斷。
     """
     if not news_list:
@@ -273,46 +318,17 @@ def enrich_top_news_with_full_text(news_list, max_articles=4):
                 html_text,
             )
 
-            # 優先搜尋 <article> 或主要內容容器
-            article_match = re.search(r"(?is)<article[^>]*>(.*?)</article>", html_cleaned)
-            if not article_match:
-                article_match = re.search(
-                    r'(?is)<div[^>]+class=["\'][^"\']*(?:entry-content|post-content|article-content|story-content)[^"\']*["\'][^>]*>(.*?)</div>',
-                    html_cleaned,
-                )
-            container = article_match.group(1) if article_match else html_cleaned
-
-            # 抓取 <p> 段落
-            p_matches = re.findall(r"(?is)<p[^>]*>(.*?)</p>", container)
-            paragraphs = []
-            for p_html in p_matches:
-                clean_p = re.sub(r"(?is)<[^>]+>", "", p_html)
-                clean_p = html.unescape(clean_p).strip()
-                if len(clean_p) < 15:
-                    continue
-                # 過濾常見網站版權與社群宣傳廢話
-                if any(
-                    banned in clean_p
-                    for banned in (
-                        "延伸閱讀",
-                        "這篇文章最早發佈於",
-                        "版權所有",
-                        "All rights reserved",
-                        "追蹤動區",
-                        "加入動區",
-                        "TG 頻道",
-                        "Line 社群",
-                    )
-                ):
-                    continue
-                paragraphs.append(clean_p)
-
-            full_text = "\n".join(paragraphs).strip()
-            if len(full_text) < 150:
-                # 若段落過少，回退使用正文純文字提取
-                full_text = _html_to_text(container)
-
-            full_text = re.sub(r"\s+", " ", full_text).strip()
+            full_text = ""
+            for container in _news_body_candidates(html_cleaned):
+                paragraphs = _paragraphs_from_html(container)
+                candidate = "\n".join(paragraphs).strip()
+                if len(candidate) < 150:
+                    candidate = _html_to_text(container)
+                candidate = re.sub(r"\s+", " ", candidate).strip()
+                if len(candidate) > len(full_text):
+                    full_text = candidate
+                if len(full_text) >= 150:
+                    break
             # 限制長度在 1,200～2,500 字以內，保留核心論據
             if len(full_text) > 2500:
                 full_text = full_text[:2500]
@@ -1301,6 +1317,122 @@ def fetch_yahoo_daily_closes(symbol, start_date, end_date):
     }
 
 
+def _positive_price(value):
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return price
+
+
+def _yahoo_nearest_btc_close(target_date):
+    closes = fetch_yahoo_daily_closes(
+        "BTC-USD",
+        target_date - timedelta(days=3),
+        target_date + timedelta(days=3),
+    )
+    exact = _positive_price(closes.get(target_date))
+    if exact is not None:
+        return exact
+    ranked = []
+    for day, close in closes.items():
+        price = _positive_price(close)
+        if price is None:
+            continue
+        distance = abs((day - target_date).days)
+        if distance <= 3:
+            ranked.append((distance, day, price))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return ranked[0][2]
+
+
+def _binance_btc_daily_close(target_date):
+    start = datetime(
+        target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc
+    )
+    end = start + timedelta(days=1)
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000) - 1
+    url = (
+        "https://api.binance.com/api/v3/klines"
+        f"?symbol=BTCUSDT&interval=1d&startTime={start_ms}&endTime={end_ms}&limit=5"
+    )
+    candles = fetch_json(url, timeout=20, cache_bust_param=None)
+    if not isinstance(candles, list):
+        return None
+    best_price = None
+    best_distance = None
+    for candle in candles:
+        try:
+            open_day = datetime.fromtimestamp(int(candle[0]) / 1000, timezone.utc).date()
+        except (IndexError, TypeError, ValueError, OverflowError, OSError):
+            continue
+        price = _positive_price(candle[4] if len(candle) > 4 else None)
+        distance = abs((open_day - target_date).days)
+        if price is None or distance > 1:
+            continue
+        if best_price is None or distance < best_distance:
+            best_price = price
+            best_distance = distance
+    return best_price
+
+
+def _coingecko_btc_history_close(target_date):
+    date_param = target_date.strftime("%d-%m-%Y")
+    url = (
+        "https://api.coingecko.com/api/v3/coins/bitcoin/history"
+        f"?date={quote(date_param)}&localization=false"
+    )
+    payload = fetch_json(url, timeout=20, cache_bust_param=None)
+    if not isinstance(payload, dict):
+        return None
+    market = payload.get("market_data")
+    if not isinstance(market, dict):
+        return None
+    current_price = market.get("current_price")
+    if not isinstance(current_price, dict):
+        return None
+    return _positive_price(current_price.get("usd"))
+
+
+def fetch_historical_btc_close(date_str, fallback_current_price):
+    """依 Yahoo、Binance、CoinGecko、近 3 日即時價取得 BTC 收盤價，不拋 RuntimeError。"""
+    target_date = datetime.fromisoformat(str(date_str)).date()
+    sources = (
+        ("Yahoo Finance", lambda: _yahoo_nearest_btc_close(target_date)),
+        ("Binance", lambda: _binance_btc_daily_close(target_date)),
+        ("CoinGecko", lambda: _coingecko_btc_history_close(target_date)),
+    )
+    for name, getter in sources:
+        try:
+            price = getter()
+        except Exception as error:
+            print(f"[DCA] {name} 歷史收盤價失敗 ({date_str}): {error}")
+            continue
+        if price is not None:
+            print(f"[DCA] {name} 取得 {date_str} BTC 收盤價 {price}")
+            return price
+
+    today = datetime.now(ZoneInfo("Asia/Taipei")).date()
+    age_days = abs((today - target_date).days)
+    fallback = _positive_price(fallback_current_price)
+    if age_days <= 3 and fallback is not None:
+        print(
+            f"[DCA] 歷史收盤價來源暫時無回應，{date_str} 距離現在 {age_days} 天，"
+            f"改用即時 BTC 價格 {fallback} 作為該筆每月 25 日定投成交價。"
+        )
+        return fallback
+    print(
+        f"[DCA] 無法取得 {date_str} 的 BTC 歷史收盤價（距離 {age_days} 天），"
+        "略過該筆以免中斷製片。"
+    )
+    return None
+
+
 def latest_close_on_or_before(closes, target_date, max_age_days=7):
     available_dates = [date for date in closes if date <= target_date]
     if not available_dates:
@@ -1389,13 +1521,20 @@ def update_dca_portfolio(current_btc_usd, now_tw):
             historical_fx_failed = True
             print(f"Historical USDTWD rate lookup failed; using 32.5 where unavailable: {error}")
 
-        historical_btc = fetch_yahoo_daily_closes("BTC-USD", min(missing_dates), today)
+        historical_btc = {}
+        try:
+            historical_btc = fetch_yahoo_daily_closes("BTC-USD", min(missing_dates), today)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+            print(f"[DCA] Yahoo 批次 BTC 歷史價失敗，改走逐日備援：{error}")
         for deposit_date in missing_dates:
             btc_price = historical_btc.get(deposit_date)
             if btc_price is None or btc_price <= 0:
-                raise RuntimeError(
-                    f"Missing valid BTC-USD historical close for {deposit_date.isoformat()}."
+                btc_price = fetch_historical_btc_close(
+                    deposit_date.isoformat(), current_btc_usd
                 )
+            if btc_price is None or btc_price <= 0:
+                print(f"[DCA] 略過 {deposit_date.isoformat()}，沒有可用的 BTC 成交價。")
+                continue
             twd_rate = latest_close_on_or_before(historical_fx, deposit_date)
             if twd_rate is None or twd_rate <= 0:
                 if not historical_fx_failed:
@@ -1819,7 +1958,14 @@ def fetch_custom_sources(tw_tz=None):
                     references.append(page)
             else:
                 print(f"custom source {source_id} 類型不支援，已跳過。")
+        except urllib.error.HTTPError as error:
+            if error.code in (403, 429):
+                continue
+            print(f"custom source {source_id} 已跳過：{error}")
         except Exception as error:
+            message = str(error)
+            if "HTTP Error 403" in message or "HTTP Error 429" in message:
+                continue
             print(f"custom source {source_id} 已跳過：{error}")
     print(f"custom sources：啟用來源整理出 {len(references)} 則背景參考。")
     return references[:8]

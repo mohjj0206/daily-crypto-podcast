@@ -1,9 +1,17 @@
 【最高指令：嚴格遵守 .cursor/rules/workflow.mdc 靜默工作流】
 1. 執行前先 `git pull origin main`。
 2. 全程保持靜默，所有修改結果寫入 `.cursor/output.txt`。
-3. 改完對所有 `.py` 執行 `python -m py_compile` 檢查，通過後 `git add .`、`git commit -m "chore: replace public ledger URL with short link is.gd/2JOYTF and keep YT upload disabled"` 並 `git push origin main`。
+3. 改完對所有 `.py` 執行 `python -m py_compile` 檢查，通過後 `git add .`、`git commit -m "fix: add multi-source BTC historical price fallback for DCA ledger to prevent RuntimeError"` 並 `git push origin main`。
 
-【任務目標：將公開帳本網址全面替換為短網址 https://is.gd/2JOYTF】
-1. **搜尋並替換所有公開帳本網址**：
-   - 在專案內所有 `.py`、`.json`、`.md` 檔案中，將原本的公開帳本網址 `https://mohjj0206.github.io/daily-crypto-podcast/`（以及未帶結尾斜線的 `https://mohjj0206.github.io/daily-crypto-podcast`）統一替換為 **`https://is.gd/2JOYTF`**。
-   - **嚴格防呆**：請勿修改 `index.html` 內的本地圖片相對路徑（如 `avatar.png`）或 `dca_portfolio.json` 讀取路徑。
+【緊急熱修復：解決 update_dca_portfolio 因單一來源缺失 2026-11-25 收盤價導致崩潰】
+在 `market_data.py` 第 1396 行 `update_dca_portfolio()` 中，發生 `RuntimeError: Missing valid BTC-USD historical close for 2026-11-25.` 導致整集節目中斷。請立即修復：
+
+1. **建立多層歷史收盤價備援鏈（`fetch_historical_btc_close(date_str, fallback_current_price)`）**：
+   - **第一順位**：Yahoo Finance 歷史日線收盤價（放寬查詢區間至目標日期前後 3 天，取最接近目標日期的收盤價）。
+   - **第二順位**：Binance 公開現貨日線 K 線 API（`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d` 指定該日 UTC 時間戳起訖，讀取 `close` 價格）。
+   - **第三順位**：CoinGecko 歷史日期價格 API（`https://api.coingecko.com/api/v3/coins/bitcoin/history?date=DD-MM-YYYY`）。
+   - **第四順位（最終防崩潰保底）**：若目標補登日期距離現在 `<= 3` 天且上述外部歷史 API 均暫時無回應，自動使用當下即時抓到的 `current_btc_usd` 作為該筆每月 25 日定投成交價（並在 Log 印出一行提示），**嚴禁再拋出 `RuntimeError` 中斷整集製片流程**。
+
+2. **優化新聞全文提取與外部來源容錯（`market_data.py`）**：
+   - 擴充 `enrich_top_news_with_full_text()` 的網頁正文選擇器（同時支援 `<article>`、`[class*="article"]`、`[class*="content"]`、`[class*="post"]` 與 `<main>` 內的 `<p>` 段落），提升抓取成功率。
+   - 對於 `custom_sources.json` 遇到 `403/429` 的來源維持靜默略過。
