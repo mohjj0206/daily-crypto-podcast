@@ -580,6 +580,18 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     highlights = slide_data.get("highlights", [])
     if isinstance(highlights, str):
         highlights = highlights.splitlines()
+    # 強制保底：任何原因導致重點為空時，從標題／內文切出至少 3 張卡，
+    # 確保畫面永不出現「只有箭頭／VS 章、卡片全隱形」的空白頁。
+    highlights = [str(item).strip() for item in (highlights or []) if str(item).strip()]
+    if not highlights:
+        fallback_title = script_writer.clean_slide_title(slide_data.get("title", "")).strip()
+        fallback_body = script_writer.clean_slide_text(slide_data.get("body", "")).strip()
+        for source in (fallback_title, fallback_body):
+            for line in str(source).splitlines():
+                line = line.strip()
+                if line and line not in highlights:
+                    highlights.append(line)
+        highlights = highlights[:3] or [fallback_title or "先看結構再談價格"]
     reveal_count = 0
     highlight_state = {"remaining": 3}
     title_markup = highlight_key_numbers(
@@ -1115,7 +1127,8 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   to {{ clip-path: inset(0 0 0 0); }}
 }}
 .metric-rail {{
-  position: absolute; left: 290px; right: 290px; bottom: 152px; z-index: 6;
+  position: absolute; left: 290px; right: 290px; bottom: 28px; z-index: 6;
+  overflow: visible;
 }}
 .disclaimer-line {{
   margin: 0 0 6px; text-align: center; color: #94a3b8;
@@ -1162,31 +1175,31 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .gauge-value small {{ color: #94a3b8; font-size: 24px; font-weight: 700; }}
 @keyframes heroPop {{ from {{ opacity: 0; transform: scale(.88) translateY(18px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
 
-/* ── Progressive Kinetic Reveal：TTS 時間軸驅動逐點彈出高亮 ── */
+/* ── Progressive Kinetic Focus：所有卡片預設 100% 清晰可見，
+   語音講到哪張就加上金色發光邊框高亮，絕不隱形。 ── */
 .slide-stage.kinetic .reveal-node {{ animation: none !important; }}
 .reveal-node {{
-  opacity: 0; transform: translateY(22px) scale(0.96);
+  opacity: 1 !important; visibility: visible !important;
+  transform: translateY(0) scale(1);
   transition:
-    opacity 0.35s cubic-bezier(0.22, 1, 0.36, 1),
     transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.35s ease, border-color 0.35s ease,
     background 0.35s ease, filter 0.35s ease, color 0.35s ease;
-  will-change: opacity, transform;
 }}
-.reveal-node.is-hidden {{ opacity: 0; transform: translateY(22px) scale(0.96); }}
+.reveal-node.is-hidden {{ opacity: 0.78 !important; visibility: visible !important; transform: translateY(0) scale(1); }}
 .reveal-node.is-active {{
-  opacity: 1; transform: translateY(0) scale(1.03);
+  opacity: 1 !important; visibility: visible !important; transform: translateY(0) scale(1.02);
   border-color: rgba(251, 191, 36, .9) !important;
-  box-shadow: 0 0 30px rgba(251, 191, 36, .5), 0 0 0 1px rgba(251, 191, 36, .55) inset;
+  box-shadow: 0 0 24px rgba(251, 191, 36, .35), 0 0 0 1px rgba(251, 191, 36, .55) inset;
 }}
 .reveal-node.is-active,
 .reveal-node.is-active .step-text,
 .reveal-node.is-active li,
 .reveal-node.is-active strong {{ color: #FBBF24 !important; }}
 .reveal-node.is-dimmed {{
-  opacity: 0.48; transform: translateY(0) scale(0.98);
+  opacity: 0.78 !important; visibility: visible !important; transform: translateY(0) scale(1);
   border-color: rgba(148, 163, 184, .32) !important;
-  box-shadow: none !important; filter: saturate(0.55);
+  box-shadow: none !important; filter: saturate(0.85);
 }}
 </style>
 </head>

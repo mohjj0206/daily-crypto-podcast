@@ -264,6 +264,7 @@ def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
     if news:
         news_body = f"利多：{news[0].get('positive') or lead}；風險：{news[0].get('risk') or '單則消息不是買賣指令。'}"
     week_body = "\n".join(weeks[:3]) or lead
+    week_cursor = 0
     for idx, slide in enumerate(slides or []):
         if slide.get("role") != "story":
             continue
@@ -276,7 +277,14 @@ def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
             else:
                 slide["body"] = f"利多：{lead}；風險：短線量能若未跟上結構確認，回撤壓力仍在。"
         elif layout == "timeline_steps":
-            slide["body"] = week_body
+            # 多頁三步驟若都用同一組條件會看起來像空頁；有足夠條件時逐頁輪替。
+            if len(weeks) >= 3:
+                offset = week_cursor % len(weeks)
+                rotated = weeks[offset:] + weeks[:offset]
+                slide["body"] = "\n".join(rotated[:3])
+            else:
+                slide["body"] = week_body
+            week_cursor += 1
         else:
             slide["body"] = f"{lead}\n{title}"
     for slide in slides or []:
@@ -501,11 +509,23 @@ def condense_slide_line(text):
         token = number.group(0)
         if len(token) <= MAX_SLIDE_LINE:
             head = candidate[: candidate.find(token)].strip(" ，、；：")
-            head = head[: max(0, MAX_SLIDE_LINE - len(token))].strip(" ，、；：")
+            budget = max(0, MAX_SLIDE_LINE - len(token))
+            if len(head) > budget:
+                # head 太長時在自然斷點切，不硬切出半截詞。
+                window = head[: budget + 4]
+                cut = max(window.rfind(ch) for ch in "，、；：, ")
+                head = window[:cut] if cut >= 4 else window
+            head = head.strip(" ，、；：, ")
             combined = f"{head} {token}".strip()
             if combined:
                 return combined[: MAX_SLIDE_LINE + 2].strip()
-    return candidate[:MAX_SLIDE_LINE].strip(" ，、；：")
+    # 太長又沒有數字：在容差範圍內找最近的標點或空格當自然斷點，
+    # 找不到就保留完整子句，寧可略長也不硬切出斷頭句。
+    window = candidate[: MAX_SLIDE_LINE + 4]
+    cut = max(window.rfind(ch) for ch in "，、；：, ")
+    if cut >= 6:
+        return window[:cut].strip(" ，、；：, ")
+    return candidate.strip(" ，、；：")
 
 
 def limit_slide_body(body):
