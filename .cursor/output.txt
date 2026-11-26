@@ -1,0 +1,39 @@
+========================================================================
+靜默工作流執行報告
+========================================================================
+執行時間：2026-11-26 13:49:40 (TW)
+
+【讀取的任務摘要】
+新增完全獨立的「極簡故事圖解線」（方案 A — 不影響舊程式）：
+1. 建立全新獨立主程式 build_minimal_story.py 與獨立 GitHub Actions 工作流
+   .github/workflows/minimal_story.yml（workflow_dispatch 手動觸發、
+   ENABLE_YOUTUBE_UPLOAD 預設 false、產出 story_main.mp4 / story_short.mp4 /
+   story_thumb.jpg / story_metadata.txt 並自動上傳 Releases latest-preview）。
+2. 極簡高留白視覺舞台：移除頂部數據條、底部四張指標卡與花俏方框，85% 畫面為
+   深邃黑藍漸層（或疊加 65% 暗化遮罩 Pixabay 1080p 實景底片）；中央 1 個大數字
+   對比＋最多 3～4 行（每行 ≤14 字）短句，依 TTS 累積秒數逐行亮起（當前 56px
+   純白／琥珀金發光、已講完退為暗灰）；左下右下保留 190×190 貓狗圓形頭像與
+   底部 66pt 字幕，維持 12 秒動態片尾。
+3. 單一重磅主題＋生活比喻寫稿引擎：只挑 1 個最震撼事件深挖，開場 30 秒一句話
+   帶過 BTC／ETH 現價，其餘 95% 深挖單一主題，總長約 10～13 分鐘、3,500～4,200 字；
+   Prompt 強制生活比喻法（餐廳主廚試菜、買房交屋驗屋、大哥外包粗活給 L2 小弟）。
+4. 雙軌 TTS 數字發音：沿用 media_engine.synth_audio_segment 與
+   presentation.pronounce_for_tts，字幕保留 0.6、27.53%，TTS 轉自然中文讀法。
+
+【修改／新增檔案清單】
+- 新增 build_minimal_story.py（獨立主程式，全程不引用舊程式流程，僅重用純函式庫）
+- 新增 .github/workflows/minimal_story.yml（獨立工作流）
+- 修改 .gitignore（忽略 story_main.mp4 / story_short.mp4 / story_thumb.jpg /
+  story_metadata.txt 等產物）
+
+【語法檢查結果】
+python -m py_compile 全數 .py 通過（EXIT=0）。
+另以 stub 相依套件實測：build_pages / distribute_reveal / build_ass（字幕保留
+0.6、27.53%）/ create_thumbnail / _normalize_story 全部 ALL_OK。
+
+【Git Commit Hash】
+（見下方 push 結果）
+
+【備註】
+本線完全獨立，未改動任何舊程式；CI 環境已具備 feedparser / opencc / playwright
+等相依套件，可直接以 workflow_dispatch 觸發。

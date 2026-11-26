@@ -1,0 +1,82 @@
+name: Minimal Story
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: '測試模式（跑完極簡故事，不上傳 YouTube）'
+        required: false
+        default: false
+        type: boolean
+      enable_youtube_upload:
+        description: '是否上傳至 YouTube（預設關閉，僅發布至 GitHub Releases latest-preview）'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  minimal-story:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install FFmpeg and Traditional Chinese Fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+
+      - name: Install Python dependencies and Playwright
+        run: |
+          pip install feedparser pillow matplotlib opencc-python-reimplemented google-api-python-client google-auth-oauthlib playwright
+          playwright install chromium --with-deps
+
+      - name: Build minimal story
+        env:
+          TEST_MODE: ${{ inputs.test_mode || 'false' }}
+          ENABLE_YOUTUBE_UPLOAD: ${{ vars.ENABLE_YOUTUBE_UPLOAD || inputs.enable_youtube_upload || 'false' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python build_minimal_story.py
+
+      - name: Publish preview to GitHub Releases
+        if: ${{ success() || failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILES=()
+          [ -f story_main.mp4 ] && FILES+=(story_main.mp4)
+          [ -f story_short.mp4 ] && FILES+=(story_short.mp4)
+          [ -f story_thumb.jpg ] && FILES+=(story_thumb.jpg)
+          [ -f story_metadata.txt ] && FILES+=(story_metadata.txt)
+
+          if [ ${#FILES[@]} -gt 0 ]; then
+            echo "正在發布極簡故事預覽至 latest-preview Release..."
+            gh release view latest-preview >/dev/null 2>&1 || gh release create latest-preview --title "Latest Preview" --notes "Automated video preview"
+            gh release upload latest-preview "${FILES[@]}" --clobber
+          else
+            echo "找不到預覽影音檔案，略過 Release 發布。"
+          fi
+
+      - name: Upload preview artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: minimal-story-preview-${{ github.run_number }}
+          path: |
+            story_main.mp4
+            story_short.mp4
+            story_thumb.jpg
+            story_metadata.txt
+          retention-days: 5
