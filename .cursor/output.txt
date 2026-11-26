@@ -1,22 +1,28 @@
-﻿執行時間：2026-11-26（Asia/Taipei）
-執行：git pull origin main -> 修改 -> py_compile 全綠 -> git add/commit/push
+﻿========================================
+執行時間：2026-11-26
+任務摘要：在 script_writer.py 建立 OpenRouter 免費模型第二備援通道（杜絕 Gemini 全線 503/429 失敗），並於 3 個 GitHub Actions Workflow 注入 OPENROUTER_API_KEY
+========================================
 
-【任務摘要】修復 build_minimal_story.py 第 444 行 TypeError: 'NoneType' object is not subscriptable，並強化故事飽滿度與封殺錯字。
+【修改檔案清單】
+1. script_writer.py
+   - 新增 _call_openrouter_fallback()，當 Gemini 全線失敗（503/429/連線異常）時自動呼叫 OpenRouter 免費模型：
+     * baidu/ernie-5.5-flash-preview:free
+     * nvidia/nemotron-3-ultra-550b-a55b:free
+     * openrouter/free
+   - 加入標準 OpenRouter 標頭（Authorization、Content-Type、HTTP-Referer、X-Title）與台灣繁體中文鎖定提示。
+   - 於 call_gemini() 序列全部失敗後無縫呼叫備援，回傳格式與原本 100% 相容。
+2. build_special_topic.py
+   - 於獨立 call_gemini() 尾端加入呼叫 script_writer._call_openrouter_fallback()。
+3. .github/workflows/render.yml
+   - env 區塊加入 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+4. .github/workflows/special_topic.yml
+   - env 區塊加入 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+5. .github/workflows/minimal_story.yml
+   - env 區塊加入 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
-【Bug 1】build_pages 安全取值（防 NoneType 崩潰）
-- build_minimal_story.py：build_pages() 改以 (story.get("topic_title") or story.get("title") or "今日市場深度聚焦").strip() 安全取值後再切片。
-- 所有字典鍵取值（topic_summary／opening／slides／slide.big／lines／dialogue）統一加 or ""／or [] 防呆，模型漏填欄位不再拋 TypeError。
+【語法檢查結果】
+python -m py_compile 全部 .py 檔案：通過（回傳碼 0）
 
-【Bug 2】提升極簡故事線飽滿度（2,600～3,400 字、約 9～11 分鐘）
-- 常數 TARGET_MIN_CHARS=2600、TARGET_MAX_CHARS=3400。
-- 寫稿 Prompt：任務與 slides 規則改為 9 頁，每頁 dialogue 合計約 300～380 字口播，須含「台灣人秒懂生活場景比喻」＋「具體事件與數據推演」；畫面 lines 仍維持每行 ≤14 字極簡短句。
-
-【Bug 3】封殺「位元汪／位元犬」錯字
-- 新增本模組文字清洗函式 _clean_text()（sanitize_text 後再以 _WRONG_DOG_RE=位元[汪犬] 無條件替換為「比特汪」）。
-- gather_news 與 _normalize_story（opening／dialogue／big／topic_title／topic_summary／yt_title）全部改用 _clean_text()。
-
-【修改檔案清單】build_minimal_story.py
-
-【語法檢查】python -m py_compile build_minimal_story.py -> 通過（EXIT=0）
-
-【Git】commit hash: a2fed17；已 push origin main（b2f24f7..a2fed17）。
+【Git 資訊】
+Commit Hash: 1ce0da2177f61e3685df88a55c918c74038599ae
+已成功 push 至 origin main。
