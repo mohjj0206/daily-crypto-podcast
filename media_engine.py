@@ -19,6 +19,7 @@ from playwright.sync_api import sync_playwright
 
 import presentation
 import script_writer
+import broll_engine
 
 
 # ── 常數定義 ──────────────────────────────────────────
@@ -173,6 +174,37 @@ def calculate_slide_durations(slide_start_times, speech_duration, video_intro_du
     return durations
 
 
+def compute_slide_reveal_timestamps(results, slide_anchor_positions, slide_count):
+    """依各段真實 TTS 音檔秒數，算出每頁投影片各重點節點的揭示時間點。
+
+    回傳 {slide_number: [相對於該頁起始的累積秒數, ...]}。
+    同一頁若被 TTS 字節上限切成多段子音檔，這裡以該頁所屬全部子音檔的
+    真實 ffprobe 實長加總，確保換頁與動態彈出時間軸和語音播報對齊。
+    """
+    ordered = sorted(results, key=lambda item: item[0])
+    durations = {idx: float(dur) for idx, _fn, _line, dur in ordered}
+    reveal_map = {}
+    for slide_number in range(1, slide_count + 1):
+        anchor = slide_anchor_positions.get(slide_number)
+        if anchor is None:
+            reveal_map[slide_number] = []
+            continue
+        start_idx = int(anchor)
+        # 該頁涵蓋的對話：從本頁錨點對話起，到下一頁錨點對話（不含）為止。
+        next_positions = [
+            int(pos) for num, pos in slide_anchor_positions.items()
+            if num > slide_number and int(pos) > start_idx
+        ]
+        end_idx = min(next_positions) if next_positions else (max(durations) + 1 if durations else start_idx + 1)
+        cumulative = 0.0
+        stamps = []
+        for idx in range(start_idx, end_idx):
+            cumulative += durations.get(idx, 0.0)
+            stamps.append(round(cumulative, 3))
+        reveal_map[slide_number] = stamps
+    return reveal_map
+
+
 # ── Google TTS 語音合成 ──────────────────────────────────────────
 
 TTS_SSML_BYTE_LIMIT = 4500
@@ -234,10 +266,12 @@ def synth_audio_segment(item, file_prefix):
     idx, (role, txt) = item
     txt = script_writer.normalize_long_term_terms(txt)
     display_line = presentation.display_text(txt)
+    # 雙軌分離：字幕／簡報保留原始格式，僅 TTS 發音用臨時副本做數字轉換。
+    tts_speak_text = presentation.pronounce_for_tts(txt)
     v_name = "cmn-TW-Wavenet-B" if role == "男" else "cmn-TW-Wavenet-A"
     fallback_voice = "cmn-TW-Standard-B" if role == "男" else "cmn-TW-Standard-A"
     pitch = -1.5 if role == "男" else 1.5
-    chunks = _split_tts_text(txt)
+    chunks = _split_tts_text(tts_speak_text)
     if len(chunks) > 1:
         print(f"口播第 {idx + 1} 句超過 TTS 5000 bytes，已切成 {len(chunks)} 段。")
 
@@ -520,6 +554,14 @@ def _resolve_reveal_timestamps(reveal_timestamps, node_count, window_sec):
         step = span / (node_count - 1) if node_count > 1 else 0.0
         fallback = [start + step * i for i in range(node_count)]
         values = (values + fallback)[:node_count]
+    else:
+        # 真實 TTS 累積秒數可能超出錄製窗口（record_seconds 上限），
+        # 等比例縮放進窗口內，保留各節點相對時序，確保每點都能在擷取期間彈出。
+        window = max(0.0, float(window_sec))
+        max_value = max(values[:node_count]) if values[:node_count] else 0.0
+        if window > 0 and max_value > window:
+            scale = (window * 0.96) / max_value
+            values = [value * scale for value in values]
     ordered = []
     last = -1.0
     for value in values[:node_count]:
@@ -706,6 +748,23 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
         reveal_timestamps = slide_data.get("reveal_timestamps")
     reveal_list = _resolve_reveal_timestamps(reveal_timestamps, reveal_count, record_seconds)
     reveal_ts_json = json.dumps(reveal_list)
+
+    # B-Roll 實景動態底圖：有 broll_path 時於 slide-stage 底層循環播放，
+    # 並疊加 55% 半透明深色暗角遮罩，確保前景字卡高對比可讀。
+    broll_path = slide_data.get("broll_path")
+    broll_markup = ""
+    if broll_path and os.path.exists(broll_path):
+        try:
+            with open(broll_path, "rb") as broll_file:
+                broll_data = base64.b64encode(broll_file.read()).decode("ascii")
+            broll_markup = (
+                '<video class="broll-bg" autoplay muted loop playsinline '
+                f'src="data:video/mp4;base64,{broll_data}"></video>'
+                '<div class="broll-veil"></div>'
+            )
+        except OSError:
+            broll_markup = ""
+
     insights = slide_data.get("insights") or {}
     insight_labels = slide_data.get("insight_labels") or {}
     mvrv_pct = int(insights.get("mvrv_pct") or 40)
@@ -760,6 +819,17 @@ body {{
   from {{ transform: translate3d(0, 0, 0); }}
   to {{ transform: translate3d(48px, 24px, 0); }}
 }}
+.broll-bg {{
+  position: absolute; inset: 0; z-index: 0;
+  width: 100%; height: 100%; object-fit: cover;
+  transform: scale(1.06);
+}}
+.broll-veil {{
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(9,13,22,.30), rgba(9,13,22,.72) 78%),
+    rgba(9, 13, 22, .55);
+}}
 .ticker {{
   position: absolute; inset: 0 0 auto; z-index: 2; height: 84px;
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -789,6 +859,7 @@ body {{
 }}
 .frame {{
   position: absolute; left: 48px; right: 48px; top: 110px; bottom: 245px;
+  z-index: 3;
   padding: 24px 36px; border: 2px solid rgba(251,191,36,.72);
   border-radius: 18px; background: rgba(11,17,32,.9);
   box-shadow: 0 0 36px rgba(56,189,248,.14), inset 0 0 36px rgba(251,191,36,.04);
@@ -1121,6 +1192,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 </head>
 <body>
 <div class="slide-stage kinetic" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
+{broll_markup}
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
@@ -1754,6 +1826,8 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     outro_duration = config["OUTRO_DURATION"]
     outro_pause = config["OUTRO_PAUSE"]
     slide_count = len(sdata.get("visual_slides") or []) or config["SLIDE_COUNT"]
+    # 同集 B-Roll 輪換從乾淨狀態開始，避免跨集重複。
+    broll_engine.reset_episode_rotation()
 
     full_script = sdata["full_script"]
     dialogues, slide_anchor_positions = extract_dialogues_and_slide_anchors(full_script, slide_count)
@@ -2012,6 +2086,10 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     slide_durations = calculate_slide_durations(
         slide_start_times, speech_elapsed, intro_video_duration, slide_count, outro_pause
     )
+    # 依真實 TTS 子音檔秒數，算出每頁各重點節點的揭示時間點（音畫對齊 <0.1s）。
+    slide_reveal_map = compute_slide_reveal_timestamps(
+        results, slide_anchor_positions, slide_count
+    )
     dca_snapshot = mdata.get("dca_snapshot") or {}
     dca_return_pct = dca_snapshot.get("roi_pct")
     if dca_return_pct is None and show_dca:
@@ -2105,6 +2183,14 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 if layout == "chart_spotlight" and not (chart_path or ctype == "gauge"):
                     layout = "impact_quote"
 
+                # B-Roll：有 broll_query 的段落底圖替換為 Pixabay 1080p 實景動態影片。
+                broll_query = planned_item.get("broll_query", "")
+                broll_path = None
+                if broll_query and layout != "chart_spotlight":
+                    broll_path = broll_engine.fetch_pixabay_broll(
+                        broll_query, orientation=broll_engine.HORIZONTAL
+                    )
+
                 if layout == "versus_clash":
                     if "利多" in body or "風險" in body:
                         compare_positive, compare_risk = script_writer.split_news_summary(body)
@@ -2133,9 +2219,12 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                     "compare_risk": compare_risk,
                     "ticker_items": ticker_items,
                     "insights": slide_insights,
+                    "broll_path": broll_path,
+                    "reveal_timestamps": slide_reveal_map.get(idx),
                 }
                 render_animated_slide(
-                    idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4", browser
+                    idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4", browser,
+                    reveal_timestamps=slide_reveal_map.get(idx),
                 )
         finally:
             browser.close()
@@ -2548,6 +2637,24 @@ def render_short_video(sdata, mdata, config):
             f"<small>恐懼貪婪・{fear_classification}</small></div>"
         )
 
+    # Shorts 9:16 全面優先使用直式實景動態底片。
+    short_broll_path = broll_engine.fetch_pixabay_broll(
+        "cryptocurrency, stock market, abstract technology",
+        orientation=broll_engine.VERTICAL,
+    )
+    short_broll_markup = ""
+    if short_broll_path and os.path.exists(short_broll_path):
+        try:
+            with open(short_broll_path, "rb") as short_broll_file:
+                short_broll_data = base64.b64encode(short_broll_file.read()).decode("ascii")
+            short_broll_markup = (
+                '<video class="broll-bg" autoplay muted loop playsinline '
+                f'src="data:video/mp4;base64,{short_broll_data}"></video>'
+                '<div class="broll-veil"></div>'
+            )
+        except OSError:
+            short_broll_markup = ""
+
     short_html = f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width={SHORT_VIDEO_WIDTH}, initial-scale=1">
@@ -2575,8 +2682,18 @@ body {{
   animation:gridFlow 12s linear infinite;
 }}
 @keyframes gridFlow {{ to {{ transform:translate3d(42px,21px,0); }} }}
+.broll-bg {{
+  position:absolute; inset:0; z-index:0;
+  width:100%; height:100%; object-fit:cover; transform:scale(1.06);
+}}
+.broll-veil {{
+  position:absolute; inset:0; z-index:1; pointer-events:none;
+  background:
+    radial-gradient(ellipse at 50% 42%,rgba(9,13,22,.30),rgba(9,13,22,.72) 78%),
+    rgba(9,13,22,.55);
+}}
 .brand {{
-  position:absolute; top:24px; width:100%; text-align:center;
+  position:absolute; top:24px; width:100%; text-align:center; z-index:3;
   color:#fbbf24; font-size:29px; font-weight:800; letter-spacing:2px;
 }}
 .brand::after {{
@@ -2584,12 +2701,12 @@ body {{
   background:linear-gradient(90deg,transparent,#38bdf8,transparent); content:"";
 }}
 .avatar {{
-  position:absolute; top:78px; left:240px; width:240px; height:240px;
+  position:absolute; top:78px; left:240px; width:240px; height:240px; z-index:3;
   object-fit:contain; border:3px solid #fbbf24; border-radius:50%;
   box-shadow:0 0 34px rgba(251,191,36,.38); animation:avatarIn .8s ease-out both;
 }}
 .avatar-placeholder {{
-  position:absolute; top:78px; left:240px; width:240px; height:240px;
+  position:absolute; top:78px; left:240px; width:240px; height:240px; z-index:3;
   display:grid; place-items:center; border:3px solid #fbbf24; border-radius:50%;
   color:#fbbf24; background:#111827; font-size:52px;
 }}
@@ -2598,7 +2715,7 @@ body {{
   to {{ opacity:1; transform:scale(1); }}
 }}
 .panel {{
-  position:absolute; top:348px; left:34px; right:34px; bottom:310px;
+  position:absolute; top:348px; left:34px; right:34px; bottom:310px; z-index:3;
   padding:28px 26px; border:2px solid rgba(251,191,36,.78); border-radius:24px;
   background:rgba(15,23,42,.9); box-shadow:0 0 35px rgba(56,189,248,.14);
   overflow:hidden; text-align:center;
@@ -2641,6 +2758,7 @@ body {{
 </style></head>
 <body>
 <div class="short-stage">
+{short_broll_markup}
 <header class="brand">【幣看趨勢】｜每日市場快訊</header>
 {avatar_markup}
 <main class="panel">

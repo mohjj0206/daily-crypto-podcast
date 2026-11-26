@@ -91,3 +91,71 @@ Git Commit
 ----------------------------------------------------------------
 訊息：feat(phase2): minimal slide copy and TTS progressive kinetic reveal
 （本階段僅建立本地 commit，未 push）
+================================================================
+Phase 3 執行報告（靜默工作流）
+================================================================
+執行時間：2026-11-26
+分支：feat/ultimate-overhaul（本階段不執行 git push）
+任務：Pixabay B-Roll 實景引擎、TTS 雙軌發音 ＆ 12 秒動態片尾
+
+----------------------------------------------------------------
+讀取任務摘要
+----------------------------------------------------------------
+1. 建立免費 Pixabay 1080p 實景動態影片（B-Roll）穿插引擎，支援橫式
+   16:9 與直式 9:16，含快取、同集輪換、備援關鍵字池，無金鑰／錯誤／
+   逾時靜默回傳 None 退回深色底圖。
+2. 雙模混合視覺調度：寫稿端為非純圖表頁產出 broll_query，純圖表頁留空；
+   合成端將有 broll_query 的段落底圖替換為循環裁切實景影片並疊加 55%
+   半透明深色暗角遮罩，Shorts 優先直式底片。
+3. TTS 數字／比值發音雙軌分離（字幕原文絕不改），僅 TTS 臨時副本轉換；
+   投影片停留時長與分段語音嚴格對齊，reveal_timestamps 傳入動態揭示。
+4. 恢復 12 秒動態片尾（outro.mp3、0.35 音量、前 1 秒淡入、後 2.5 秒淡出）。
+
+----------------------------------------------------------------
+修改檔案清單
+----------------------------------------------------------------
+- broll_engine.py（新增）
+  * 讀取 PIXABAY_API_KEY；fetch_pixabay_broll(keywords, orientation,
+    cache_dir) 支援 horizontal/vertical 1080p MP4 下載快取。
+  * 同集輪換 reset_episode_rotation() 避免重複；查無結果自動退回
+    FALLBACK_KEYWORD_POOL（stock market / cryptocurrency / data center /
+    abstract technology 等 8 個）；無金鑰、API 錯誤、逾時靜默回傳 None。
+- presentation.py
+  * 新增 BROLL_KEYWORD_POOL、assign_broll_query()：純圖表頁回 ""，
+    新聞／宏觀／心理博弈等非圖表頁給 2～3 個英文關鍵字。
+  * plan_daily_slides / fill_story_slide_bodies 套用 assign_broll_query。
+  * 新增 pronounce_for_tts()：% → 百分之、比值 : → 比、小數點 → 點，
+    只轉數字模式，正常中文詞彙不受影響（字幕／簡報原文絕不修改）。
+- media_engine.py
+  * import broll_engine；render_main_video 開頭 reset_episode_rotation()。
+  * synth_audio_segment：以 tts_speak_text = pronounce_for_tts(txt) 供 TTS
+    發音，display_line 字幕保留原始格式（雙軌分離）。
+  * 新增 compute_slide_reveal_timestamps()：依該頁所屬全部子音檔真實
+    ffprobe 實長加總，輸出各重點節點 reveal_timestamps。
+  * _resolve_reveal_timestamps 加等比例縮放，確保真實秒數超出錄製窗口
+    時每個節點仍能在擷取期間彈出。
+  * render_animated_slide 加 broll_path：以 base64 內嵌 <video> 循環底圖
+    ＋ .broll-veil 55% 深色暗角遮罩；frame/ticker/avatar/panel 設 z-index
+    高於遮罩確保前景可讀。
+  * 渲染迴圈傳入 broll_path 與 reveal_timestamps；chart_spotlight 不插 B-Roll。
+  * render_short_video 9:16 優先 fetch vertical B-Roll 直式底片。
+  * 12 秒片尾維持：outro_pause(1.5s) + outro_music(0.35 音量、淡入1s／
+    淡出2.5s) + outro.mp4 串接，主片與教學長片皆已接上。
+- script_writer.py
+  * 透過 plan_daily_slides / fill_story_slide_bodies 間接產出 broll_query
+    （visual_slides 內每頁附 broll_query 欄位）。
+
+----------------------------------------------------------------
+語法檢查
+----------------------------------------------------------------
+python -m py_compile broll_engine.py media_engine.py script_writer.py
+presentation.py => ALL_EXIT=0（零語法錯誤）
+helper 行為驗證：pronounce_for_tts / assign_broll_query /
+fetch_pixabay_broll(無金鑰→None) / compute_slide_reveal_timestamps 全數正確。
+
+----------------------------------------------------------------
+Git Commit
+----------------------------------------------------------------
+訊息：feat(phase3): Pixabay B-Roll engine, dual-track TTS pronunciation,
+and 12s outro
+（本階段僅建立本地 commit，未 push）

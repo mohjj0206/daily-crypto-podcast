@@ -58,6 +58,47 @@ def tutorial_badge(ep_id):
 
 
 TUTORIAL_LAYOUTS = ("impact", "compare", "steps", "chart")
+
+# ── B-Roll 實景底圖關鍵字 ──────────────────────────────
+# 純技術圖表頁（chart_spotlight）保留圖表專注度，broll_query 設為空字串；
+# 新聞故事、宏觀經濟、心理博弈等非純圖表頁自動給 2～3 個英文畫面關鍵字。
+BROLL_KEYWORD_POOL = {
+    "news": ["stock market", "cryptocurrency", "data center"],
+    "macro": ["global finance", "abstract technology", "stock exchange"],
+    "psychology": ["trader emotion", "stock market panic", "abstract technology"],
+    "debate": ["trading screen", "bitcoin", "financial district"],
+    "history": ["stock chart", "data center", "abstract technology"],
+    "story": ["cryptocurrency", "server room", "global finance"],
+}
+
+
+def assign_broll_query(slide):
+    """依版面與角色決定該頁的 Pixabay 英文關鍵字；純圖表頁回空字串。"""
+    slide = slide or {}
+    layout = slide.get("layout") or ""
+    chart = slide.get("chart") or ""
+    role = slide.get("role") or ""
+    title = str(slide.get("title") or "")
+
+    # 純技術圖表頁保留圖表專注度。
+    if layout == "chart_spotlight" or chart in (
+        "dual", "bars", "dca", "btc_structure", "btc_rsi", "gauge",
+    ):
+        return ""
+
+    if any(kw in title for kw in ("心理", "貪婪", "恐慌", "追高", "觀望", "行為")):
+        pool = BROLL_KEYWORD_POOL["psychology"]
+    elif any(kw in title for kw in ("宏觀", "經濟", "利率", "通膨", "資金", "24")):
+        pool = BROLL_KEYWORD_POOL["macro"]
+    elif any(kw in title for kw in ("歷史", "鏡像", "結構", "週線")):
+        pool = BROLL_KEYWORD_POOL["history"]
+    elif layout == "versus_clash" or role == "story":
+        pool = BROLL_KEYWORD_POOL["debate"]
+    elif any(kw in title for kw in ("新聞", "事件", "消息", "調查")):
+        pool = BROLL_KEYWORD_POOL["news"]
+    else:
+        pool = BROLL_KEYWORD_POOL["story"]
+    return ", ".join(pool[:3])
 DAILY_LAYOUTS = ("impact_quote", "versus_clash", "chart_spotlight", "timeline_steps")
 
 DAILY_STORY_BEATS = {
@@ -210,6 +251,7 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
         slide["layout"] = assign_daily_layout(slide, idx)
         if slide["layout"] != "versus_clash":
             slide["body"] = limit_slide_body(slide.get("body"))
+        slide["broll_query"] = assign_broll_query(slide)
     return slides
 
 
@@ -240,6 +282,7 @@ def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
     for slide in slides or []:
         if slide.get("layout") != "versus_clash":
             slide["body"] = limit_slide_body(slide.get("body"))
+        slide["broll_query"] = assign_broll_query(slide)
     return slides
 
 
@@ -517,6 +560,33 @@ def infer_emotion(raw):
     if re.search(r"上漲|大漲|上攻|突破|站上|強勢|反彈|走強", raw):
         return "excited"
     return "analytical"
+
+
+def pronounce_for_tts(text):
+    """僅供 Google TTS 發音用的臨時副本轉換（絕不回寫字幕／簡報）。
+
+    - 只針對數字模式做中文發音轉換，不刪除小數點或比值。
+    - 百分比 27.53% → 百分之27點53；比值 2.01:1 → 2點01比1；
+      數字間小數點 (\\d)\\.(\\d) → \\1點\\2。
+    - 正常中文詞彙（如「有一點」「重點」）完全不受影響。
+    """
+    s = str(text or "")
+    if not s:
+        return s
+    # 百分比：27.53% → 百分之27點53（先處理，避免 % 干擾後續小數點規則）。
+    def _pct(match):
+        inner = match.group(1).replace(".", "點")
+        return f"百分之{inner}"
+    s = re.sub(r"(\d+(?:\.\d+)?)\s*%", _pct, s)
+    # 比值：2.01:1 → 2點01比1。
+    def _ratio(match):
+        left = match.group(1).replace(".", "點")
+        right = match.group(2).replace(".", "點")
+        return f"{left}比{right}"
+    s = re.sub(r"(\d+(?:\.\d+)?)\s*[:：]\s*(\d+(?:\.\d+)?)", _ratio, s)
+    # 其餘數字間的小數點 → 點。
+    s = re.sub(r"(\d)\.(\d)", r"\1點\2", s)
+    return s
 
 
 def build_ssml_inner(text):
