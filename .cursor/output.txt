@@ -1,20 +1,189 @@
-時間：2026-11-24 11:27（UTC+8）
+================================================================
+Phase 1 執行報告
+================================================================
+執行時間：2026-11-26
+分支：feat/ultimate-overhaul
+模式：靜默檔案工作流（未執行 git push）
 
-讀取的任務摘要：
-教學片 GitHub Actions 在長片與墊音完成後，於教學 Shorts 建立雙主播頭像時崩潰。錯誤為 create_speaker_avatars() 缺少必要參數 talk_videos。Gemini 429 已在日誌中切換模型，教學稿 5257 字、26 張分鏡與 tutorial_bed.mp3 都已產出，失敗點只在 Shorts 頭像。
+----------------------------------------------------------------
+任務摘要
+----------------------------------------------------------------
+Phase 1 共四項任務，全部完成：
 
-Git pull：Already up to date（基底 33e1952）。
+1. 分級幣價格式化（format_usd_price）
+2. MVRV 雙軌自動偵測（Ratio / Z-Score）
+3. 消除「新聞N」內部索引字眼
+4. YouTube 動態標題與說明欄（含章節時間軸、看點摘要、標題去重）
 
-修改的檔案：
-- media_engine.py（_render_tutorial_short 補上與長片相同的 talk_videos）
+----------------------------------------------------------------
+修改檔案清單（9 個）
+----------------------------------------------------------------
+- presentation.py        # 新增 format_usd_price、format_mvrv、classify_mvrv_ratio/zscore；format_metric 加 "mvrv" kind、"price" 改用分級；sanitize_text 加新聞編號過濾
+- market_data.py         # fetch_btc_mvrv pack() 加 mvrv_type 自動判別、display_name、bar_pct 雙軌；cache 與 report 同步
+- script_writer.py       # 新增 _generate_yt_title/_generate_yt_highlights/_generate_yt_chapters；result dict 加 yt_title/yt_highlights/yt_chapters
+- media_engine.py        # slide_insights mvrv 改用 "mvrv" kind + mvrv_name；縮圖 badge 用 display_name
+- build_and_upload.py    # 用 sdata yt_title/yt_highlights/yt_chapters 組裝 description，傳給 upload_main_video
+- daily_learner.py       # archive_episode 記錄 yt_title；新增 _title_similarity/check_title_uniqueness 近7日比對
+- chart_maker.py         # 無需改動（價格格式化由 presentation.format_metric 統一處理）
+- youtube_uploader.py    # 無需改動（upload_main_video 已接收 title/description 參數）
+- build_special_topic.py # 無需改動（教學版已有動態標題與章節）
 
-語法檢查：python -m py_compile 全部 .py，通過。
+----------------------------------------------------------------
+語法檢查結果
+----------------------------------------------------------------
+python -m py_compile 全部 9 個 .py 檔案 → ALL_EXIT=0（零錯誤）
 
-Git Commit：f2926418709a671503830eb243f5a097fff5fdef
-訊息：fix: pass talk_videos into tutorial Shorts avatar rendering
-已推送 33e1952..f292641。未提交 .cursor/。
+----------------------------------------------------------------
+Git Commit
+----------------------------------------------------------------
+即將提交（未 push）
+================================================================
+Phase 2 執行報告（靜默工作流）
+================================================================
+執行時間：2026-11-26
+分支：feat/ultimate-overhaul（本階段不執行 git push）
+任務：極簡圖解文案 ＆ 語音同步動態逐點彈出高亮（Progressive Kinetic Reveal）
 
-完整報告：
-每日長片與教學長片呼叫 create_speaker_avatars 時都會傳入 cat_vtober.mp4 與 dor_vtober.mp4（檔案不存在則為 None）。教學 Shorts 底部雙圓形主播是後來補上的，呼叫時漏了這個參數，因此在 build_special_topic.py 的 render_tutorial_episode 走到 _render_tutorial_short 就以 TypeError 結束，exit code 1。
+----------------------------------------------------------------
+讀取任務摘要
+----------------------------------------------------------------
+1. 極簡圖解文案：投影片內文禁止超過 15 字，每個重點節點濃縮為
+   「1 視覺符號 ＋ 4～8 字短詞 ＋ 1 核心數字或對比箭頭」。
+2. TTS 時間軸驅動動態揭示：t=0 只顯示主標題其餘隱藏；時間抵達彈出並
+   高亮（放大、發光邊框、琥珀金 #FBBF24）；下一點彈出時前一點退為
+   低飽和暗灰背景；預留 reveal_timestamps 介面與 fallback 時間軸。
 
-現在 Shorts 與另外兩處使用同一組影片路徑。有單張靜態圖時仍優先用圖；沒有靜態圖時才從對應 VTuber 影片抓第一幀，最後才退回 avatar.png。長片合成路徑沒有改動。
+----------------------------------------------------------------
+修改檔案清單
+----------------------------------------------------------------
+- presentation.py
+  * 新增 MAX_SLIDE_LINE=15、SLIDE_SYMBOLS、condense_slide_line()、
+    limit_slide_body()：把投影片內文逐句濃縮至 ≤15 字（優先短詞＋數字）。
+  * plan_daily_slides / fill_story_slide_bodies：換版後對非 versus_clash
+    版面套用 limit_slide_body（versus 內文供 split_news_summary 不濃縮）。
+  * build_tutorial_cards：card 標題/金句/要點改走 condense_slide_line。
+- script_writer.py
+  * 總編輯定調 brief_prompt 新增第 9 條「極簡圖解文案」規則。
+  * 教學 prompt 的 bullet_points 收緊為 4～15 字極簡短詞。
+- media_engine.py
+  * 新增 _resolve_reveal_timestamps()：正規化揭示秒數陣列，缺值/格式
+    不合時回退為錄製窗口內平均分布的 fallback 時間軸。
+  * render_animated_slide 新增 reveal_timestamps 參數（預留 media_engine
+    下一階段傳入各句 TTS 累積真實秒數），並以 slide_data 為後備來源。
+  * 四大版型重點節點（chart 的 li、versus 雙面板、timeline 卡片、
+    impact 子句）加上 reveal-node 標記並統計 reveal_count。
+  * CSS：.kinetic .reveal-node 停用原進場動畫；未講到 opacity:0、
+    translateY(22px) scale(.96)；.is-active 彈出 scale(1.03)＋發光邊框＋
+    文字 #FBBF24；.is-dimmed 退為 opacity:.48、scale(.98)、去光去飽和；
+    過渡 0.35s cubic-bezier(0.22,1,0.36,1)。
+  * JS：依 reveal 秒數陣列以 requestAnimationFrame 逐點切換
+    is-hidden/is-active/is-dimmed，t=0 全隱藏只留標題。
+
+----------------------------------------------------------------
+語法檢查
+----------------------------------------------------------------
+python -m py_compile presentation.py script_writer.py media_engine.py
+=> ALL_EXIT=0（零語法錯誤）
+helper 行為驗證：condense/limit/reveal }{#} 全數正確（ALL_OK）。
+
+----------------------------------------------------------------
+Git Commit
+----------------------------------------------------------------
+訊息：feat(phase2): minimal slide copy and TTS progressive kinetic reveal
+（本階段僅建立本地 commit，未 push）
+================================================================
+Phase 3 執行報告（靜默工作流）
+================================================================
+執行時間：2026-11-26
+分支：feat/ultimate-overhaul（本階段不執行 git push）
+任務：Pixabay B-Roll 實景引擎、TTS 雙軌發音 ＆ 12 秒動態片尾
+
+----------------------------------------------------------------
+讀取任務摘要
+----------------------------------------------------------------
+1. 建立免費 Pixabay 1080p 實景動態影片（B-Roll）穿插引擎，支援橫式
+   16:9 與直式 9:16，含快取、同集輪換、備援關鍵字池，無金鑰／錯誤／
+   逾時靜默回傳 None 退回深色底圖。
+2. 雙模混合視覺調度：寫稿端為非純圖表頁產出 broll_query，純圖表頁留空；
+   合成端將有 broll_query 的段落底圖替換為循環裁切實景影片並疊加 55%
+   半透明深色暗角遮罩，Shorts 優先直式底片。
+3. TTS 數字／比值發音雙軌分離（字幕原文絕不改），僅 TTS 臨時副本轉換；
+   投影片停留時長與分段語音嚴格對齊，reveal_timestamps 傳入動態揭示。
+4. 恢復 12 秒動態片尾（outro.mp3、0.35 音量、前 1 秒淡入、後 2.5 秒淡出）。
+
+----------------------------------------------------------------
+修改檔案清單
+----------------------------------------------------------------
+- broll_engine.py（新增）
+  * 讀取 PIXABAY_API_KEY；fetch_pixabay_broll(keywords, orientation,
+    cache_dir) 支援 horizontal/vertical 1080p MP4 下載快取。
+  * 同集輪換 reset_episode_rotation() 避免重複；查無結果自動退回
+    FALLBACK_KEYWORD_POOL（stock market / cryptocurrency / data center /
+    abstract technology 等 8 個）；無金鑰、API 錯誤、逾時靜默回傳 None。
+- presentation.py
+  * 新增 BROLL_KEYWORD_POOL、assign_broll_query()：純圖表頁回 ""，
+    新聞／宏觀／心理博弈等非圖表頁給 2～3 個英文關鍵字。
+  * plan_daily_slides / fill_story_slide_bodies 套用 assign_broll_query。
+  * 新增 pronounce_for_tts()：% → 百分之、比值 : → 比、小數點 → 點，
+    只轉數字模式，正常中文詞彙不受影響（字幕／簡報原文絕不修改）。
+- media_engine.py
+  * import broll_engine；render_main_video 開頭 reset_episode_rotation()。
+  * synth_audio_segment：以 tts_speak_text = pronounce_for_tts(txt) 供 TTS
+    發音，display_line 字幕保留原始格式（雙軌分離）。
+  * 新增 compute_slide_reveal_timestamps()：依該頁所屬全部子音檔真實
+    ffprobe 實長加總，輸出各重點節點 reveal_timestamps。
+  * _resolve_reveal_timestamps 加等比例縮放，確保真實秒數超出錄製窗口
+    時每個節點仍能在擷取期間彈出。
+  * render_animated_slide 加 broll_path：以 base64 內嵌 <video> 循環底圖
+    ＋ .broll-veil 55% 深色暗角遮罩；frame/ticker/avatar/panel 設 z-index
+    高於遮罩確保前景可讀。
+  * 渲染迴圈傳入 broll_path 與 reveal_timestamps；chart_spotlight 不插 B-Roll。
+  * render_short_video 9:16 優先 fetch vertical B-Roll 直式底片。
+  * 12 秒片尾維持：outro_pause(1.5s) + outro_music(0.35 音量、淡入1s／
+    淡出2.5s) + outro.mp4 串接，主片與教學長片皆已接上。
+- script_writer.py
+  * 透過 plan_daily_slides / fill_story_slide_bodies 間接產出 broll_query
+    （visual_slides 內每頁附 broll_query 欄位）。
+
+----------------------------------------------------------------
+語法檢查
+----------------------------------------------------------------
+python -m py_compile broll_engine.py media_engine.py script_writer.py
+presentation.py => ALL_EXIT=0（零語法錯誤）
+helper 行為驗證：pronounce_for_tts / assign_broll_query /
+fetch_pixabay_broll(無金鑰→None) / compute_slide_reveal_timestamps 全數正確。
+
+----------------------------------------------------------------
+Git Commit
+----------------------------------------------------------------
+訊息：feat(phase3): Pixabay B-Roll engine, dual-track TTS pronunciation,
+and 12s outro
+（本階段僅建立本地 commit，未 push）
+
+================================================================
+Phase 4 �̲צ����P��Ҳվ�X���ҳ��i�]�R�q�u�@�y�^
+================================================================
+����ɶ��G2026-11-26
+����Gfeat/ultimate-overhaul
+Git Commit Hash�G07620b41d21997d23a39f9987b2caca35614070e
+���ݱ��e���A�G�w���\���e�� origin/feat/ultimate-overhaul
+
+----------------------------------------------------------------
+1. GitHub Actions �����ܼƻP B-Roll �֨��]�w
+----------------------------------------------------------------
+- .github/workflows/render.yml�G�w�� build job �� env �϶��[�J PIXABAY_API_KEY
+- .github/workflows/special_topic.yml�G�w�� tutorial job �� env �϶��[�J PIXABAY_API_KEY
+- .gitignore�G�w�[�J assets/broll_cache/�B__pycache__/�B*.pyc �H�ΩҦ��Ȧs�v���P�ʺA��X��
+
+----------------------------------------------------------------
+2. youtube_metadata.txt �����X����
+----------------------------------------------------------------
+- youtube_uploader.py / build_and_upload.py / build_special_topic.py �ҽT�{�����X������D�B������P�ɶ��b�� youtube_metadata.txt
+
+----------------------------------------------------------------
+3. ��Ҳվ�X�P���M�׽sĶ�ˬd���G
+----------------------------------------------------------------
+- ��ҲթI�s�ѼơB�^�ǫ��O�P import �����@�P�L��|
+- ���M�� 10 �� .py �ɮװ��� python -m py_compile�GALL_EXIT=0�]�s�y�k���~�^
+================================================================
+

@@ -78,6 +78,17 @@ def main():
     audit = daily_learner.audit_episode(sdata.get("full_script", ""), "subs.ass", is_test)
 
     # ── 5. 上傳 YouTube、發布留言與播放清單歸類 ───────────────
+    yt_title = sdata.get("yt_title") or main_render["video_title"]
+    yt_highlights = sdata.get("yt_highlights") or []
+    yt_chapters = sdata.get("yt_chapters") or []
+    highlights_block = "\n".join(yt_highlights) if yt_highlights else ""
+    chapters_block = "\n".join(yt_chapters) if yt_chapters else ""
+    yt_description = (
+        (f"{highlights_block}\n\n" if highlights_block else "")
+        + f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
+        + (f"⏱️ 章節\n{chapters_block}\n\n" if chapters_block else "")
+        + f"{main_render['v_desc']}"
+    )
     enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
     if enable_yt:
         print("[5/5] 上傳至 YouTube 並發布頻道互動...")
@@ -86,8 +97,8 @@ def main():
             youtube,
             video_path=main_render["output_path"],
             thumb_path=main_render["thumb_path"],
-            title=main_render["video_title"],
-            description=f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n{main_render['v_desc']}",
+            title=yt_title,
+            description=yt_description,
             tags=["比特幣", "加密貨幣", "BTC", "ETH", "SOL", "技術分析", "均線", "RSI", "幣看趨勢"],
             show_dca=show_dca,
             cur_p=mdata["cur_p"],
@@ -107,7 +118,7 @@ def main():
     else:
         print("[5/5] ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留成片供 GitHub Releases 預覽。")
         main_video_id = "PREVIEW_NO_UPLOAD"
-        youtube_uploader._write_metadata("主片", main_render["video_title"], main_render["v_desc"], "w")
+        youtube_uploader._write_metadata("主片", yt_title, yt_description, "w")
 
     # 確保產出標準預覽檔名供 GitHub Releases 發布
     import shutil

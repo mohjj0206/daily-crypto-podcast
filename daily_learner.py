@@ -64,6 +64,32 @@ def _read_history(today):
     return rows
 
 
+def _title_similarity(t1, t2):
+    """簡易標題相似度：以 2–4 字中文詞元 Jaccard 近似。"""
+    w1 = set(re.findall(r"[\u4e00-\u9fff]{2,4}|[A-Za-z0-9]{2,}", str(t1).lower()))
+    w2 = set(re.findall(r"[\u4e00-\u9fff]{2,4}|[A-Za-z0-9]{2,}", str(t2).lower()))
+    if not w1 or not w2:
+        return 0.0
+    return len(w1 & w2) / len(w1 | w2)
+
+
+def check_title_uniqueness(yt_title, today):
+    """比對近 7 日 yt_title，相似度 > 0.7 發出警告。"""
+    rows = _read_history(today)
+    recent = [r for r in rows if _today_delta(today, r["date"]) < 7]
+    warnings = []
+    for row in recent:
+        prev = row.get("yt_title") or row.get("title") or ""
+        if not prev:
+            continue
+        sim = _title_similarity(yt_title, prev)
+        if sim > 0.7:
+            warnings.append(f"標題與 {row['date']} 相似度 {sim:.2f}：{prev[:30]}")
+    if warnings:
+        print(f"[daily_learner] 標題相似度警告：{'；'.join(warnings)}")
+    return warnings
+
+
 def _keywords(titles):
     found = []
     for title in titles:
@@ -325,6 +351,7 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         "angle_id": sdata.get("angle_id") or "",
         "angle_title": sdata.get("angle_title") or "",
         "title": sdata.get("ai_title") or "",
+        "yt_title": sdata.get("yt_title") or "",
         "core_point": sdata.get("editorial_lead") or sdata.get("angle_title") or sdata.get("ai_title") or "",
         "editorial_lead": sdata.get("editorial_lead") or "",
         "slide_titles": [str(item) for item in (sdata.get("slide_titles") or []) if str(item).strip()],
@@ -335,6 +362,11 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         "market_snapshot": _snapshot(mdata),
         "quality_audit": audit,
     }
+    yt_title = sdata.get("yt_title") or ""
+    if yt_title:
+        title_warnings = check_title_uniqueness(yt_title, today)
+        if title_warnings:
+            record["quality_audit"]["warnings"].extend(title_warnings)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
