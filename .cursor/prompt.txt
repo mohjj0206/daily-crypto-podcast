@@ -1,17 +1,31 @@
-【最高指令：嚴格遵守 .cursor/rules/workflow.mdc 靜默工作流】
-1. 執行前先 `git pull origin main`。
-2. 全程保持靜默，所有修改結果寫入 `.cursor/output.txt`。
-3. 改完對所有 `.py` 執行 `python -m py_compile` 檢查，通過後 `git add .`、`git commit -m "fix: add multi-source BTC historical price fallback for DCA ledger to prevent RuntimeError"` 並 `git push origin main`。
+【最高指令：嚴格遵守 .cursor/rules/workflow.mdc 靜默工作流（本階段暫不執行 git push）】
+1. 執行前先執行 `git status` 確認工作區，確保從乾淨狀態開始（若本地有未提交的殘留變動，請先 `git checkout -- .` 清理並建立切換至新分支 `git checkout -b feat/ultimate-overhaul`，若分支已存在則直接切換）。
+2. 全程保持靜默，將本階段修改摘要寫入 `.cursor/output.txt`。
+3. 改完對本階段修改的 `.py` 檔案執行 `python -m py_compile` 檢查，確保零語法錯誤後結束本階段，等待下一階段指令。
 
-【緊急熱修復：解決 update_dca_portfolio 因單一來源缺失 2026-11-25 收盤價導致崩潰】
-在 `market_data.py` 第 1396 行 `update_dca_portfolio()` 中，發生 `RuntimeError: Missing valid BTC-USD historical close for 2026-11-25.` 導致整集節目中斷。請立即修復：
+====================================================================
+【Phase 1 任務書：數據精準度、MVRV 雙軌與動態 YT Metadata】
+====================================================================
 
-1. **建立多層歷史收盤價備援鏈（`fetch_historical_btc_close(date_str, fallback_current_price)`）**：
-   - **第一順位**：Yahoo Finance 歷史日線收盤價（放寬查詢區間至目標日期前後 3 天，取最接近目標日期的收盤價）。
-   - **第二順位**：Binance 公開現貨日線 K 線 API（`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d` 指定該日 UTC 時間戳起訖，讀取 `close` 價格）。
-   - **第三順位**：CoinGecko 歷史日期價格 API（`https://api.coingecko.com/api/v3/coins/bitcoin/history?date=DD-MM-YYYY`）。
-   - **第四順位（最終防崩潰保底）**：若目標補登日期距離現在 `<= 3` 天且上述外部歷史 API 均暫時無回應，自動使用當下即時抓到的 `current_btc_usd` 作為該筆每月 25 日定投成交價（並在 Log 印出一行提示），**嚴禁再拋出 `RuntimeError` 中斷整集製片流程**。
+### 任務 1：分級幣價小數位數格式化（`market_data.py`、`presentation.py`、`chart_maker.py`、`script_writer.py`、`media_engine.py`）
+- 實作並全域套用 `format_usd_price(price)` 至頂部即時數據列、投影片內文、圖表標籤與逐字稿（僅限美元幣價，絕不套用於百分比或無單位指標）：
+  * **幣價 `>= 100` 美元**：四捨五入取**整數位**（千分位逗號，如 `$60,445`）。
+  * **幣價 `>= 10` 且 `< 100` 美元**：最多保留**小數點後 2 位**（如 `$45.82`）。
+  * **幣價 `< 10` 美元**：最多保留**小數點後 4 位**（如 `$0.5412`）。
 
-2. **優化新聞全文提取與外部來源容錯（`market_data.py`）**：
-   - 擴充 `enrich_top_news_with_full_text()` 的網頁正文選擇器（同時支援 `<article>`、`[class*="article"]`、`[class*="content"]`、`[class*="post"]` 與 `<main>` 內的 `<p>` 段落），提升抓取成功率。
-   - 對於 `custom_sources.json` 遇到 `403/429` 的來源維持靜默略過。
+### 任務 2：雙軌自動偵測「MVRV 比率（Ratio）」與「MVRV Z 分數（Z-Score）」（`market_data.py`、`presentation.py`、`script_writer.py`）
+- 明確區分「無單位鏈上指標」，無論哪一種均固定保留**小數點後 2 位**（如 `1.42`、`-0.15`，嚴禁被幣價整數規則誤改為整數）。
+- 在 `market_data.py` 中建立自動判別邏輯，依據 API 欄位來源或數值特徵（例如出現負值或 `> 4.2` 必為 `Z-Score`；或依抓到的指標類型標記 `mvrv_type = "z_score"` 或 `"ratio"`），自動輸出對應標準名稱與區間判讀，確保簡報標題、圖表與主播口播 100% 名實相符：
+  * **若為 `MVRV Z-Score`（標準差尺度，正常範圍 `-0.5 ~ 8.0`）**：顯示名稱為「MVRV Z 分數」，區間為 `< 0.1` 極度低估歷史底部、`0.1 ~ 1.5` 低估蓄勢、`1.5 ~ 3.5` 健康多頭推進、`3.5 ~ 6.0` 市場偏熱警戒、`>= 6.0` 極度過熱泡沫風險。
+  * **若為 `MVRV Ratio`（市值／已實現價值倍數，正常範圍 `0.7 ~ 4.0`）**：顯示名稱為「MVRV 比率」，區間為 `< 1.0` 全網平均浮虧低估區、`1.0 ~ 1.8` 理性累積區、`1.8 ~ 2.8` 健康多頭推進、`2.8 ~ 3.5` 市場偏熱警戒、`>= 3.5` 極度過熱泡沫風險。
+
+### 任務 3：徹底消除「新聞7、新聞8」等內部索引字眼（`script_writer.py`）
+- 在 `script_writer.py` 素材輸入與 `sanitize_text()` 清洗中加入過濾，嚴禁出現「新聞\d+、第X則新聞」等編號，改以自然財經轉折語氣銜接。
+
+### 任務 4：YouTube 標題與說明欄動態差異化（`script_writer.py`、`build_and_upload.py`、`build_special_topic.py`、`daily_learner.py`）
+1. **高點擊率「動態新聞懸念標題」**：
+   - 徹底廢除「YYYY-MM-DD 加密貨幣晨報｜BTC、ETH…」這類每天一模一樣的公版格式。
+   - 要求模型根據當日核心事件、反直覺數據衝突與三幕主軸，量身撰寫具有好奇心缺口的高點擊標題（例如：`美股狂飆幣市卻凍僵？揭開 20 億美元槓桿清算後的巨鯨動向｜幣看趨勢`），嚴格控制在 `65～88` 字元內避免截斷，並將標題存入 `history_db` 與近 7 日記錄比對，禁止重複相似句型。
+2. **客製化「故事導讀 ＋ 精準時間軸」說明欄**：
+   - 說明欄前 3 行（摺疊前黃金曝光區）必須直接放置**本集專屬的 3 個核心懸念看點摘要**（根據當集真實內容動態生成，嚴禁千篇一律的頻道公版介紹）。
+   - 中段自動根據每張投影片／章節的真實音檔累積秒數，生成準確的 YouTube 時間軸章節（如 `00:00 本集核心矛盾...`、`03:42 多空籌碼交鋒...`），搭配當集專屬關鍵詞標籤與精簡免責聲明，並完整輸出至 `youtube_metadata.txt`。

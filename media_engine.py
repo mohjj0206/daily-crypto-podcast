@@ -496,7 +496,40 @@ def highlight_key_numbers(text, state=None):
 
 # ── Playwright 簡報渲染 ──────────────────────────────────────────
 
-def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
+def _resolve_reveal_timestamps(reveal_timestamps, node_count, window_sec):
+    """正規化每頁各重點節點的揭示時間點為遞增秒數陣列（Progressive Kinetic Reveal）。
+
+    介面預留：下一階段 media_engine 會傳入對應該頁各句 TTS 音檔的累積真實秒數
+    （reveal_timestamps: list[float]，單位秒）。未提供或格式不合時，回退為平均
+    分布於錄製窗口內的 fallback 時間軸，確保動畫在擷取期間完整可見。
+    """
+    if node_count <= 0:
+        return []
+    values = []
+    if isinstance(reveal_timestamps, (list, tuple)):
+        for item in reveal_timestamps:
+            try:
+                value = float(item)
+            except (TypeError, ValueError):
+                continue
+            if value >= 0:
+                values.append(value)
+    if len(values) < node_count:
+        start = max(0.0, float(window_sec)) * 0.12
+        span = max(0.0, float(window_sec) * 0.78)
+        step = span / (node_count - 1) if node_count > 1 else 0.0
+        fallback = [start + step * i for i in range(node_count)]
+        values = (values + fallback)[:node_count]
+    ordered = []
+    last = -1.0
+    for value in values[:node_count]:
+        value = max(value, last + 0.05)
+        ordered.append(round(value, 3))
+        last = value
+    return ordered
+
+
+def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_timestamps=None):
     if browser is None:
         raise RuntimeError("Playwright Chromium must be started before rendering slides.")
     if dur_sec <= 0:
@@ -505,6 +538,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
     highlights = slide_data.get("highlights", [])
     if isinstance(highlights, str):
         highlights = highlights.splitlines()
+    reveal_count = 0
     highlight_state = {"remaining": 3}
     title_markup = highlight_key_numbers(
         script_writer.clean_slide_title(slide_data.get("title", "")), highlight_state
@@ -557,10 +591,11 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
 
     list_markup = ""
     if layout == "chart_spotlight":
+        spotlight_items = [item for item in highlights if str(item).strip()]
+        reveal_count = len(spotlight_items)
         list_markup = "".join(
-            f"<li>{highlight_key_numbers(script_writer.clean_slide_text(item), highlight_state)}</li>"
-            for item in highlights
-            if str(item).strip()
+            f'<li class="reveal-node">{highlight_key_numbers(script_writer.clean_slide_text(item), highlight_state)}</li>'
+            for item in spotlight_items
         )
     slide_caption = script_writer.clean_slide_text(str(slide_data.get("caption", ""))).strip()
     chart_caption_markup = (
@@ -580,15 +615,16 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
         )
         content_markup = (
             '<section class="content versus-clash-layout">'
-            '<article class="versus-panel bear">'
+            '<article class="versus-panel bear reveal-node">'
             '<header class="versus-badge bear-badge">空方論點 ／ 籌碼風險</header>'
             f'<div class="versus-body"><ul><li>{risk_markup}</li></ul></div></article>'
             '<div class="vs-emblem" aria-hidden="true"><span>VS</span></div>'
-            '<article class="versus-panel bull">'
+            '<article class="versus-panel bull reveal-node">'
             '<header class="versus-badge bull-badge">多方反擊 ／ 支撐依據</header>'
             f'<div class="versus-body"><ul><li>{positive_markup}</li></ul></div></article>'
             '</section>'
         )
+        reveal_count = 2
     elif layout == "chart_spotlight":
         content_markup = (
             '<section class="content chart-spotlight-layout">'
@@ -620,11 +656,12 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
             if s_idx > 0:
                 cards_html.append('<div class="timeline-arrow" aria-hidden="true">➔</div>')
             cards_html.append(
-                f'<article class="timeline-card {tone_cls}" style="--step-idx:{s_idx}">'
+                f'<article class="timeline-card {tone_cls} reveal-node" style="--step-idx:{s_idx}">'
                 f'<div class="step-pill">{html.escape(tag_label)}</div>'
                 f'<p class="step-text">{body_markup}</p>'
                 '</article>'
             )
+        reveal_count = len(step_items)
         content_markup = (
             '<section class="content timeline-steps-layout">'
             + "".join(cards_html)
@@ -636,9 +673,10 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
         sub_lines = clean_items[1:3] if len(clean_items) > 1 else []
         quote_markup = highlight_key_numbers(script_writer.clean_slide_text(core_quote), highlight_state)
         sub_markup = "".join(
-            f'<p class="impact-sub">{highlight_key_numbers(script_writer.clean_slide_text(sub), highlight_state)}</p>'
+            f'<p class="impact-sub reveal-node">{highlight_key_numbers(script_writer.clean_slide_text(sub), highlight_state)}</p>'
             for sub in sub_lines
         )
+        reveal_count = len(sub_lines)
         content_markup = (
             '<section class="content impact-quote-layout">'
             '<div class="impact-quote-box">'
@@ -664,6 +702,10 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser):
     record_seconds = min(float(dur_sec), 6.0)
     remaining = max(0.0, float(dur_sec) - record_seconds)
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
+    if reveal_timestamps is None:
+        reveal_timestamps = slide_data.get("reveal_timestamps")
+    reveal_list = _resolve_reveal_timestamps(reveal_timestamps, reveal_count, record_seconds)
+    reveal_ts_json = json.dumps(reveal_list)
     insights = slide_data.get("insights") or {}
     insight_labels = slide_data.get("insight_labels") or {}
     mvrv_pct = int(insights.get("mvrv_pct") or 40)
@@ -1048,10 +1090,37 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .gauge-value {{ color: #fbbf24; font-size: 64px; font-weight: 800; }}
 .gauge-value small {{ color: #94a3b8; font-size: 24px; font-weight: 700; }}
 @keyframes heroPop {{ from {{ opacity: 0; transform: scale(.88) translateY(18px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
+
+/* ── Progressive Kinetic Reveal：TTS 時間軸驅動逐點彈出高亮 ── */
+.slide-stage.kinetic .reveal-node {{ animation: none !important; }}
+.reveal-node {{
+  opacity: 0; transform: translateY(22px) scale(0.96);
+  transition:
+    opacity 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.35s ease, border-color 0.35s ease,
+    background 0.35s ease, filter 0.35s ease, color 0.35s ease;
+  will-change: opacity, transform;
+}}
+.reveal-node.is-hidden {{ opacity: 0; transform: translateY(22px) scale(0.96); }}
+.reveal-node.is-active {{
+  opacity: 1; transform: translateY(0) scale(1.03);
+  border-color: rgba(251, 191, 36, .9) !important;
+  box-shadow: 0 0 30px rgba(251, 191, 36, .5), 0 0 0 1px rgba(251, 191, 36, .55) inset;
+}}
+.reveal-node.is-active,
+.reveal-node.is-active .step-text,
+.reveal-node.is-active li,
+.reveal-node.is-active strong {{ color: #FBBF24 !important; }}
+.reveal-node.is-dimmed {{
+  opacity: 0.48; transform: translateY(0) scale(0.98);
+  border-color: rgba(148, 163, 184, .32) !important;
+  box-shadow: none !important; filter: saturate(0.55);
+}}
 </style>
 </head>
 <body>
-<div class="slide-stage" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
+<div class="slide-stage kinetic" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
   <h1>{title_markup}</h1>
@@ -1131,6 +1200,34 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
     frame.style.transform = `translate(${{-minLeft * scale}}px, ${{-minTop * scale}}px) scale(${{scale}})`;
     return false;
   }};
+  </script>
+  <script>
+  (function () {{
+    const nodes = Array.prototype.slice.call(document.querySelectorAll(".reveal-node"));
+    if (!nodes.length) return;
+    const times = {reveal_ts_json};
+    const start = performance.now();
+    function apply(activeIndex) {{
+      for (let i = 0; i < nodes.length; i++) {{
+        const node = nodes[i];
+        node.classList.remove("is-hidden", "is-active", "is-dimmed");
+        if (i < activeIndex) node.classList.add("is-dimmed");
+        else if (i === activeIndex) node.classList.add("is-active");
+        else node.classList.add("is-hidden");
+      }}
+    }}
+    function tick(now) {{
+      const t = (now - start) / 1000;
+      let activeIndex = -1;
+      for (let i = 0; i < times.length; i++) {{
+        if (t >= times[i]) activeIndex = i;
+      }}
+      apply(activeIndex);
+      if (activeIndex < nodes.length - 1) requestAnimationFrame(tick);
+    }}
+    apply(-1);
+    requestAnimationFrame(tick);
+  }})();
   </script>
 </body>
 </html>"""

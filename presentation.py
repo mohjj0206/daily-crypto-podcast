@@ -208,6 +208,8 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
         })
     for idx, slide in enumerate(slides):
         slide["layout"] = assign_daily_layout(slide, idx)
+        if slide["layout"] != "versus_clash":
+            slide["body"] = limit_slide_body(slide.get("body"))
     return slides
 
 
@@ -235,6 +237,9 @@ def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
             slide["body"] = week_body
         else:
             slide["body"] = f"{lead}\n{title}"
+    for slide in slides or []:
+        if slide.get("layout") != "versus_clash":
+            slide["body"] = limit_slide_body(slide.get("body"))
     return slides
 
 
@@ -271,12 +276,12 @@ def build_tutorial_cards(sections, lesson=None):
         if len(cards) == 12:
             layout = "chart"
         myth = strip_bracket_tags(myths[len(cards) % len(myths)]) or "不要把示意當成買點"
-        truth = fit_complete_phrase(
-            concepts[len(cards) % len(concepts)], 4, 16, "先看結構再談價格"
+        truth = condense_slide_line(
+            fit_complete_phrase(concepts[len(cards) % len(concepts)], 4, 16, "先看結構再談價格")
         )
         steps = []
         for source in list(chunk[0]["bullets"] or []) + concepts:
-            phrase = fit_complete_phrase(source, 8, 22, "")
+            phrase = condense_slide_line(fit_complete_phrase(source, 8, 22, ""))
             if phrase and phrase not in steps:
                 steps.append(phrase)
             if len(steps) == 3:
@@ -285,7 +290,7 @@ def build_tutorial_cards(sections, lesson=None):
             steps.append(truth)
         cards.append({
             "layout": layout,
-            "title": fit_complete_phrase(chunk[0]["title"], 4, 16, truth),
+            "title": condense_slide_line(fit_complete_phrase(chunk[0]["title"], 4, 16, truth)),
             "headline": truth,
             "myth": myth,
             "truth": truth,
@@ -430,6 +435,44 @@ def fit_complete_phrase(text, low, high, fallback):
     if backup:
         return backup[:high]
     return "先看結構"
+
+
+# ── 極簡圖解文案：投影片內文每句不得超過 15 字 ──────────────────────
+MAX_SLIDE_LINE = 15
+_SLIDE_CLAUSE_SPLIT = re.compile(r"[。！？\n]")
+# 常見視覺符號，濃縮時優先保留在短詞前，營造高留白呼吸感。
+SLIDE_SYMBOLS = ("🔥", "📈", "📉", "⚡", "🎯", "🧭", "💰", "🐋", "⚖️", "🔍", "⏳", "🚀", "⚠️", "✅", "❓")
+
+
+def condense_slide_line(text):
+    """把一句投影片內文濃縮成 ≤15 字短詞：優先「短詞＋核心數字／對比箭頭」。"""
+    cleaned = strip_bracket_tags(sanitize_text(text)).strip(" ，、；：。！？")
+    if not cleaned:
+        return ""
+    clause = next((piece.strip() for piece in _SLIDE_CLAUSE_SPLIT.split(cleaned) if piece.strip()), cleaned)
+    candidate = clause or cleaned
+    if len(candidate) <= MAX_SLIDE_LINE:
+        return candidate
+    number = _NUMBER.search(candidate)
+    if number:
+        token = number.group(0)
+        if len(token) <= MAX_SLIDE_LINE:
+            head = candidate[: candidate.find(token)].strip(" ，、；：")
+            head = head[: max(0, MAX_SLIDE_LINE - len(token))].strip(" ，、；：")
+            combined = f"{head} {token}".strip()
+            if combined:
+                return combined[: MAX_SLIDE_LINE + 2].strip()
+    return candidate[:MAX_SLIDE_LINE].strip(" ，、；：")
+
+
+def limit_slide_body(body):
+    """整頁內文逐句濃縮、去重，確保每句不超過 15 字。"""
+    condensed = []
+    for line in str(body or "").splitlines():
+        piece = condense_slide_line(line)
+        if piece and piece not in condensed:
+            condensed.append(piece)
+    return "\n".join(condensed)
 
 
 def sanitize_text(text):

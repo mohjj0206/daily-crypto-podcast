@@ -37,3 +37,57 @@ python -m py_compile 全部 9 個 .py 檔案 → ALL_EXIT=0（零錯誤）
 Git Commit
 ----------------------------------------------------------------
 即將提交（未 push）
+================================================================
+Phase 2 執行報告（靜默工作流）
+================================================================
+執行時間：2026-11-26
+分支：feat/ultimate-overhaul（本階段不執行 git push）
+任務：極簡圖解文案 ＆ 語音同步動態逐點彈出高亮（Progressive Kinetic Reveal）
+
+----------------------------------------------------------------
+讀取任務摘要
+----------------------------------------------------------------
+1. 極簡圖解文案：投影片內文禁止超過 15 字，每個重點節點濃縮為
+   「1 視覺符號 ＋ 4～8 字短詞 ＋ 1 核心數字或對比箭頭」。
+2. TTS 時間軸驅動動態揭示：t=0 只顯示主標題其餘隱藏；時間抵達彈出並
+   高亮（放大、發光邊框、琥珀金 #FBBF24）；下一點彈出時前一點退為
+   低飽和暗灰背景；預留 reveal_timestamps 介面與 fallback 時間軸。
+
+----------------------------------------------------------------
+修改檔案清單
+----------------------------------------------------------------
+- presentation.py
+  * 新增 MAX_SLIDE_LINE=15、SLIDE_SYMBOLS、condense_slide_line()、
+    limit_slide_body()：把投影片內文逐句濃縮至 ≤15 字（優先短詞＋數字）。
+  * plan_daily_slides / fill_story_slide_bodies：換版後對非 versus_clash
+    版面套用 limit_slide_body（versus 內文供 split_news_summary 不濃縮）。
+  * build_tutorial_cards：card 標題/金句/要點改走 condense_slide_line。
+- script_writer.py
+  * 總編輯定調 brief_prompt 新增第 9 條「極簡圖解文案」規則。
+  * 教學 prompt 的 bullet_points 收緊為 4～15 字極簡短詞。
+- media_engine.py
+  * 新增 _resolve_reveal_timestamps()：正規化揭示秒數陣列，缺值/格式
+    不合時回退為錄製窗口內平均分布的 fallback 時間軸。
+  * render_animated_slide 新增 reveal_timestamps 參數（預留 media_engine
+    下一階段傳入各句 TTS 累積真實秒數），並以 slide_data 為後備來源。
+  * 四大版型重點節點（chart 的 li、versus 雙面板、timeline 卡片、
+    impact 子句）加上 reveal-node 標記並統計 reveal_count。
+  * CSS：.kinetic .reveal-node 停用原進場動畫；未講到 opacity:0、
+    translateY(22px) scale(.96)；.is-active 彈出 scale(1.03)＋發光邊框＋
+    文字 #FBBF24；.is-dimmed 退為 opacity:.48、scale(.98)、去光去飽和；
+    過渡 0.35s cubic-bezier(0.22,1,0.36,1)。
+  * JS：依 reveal 秒數陣列以 requestAnimationFrame 逐點切換
+    is-hidden/is-active/is-dimmed，t=0 全隱藏只留標題。
+
+----------------------------------------------------------------
+語法檢查
+----------------------------------------------------------------
+python -m py_compile presentation.py script_writer.py media_engine.py
+=> ALL_EXIT=0（零語法錯誤）
+helper 行為驗證：condense/limit/reveal }{#} 全數正確（ALL_OK）。
+
+----------------------------------------------------------------
+Git Commit
+----------------------------------------------------------------
+訊息：feat(phase2): minimal slide copy and TTS progressive kinetic reveal
+（本階段僅建立本地 commit，未 push）
