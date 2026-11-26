@@ -46,11 +46,21 @@ MAIN_W, MAIN_H = media_engine.MAIN_VIDEO_WIDTH, media_engine.MAIN_VIDEO_HEIGHT
 FPS = media_engine.VIDEO_FPS
 
 # 單一主題總口播字數目標（不含開場報價與片尾）。
-TARGET_MIN_CHARS = 3500
-TARGET_MAX_CHARS = 4200
+TARGET_MIN_CHARS = 2600
+TARGET_MAX_CHARS = 3400
 # 每頁短句上限與每行字數上限。
 MAX_LINES_PER_SLIDE = 4
 MAX_LINE_CHARS = 14
+
+# 男主播唯一名稱為「比特汪」：本模組自己的文字清洗函式，
+# 無條件把「位元汪／位元犬」等錯誤譯名一律修正為「比特汪」。
+_WRONG_DOG_RE = re.compile(r"位元[汪犬]")
+
+
+def _clean_text(text):
+    """共用 presentation.sanitize_text 後，再保險封殺位元汪／位元犬錯字。"""
+    cleaned = presentation.sanitize_text(str(text or ""))
+    return _WRONG_DOG_RE.sub("比特汪", cleaned)
 
 
 # ── 抓取開場用 BTC／ETH 現價（CoinGecko 簡單行情） ──────────
@@ -78,10 +88,11 @@ def gather_news():
     enriched = market_data.enrich_top_news_with_full_text(entries, max_articles=6)
     items = []
     for published_at, entry in enriched:
-        title = script_writer.clean_txt(entry.get("title", ""))
+        title = _clean_text(entry.get("title", ""))
         full_text = entry.get("full_text") or script_writer.clean_txt(
             entry.get("summary", "")
         )
+        full_text = _clean_text(full_text)
         items.append(
             {
                 "title": title,
@@ -123,7 +134,7 @@ def _build_story_prompt(news_items, prices):
 
     return f"""今日日期：{TODAY_STR}
 
-【任務】只從以下今日新聞中，挑選「最震撼、最值得深挖的 1 個單一核心事件或機構研報」作為整集唯一主軸，做一檔 10～13 分鐘、約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的精品長談。
+【任務】只從以下今日新聞中，挑選「最震撼、最值得深挖的 1 個單一核心事件或機構研報」作為整集唯一主軸，做一檔 9～11 分鐘、約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的精品長談。
 
 {opening}
 
@@ -151,8 +162,9 @@ def _build_story_prompt(news_items, prices):
 }}
 
 【slides 規則】
-- 共 14～18 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字。
-- 每頁 lines 為 2～{MAX_LINES_PER_SLIDE} 行極簡短句，每行 ≤{MAX_LINE_CHARS} 字。
+- 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
+- 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「具體事件與數據推演」，嚴禁空泛重複或湊字。
+- 每頁 lines 為 2～{MAX_LINES_PER_SLIDE} 行極簡短句，每行 ≤{MAX_LINE_CHARS} 字；投影片畫面一律維持極簡短句，絕不可把整段口播塞進畫面。
 - 每頁 dialogue 為該頁要唸的 1～3 段對話，是畫面短句的口語展開。
 - big 為該頁唯一的視覺焦點（大數字對比或一句震撼短標）。
 
@@ -177,7 +189,7 @@ def _normalize_story(raw, news_items, prices):
     opening = []
     for line in data.get("opening") or []:
         role = "男" if str(line.get("role")) == "男" else "女"
-        text = presentation.sanitize_text(str(line.get("text") or ""))
+        text = _clean_text(line.get("text"))
         if text:
             opening.append((role, text))
     # 開場沒有內容時，用一句不報價的預設開場。
@@ -193,14 +205,14 @@ def _normalize_story(raw, news_items, prices):
         dialogue = []
         for line in slide.get("dialogue") or []:
             role = "男" if str(line.get("role")) == "男" else "女"
-            text = presentation.sanitize_text(str(line.get("text") or ""))
+            text = _clean_text(line.get("text"))
             if text:
                 dialogue.append((role, text))
         if not dialogue:
             continue
         slides.append(
             {
-                "big": presentation.sanitize_text(str(slide.get("big") or ""))[:16],
+                "big": _clean_text(slide.get("big"))[:16],
                 "lines": lines,
                 "dialogue": dialogue,
             }
@@ -210,10 +222,10 @@ def _normalize_story(raw, news_items, prices):
         raise ValueError("story 沒有可用的 slides")
 
     return {
-        "topic_title": presentation.sanitize_text(str(data.get("topic_title") or "極簡故事"))[:30],
-        "topic_summary": presentation.sanitize_text(str(data.get("topic_summary") or "")),
+        "topic_title": _clean_text(data.get("topic_title") or "極簡故事")[:30],
+        "topic_summary": _clean_text(data.get("topic_summary")),
         "broll_keywords": str(data.get("broll_keywords") or "cryptocurrency,finance,data"),
-        "yt_title": presentation.sanitize_text(str(data.get("yt_title") or data.get("topic_title") or "極簡故事")),
+        "yt_title": _clean_text(data.get("yt_title") or data.get("topic_title") or "極簡故事"),
         "opening": opening,
         "slides": slides,
     }
@@ -438,20 +450,24 @@ def _split_summary_lines(summary):
 
 
 def build_pages(story):
+    # 防呆：topic_title／各字串欄位若為 None（模型漏填）不得拋出 TypeError。
+    topic_title = (
+        story.get("topic_title") or story.get("title") or "今日市場深度聚焦"
+    ).strip()
     pages = []
     pages.append(
         {
-            "big": story["topic_title"][:16],
-            "lines": _split_summary_lines(story["topic_summary"]),
-            "dialogue": story["opening"],
+            "big": topic_title[:16],
+            "lines": _split_summary_lines(story.get("topic_summary") or ""),
+            "dialogue": story.get("opening") or [],
         }
     )
-    for slide in story["slides"]:
+    for slide in story.get("slides") or []:
         pages.append(
             {
-                "big": slide["big"],
-                "lines": slide["lines"],
-                "dialogue": slide["dialogue"],
+                "big": (slide.get("big") or "").strip(),
+                "lines": slide.get("lines") or [],
+                "dialogue": slide.get("dialogue") or [],
             }
         )
     return pages
