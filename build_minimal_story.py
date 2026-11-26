@@ -231,20 +231,52 @@ def _normalize_story(raw, news_items, prices):
     }
 
 
+def _fallback_story(news_items, prices):
+    """模型解析失敗時的內建完整保底結構，確保 build_story 永不回傳 None。"""
+    topic_title = "今日市場深度聚焦"
+    if news_items:
+        topic_title = _clean_text(news_items[0].get("title") or topic_title)[:30] or topic_title
+    summary = _clean_text(news_items[0].get("title")) if news_items else ""
+    opening = [("男", "今天我們只聊一件最關鍵的事，先把時間留給這個主題。")]
+    slides = [
+        {
+            "big": topic_title[:16],
+            "lines": ["今日重點", "一次看懂"],
+            "dialogue": [("女", "今天的市場出現關鍵變化，我們用生活化的方式把它講清楚。")],
+        }
+    ]
+    return {
+        "topic_title": topic_title,
+        "topic_summary": summary,
+        "broll_keywords": "cryptocurrency,finance,data",
+        "yt_title": topic_title,
+        "opening": opening,
+        "slides": slides,
+    }
+
+
 def build_story(news_items, prices):
-    """呼叫 Gemini 產製單一主題、生活比喻、逐頁短句的極簡故事腳本。"""
+    """呼叫 Gemini 產製單一主題、生活比喻、逐頁短句的極簡故事腳本。
+
+    100% 回傳非空 dict：模型呼叫或解析失敗時退回內建保底結構，絕不回傳 None。
+    """
     prompt = _build_story_prompt(news_items, prices)
-    raw = script_writer.call_gemini(
-        STORY_SYSTEM_PROMPT + "\n\n" + prompt,
-        max_output_tokens=16384,
-        timeout=300,
-        json_mode=True,
-    )
-    story = _normalize_story(raw, news_items, prices)
+    try:
+        raw = script_writer.call_gemini(
+            STORY_SYSTEM_PROMPT + "\n\n" + prompt,
+            max_output_tokens=16384,
+            timeout=300,
+            json_mode=True,
+        )
+        story = _normalize_story(raw, news_items, prices)
+    except Exception as err:  # 模型 429／解析失敗時改用內建保底故事
+        print(f"[Minimal] 寫稿失敗，改用內建保底故事：{err}")
+        story = _fallback_story(news_items, prices)
     total = sum(len(d[1]) for d in story["opening"])
     for slide in story["slides"]:
         total += sum(len(d[1]) for d in slide["dialogue"])
     print(f"[Minimal] 主題：{story['topic_title']}｜頁數 {len(story['slides'])}｜口播約 {total} 字")
+    return story
 # ── 極簡高留白舞台 HTML ──────────────────────────────────
 def _broll_background_html(broll_path):
     if not broll_path:
@@ -450,6 +482,9 @@ def _split_summary_lines(summary):
 
 
 def build_pages(story):
+    # 防呆：story 若為 None／非 dict（上游漏回傳）一律降級為空 dict，確保 .get 不崩潰。
+    if not isinstance(story, dict):
+        story = {}
     # 防呆：topic_title／各字串欄位若為 None（模型漏填）不得拋出 TypeError。
     topic_title = (
         story.get("topic_title") or story.get("title") or "今日市場深度聚焦"
