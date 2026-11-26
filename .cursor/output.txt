@@ -1,28 +1,33 @@
-﻿========================================
-執行時間：2026-11-26
-任務摘要：在 script_writer.py 建立 OpenRouter 免費模型第二備援通道（杜絕 Gemini 全線 503/429 失敗），並於 3 個 GitHub Actions Workflow 注入 OPENROUTER_API_KEY
-========================================
+==================== 靜默工作流執行報告 ====================
+執行時間：2026-11-26 14:41:44 (Asia/Taipei)
 
-【修改檔案清單】
-1. script_writer.py
-   - 新增 _call_openrouter_fallback()，當 Gemini 全線失敗（503/429/連線異常）時自動呼叫 OpenRouter 免費模型：
-     * baidu/ernie-5.5-flash-preview:free
-     * nvidia/nemotron-3-ultra-550b-a55b:free
-     * openrouter/free
-   - 加入標準 OpenRouter 標頭（Authorization、Content-Type、HTTP-Referer、X-Title）與台灣繁體中文鎖定提示。
-   - 於 call_gemini() 序列全部失敗後無縫呼叫備援，回傳格式與原本 100% 相容。
-2. build_special_topic.py
-   - 於獨立 call_gemini() 尾端加入呼叫 script_writer._call_openrouter_fallback()。
-3. .github/workflows/render.yml
-   - env 區塊加入 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-4. .github/workflows/special_topic.yml
-   - env 區塊加入 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-5. .github/workflows/minimal_story.yml
-   - env 區塊加入 OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+【讀取的任務摘要】
+1. 緊急修復 build_minimal_story.py 中 build_pages(story) 對 story 為 None 的崩潰，
+   確保 _normalize_story() 與 build_story() 所有路徑 100% 回傳有效 dict（絕不回傳 None）。
+2. 建立根目錄 CHATGPT.txt 自訂深度素材接入口：
+   - 啟動時優先讀取 CHATGPT.txt（過濾 # 註解與空白行）。
+   - 有效內文 > 100 字時進入專屬主題製片模式（AI 改寫為 9 頁《投資家富士》風格雙人生活化比喻深度長談）。
+   - 內文不足 100 字時維持原自動抓取當日新聞流程。
+   - 製片成功後自動把 CHATGPT.txt 還原為預設註解狀態並由 workflow 以 [skip ci] 推回 main。
+
+【修改的檔案清單】
+- build_minimal_story.py
+  * 新增常數：CHATGPT_FILENAMES / CHATGPT_MIN_CHARS / CHATGPT_DEFAULT_CONTENT。
+  * 新增函式：_chatgpt_path()、read_chatgpt_material()、reset_chatgpt_file()。
+  * 新增函式：_build_custom_prompt()、build_custom_story()（自訂素材專屬寫稿，失敗回退保底 dict）。
+  * main()：啟動優先讀取 CHATGPT.txt，>100 字走 build_custom_story 並印出專屬模式日誌；
+    製片成功後呼叫 reset_chatgpt_file() 還原素材檔。
+  * 既有 None 防呆（build_pages / _normalize_story / build_story）確認已存在（commit d90b7ea），本次保留驗證。
+- CHATGPT.TXT（根目錄）：寫入預設註解內容（UTF-8 無 BOM）。
+- .github/workflows/minimal_story.yml
+  * 確認 permissions: contents: write（原已具備）。
+  * 新增步驟「Reset CHATGPT.txt after deep-dive production」：成功後若 CHATGPT 檔有變動，
+    以 [skip ci] commit 並 push 回 main，避免重複觸發。
 
 【語法檢查結果】
-python -m py_compile 全部 .py 檔案：通過（回傳碼 0）
+- python -m py_compile build_minimal_story.py  →  EXIT=0（通過）
+- 純邏輯驗證：預設 CHATGPT.TXT（僅註解）→ 有效字數 0、used=False，正確退回當日新聞流程。
 
-【Git 資訊】
-Commit Hash: 1ce0da2177f61e3685df88a55c918c74038599ae
-已成功 push 至 origin main。
+【Git Commit Hash】
+- 2d3e187d983070662ee25007286ded671be7dc16
+============================================================

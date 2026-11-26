@@ -52,6 +52,17 @@ TARGET_MAX_CHARS = 3400
 MAX_LINES_PER_SLIDE = 4
 MAX_LINE_CHARS = 14
 
+# 根目錄自訂深度素材檔（CHATGPT.txt）。CI 跑在 Linux 為大小寫敏感，
+# 因此同時偵測 .txt 與 .TXT 兩種檔名，避免跨平台找不到檔案。
+CHATGPT_FILENAMES = ("CHATGPT.txt", "CHATGPT.TXT")
+# 有效內文（去除 # 註解與空白行後）超過此字數才進入專屬主題製片模式。
+CHATGPT_MIN_CHARS = 100
+# CHATGPT.txt 的預設註解內容（無實質素材時的狀態，也是製片後還原的內容）。
+CHATGPT_DEFAULT_CONTENT = (
+    "# 若要使用 ChatGPT 深度討論內容製片，請將完整文章貼於此檔案並執行 Minimal Story workflow；"
+    "若無實質內容則自動抓取當日即時新聞。\n"
+)
+
 # 男主播唯一名稱為「比特汪」：本模組自己的文字清洗函式，
 # 無條件把「位元汪／位元犬」等錯誤譯名一律修正為「比特汪」。
 _WRONG_DOG_RE = re.compile(r"位元[汪犬]")
@@ -101,6 +112,54 @@ def gather_news():
             }
         )
     return items
+
+
+# ── 根目錄 CHATGPT.txt 自訂深度素材接入 ────────────────────
+def _chatgpt_path():
+    """回傳實際存在的 CHATGPT 素材檔路徑；找不到時回傳預設檔名（供寫入用）。"""
+    for name in CHATGPT_FILENAMES:
+        candidate = os.path.join(BASE_DIR, name)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(BASE_DIR, CHATGPT_FILENAMES[0])
+
+
+def read_chatgpt_material():
+    """讀取根目錄 CHATGPT.txt，過濾以 # 開頭的註解行與空白行後回傳純內文。
+
+    回傳 (material_text, used_path)：material_text 為 '' 代表無有效素材；
+    used_path 為實際讀到的檔案路徑（找不到時為 None）。
+    """
+    path = _chatgpt_path()
+    if not os.path.exists(path):
+        return "", None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = handle.read()
+    except Exception as err:  # 讀檔失敗則靜默退回當日新聞流程
+        print(f"[Minimal] 讀取 CHATGPT.txt 失敗，改走當日新聞：{err}")
+        return "", None
+    kept = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        kept.append(stripped)
+    material = "\n".join(kept).strip()
+    return material, path
+
+
+def reset_chatgpt_file(path=None):
+    """製片完成後把 CHATGPT 素材檔還原為預設註解狀態，避免下次重複製片。"""
+    target = path or _chatgpt_path()
+    try:
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(CHATGPT_DEFAULT_CONTENT)
+        print(f"[Minimal] 已重置 {os.path.basename(target)} 為預設註解狀態。")
+        return True
+    except Exception as err:
+        print(f"[Minimal] 重置 CHATGPT.txt 失敗：{err}")
+        return False
 
 
 # ── 單一主題 × 生活比喻 寫稿引擎 ──────────────────────────
@@ -277,6 +336,90 @@ def build_story(news_items, prices):
         total += sum(len(d[1]) for d in slide["dialogue"])
     print(f"[Minimal] 主題：{story['topic_title']}｜頁數 {len(story['slides'])}｜口播約 {total} 字")
     return story
+
+
+# ── CHATGPT.txt 自訂深度素材 × 生活比喻 寫稿引擎 ─────────────
+def _build_custom_prompt(material, prices):
+    btc = prices.get("BTC") or {}
+    eth = prices.get("ETH") or {}
+    if btc.get("usd") is not None:
+        opening = (
+            f"開場第一句用一句話帶過 BTC 現價 {presentation.format_usd_price(btc['usd'])} 美元"
+            f"（24H {btc.get('change', 0):+.2f}%）與 ETH 現價 "
+            f"{presentation.format_usd_price(eth['usd']) if eth.get('usd') is not None else '未知'} 美元，"
+            "30 秒內講完，之後 95% 全部深挖這份自訂深度素材。"
+        )
+    else:
+        opening = "開場第一句話不要報價，直接切入這份自訂深度素材的核心主題。"
+
+    return f"""今日日期：{TODAY_STR}
+
+【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔 9 頁、約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的《投資家富士》風格雙人生活化比喻深度長談。
+
+{opening}
+
+【寫稿硬性規則】
+1. 忠於素材：必須完整覆蓋素材中的全部核心論點、數據與洞察，不得遺漏或捏造新事件。
+2. 強制生活比喻法：凡是解釋任何區塊鏈技術、宏觀經濟或鏈上指標，必須先用一個台灣人秒懂的生活場景打比方，再用白話拆解數據與背後邏輯，嚴禁堆砌枯燥術語。
+3. 雙人對話：由「男」（比特汪）與「女」（以太喵）兩位主播交替口播，生動生活化、有來有往。
+4. 所有數字（價格、百分比、倍數）都要寫進口播，字幕會保留原始格式（如 0.6、27.53%）。
+5. 內容必須完全基於提供的素材，不得捏造未經證實的數字或事件。
+
+【輸出 JSON 結構】只輸出 JSON，不要 markdown 或註解：
+{{
+  "topic_title": "整集核心主題標題（20 字內、有懸念）",
+  "topic_summary": "一句話說明本集深挖的單一主題",
+  "broll_keywords": "英文 Pixabay 實景底片關鍵字，逗號分隔，3～5 個",
+  "yt_title": "65～88 字元高點擊懸念標題",
+  "opening": [{{"role": "男", "text": "開場 30 秒報價＋點出主題的對話"}}],
+  "slides": [
+    {{
+      "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
+      "lines": ["短句1", "短句2", "短句3"],
+      "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
+    }}
+  ]
+}}
+
+【slides 規則】
+- 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
+- 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「素材中的具體論點與數據推演」，嚴禁空泛重複或湊字。
+- 每頁 lines 為 2～{MAX_LINES_PER_SLIDE} 行極簡短句，每行 ≤{MAX_LINE_CHARS} 字；投影片畫面一律維持極簡短句，絕不可把整段口播塞進畫面。
+- 每頁 dialogue 為該頁要唸的 1～3 段對話，是畫面短句的口語展開。
+- big 為該頁唯一的視覺焦點（大數字對比或一句震撼短標）。
+
+【自訂深度素材正文】
+{material}
+"""
+
+
+def build_custom_story(material, prices):
+    """把 CHATGPT.txt 自訂深度素材交給 AI 改寫為 9 頁極簡長談。
+
+    100% 回傳非空 dict：模型呼叫或解析失敗時退回內建保底結構，絕不回傳 None。
+    """
+    prompt = _build_custom_prompt(material, prices)
+    try:
+        raw = script_writer.call_gemini(
+            STORY_SYSTEM_PROMPT + "\n\n" + prompt,
+            max_output_tokens=16384,
+            timeout=300,
+            json_mode=True,
+        )
+        story = _normalize_story(raw, [], prices)
+    except Exception as err:  # 模型 429／解析失敗時改用內建保底故事
+        print(f"[Minimal] 自訂素材寫稿失敗，改用內建保底故事：{err}")
+        story = _fallback_story([], prices)
+    total = sum(len(d[1]) for d in story["opening"])
+    for slide in story["slides"]:
+        total += sum(len(d[1]) for d in slide["dialogue"])
+    print(
+        f"[Minimal] 自訂主題：{story['topic_title']}｜頁數 {len(story['slides'])}"
+        f"｜口播約 {total} 字"
+    )
+    return story
+
+
 # ── 極簡高留白舞台 HTML ──────────────────────────────────
 def _broll_background_html(broll_path):
     if not broll_path:
@@ -778,16 +921,36 @@ def main():
     enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
     print(f"=== 極簡故事圖解線啟動 [{TODAY_STR}]（測試模式:{IS_TEST}）===")
     prices = fetch_opening_prices()
-    print("[Minimal 1/4] 抓取今日完整新聞正文...")
-    news_items = gather_news()
-    print(f"[Minimal 2/4] 選定單一主題並撰寫生活比喻長談（{len(news_items)} 則素材）...")
-    story = build_story(news_items, prices)
+
+    # 優先使用根目錄 CHATGPT.txt 自訂深度素材；無有效內容（<100 字）時退回當日新聞。
+    material, chatgpt_path = read_chatgpt_material()
+    used_chatgpt = len(material) >= CHATGPT_MIN_CHARS
+    if used_chatgpt:
+        print(
+            f"[Minimal] 偵測到 CHATGPT.txt 自訂深度素材（共 {len(material)} 字），"
+            "進入專屬主題製片模式！"
+        )
+        print("[Minimal 1/4] 以 CHATGPT.txt 自訂深度素材撰寫生活比喻長談...")
+        story = build_custom_story(material, prices)
+    else:
+        print("[Minimal 1/4] 抓取今日完整新聞正文...")
+        news_items = gather_news()
+        print(
+            f"[Minimal 2/4] 選定單一主題並撰寫生活比喻長談"
+            f"（{len(news_items)} 則素材）..."
+        )
+        story = build_story(news_items, prices)
+
     print("[Minimal 3/4] 合成逐行亮起極簡舞台主片與 Shorts...")
     main_result = render_main_story(story)
     create_thumbnail(story)
     render_short_story(story, main_result)
     print("[Minimal 4/4] 輸出 metadata...")
     write_metadata(story, main_result)
+
+    # 製片成功後，若使用了 CHATGPT.txt 自訂素材，還原為預設註解狀態（防止重複製片）。
+    if used_chatgpt:
+        reset_chatgpt_file(chatgpt_path)
 
     if not enable_yt:
         print("[ENABLE_YOUTUBE_UPLOAD=false] 跳過 YouTube 上傳，保留 story_main.mp4 等供 Releases 預覽。")

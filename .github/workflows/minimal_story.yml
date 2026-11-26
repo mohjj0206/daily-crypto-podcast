@@ -51,6 +51,19 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: python build_minimal_story.py
 
+      - name: Reset CHATGPT.txt after deep-dive production
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHATGPT.txt CHATGPT.TXT 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "CHATGPT.txt 無實質變動，略過重置提交。"
+          else
+            git commit -m "chore(minimal): reset CHATGPT.txt after deep-dive production [skip ci]"
+            git push origin HEAD:main
+          fi
+
       - name: Publish preview to GitHub Releases
         if: ${{ success() || failure() }}
         env:
