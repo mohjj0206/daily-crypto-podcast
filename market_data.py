@@ -1713,18 +1713,24 @@ def fetch_btc_mvrv(drawdown_pct=None):
     }
 
     def pack(value, source, is_estimate, market_cap=None, realized=None, as_of=None):
-        zone = presentation.classify_mvrv(value)
+        num = float(value)
+        mvrv_type = "z_score" if (num < 0 or num > 4.2) else "ratio"
+        zone = presentation.classify_mvrv(num, mvrv_type)
+        display_name = "MVRV Z 分數" if mvrv_type == "z_score" else "MVRV 比率"
         return {
-            "value": round(float(value), 2),
+            "value": round(num, 2),
+            "mvrv_type": mvrv_type,
+            "display_name": display_name,
             "zone": zone,
             "source": source,
             "is_estimate": is_estimate,
             "market_cap": market_cap,
             "realized_cap": realized,
             "as_of": as_of,
-            "bar_pct": max(4, min(100, int(float(value) / 4.0 * 100))),
+            "bar_pct": max(4, min(100, int((num + 1) / 8.0 * 100))) if mvrv_type == "z_score"
+            else max(4, min(100, int(num / 4.0 * 100))),
             "report": (
-                f"MVRV {presentation.format_metric(value, 'ratio')}，判讀為{zone}"
+                f"{display_name} {presentation.format_mvrv(num, mvrv_type)}，判讀為{zone}"
                 + ("（備援估算，不是鏈上原值）" if is_estimate else f"（{source}）")
             ),
         }
@@ -1779,9 +1785,15 @@ def fetch_btc_mvrv(drawdown_pct=None):
             if cached.get("value"):
                 cached["source"] = "local-cache"
                 cached["is_estimate"] = False
+                ctype = cached.get("mvrv_type", "ratio")
+                cname = cached.get("display_name") or (
+                    "MVRV Z 分數" if ctype == "z_score" else "MVRV 比率"
+                )
+                cached["mvrv_type"] = ctype
+                cached["display_name"] = cname
                 cached["report"] = (
-                    f"MVRV {presentation.format_metric(cached['value'], 'ratio')}，"
-                    f"判讀為{cached.get('zone') or presentation.classify_mvrv(cached['value'])}"
+                    f"{cname} {presentation.format_mvrv(cached['value'], ctype)}，"
+                    f"判讀為{cached.get('zone') or presentation.classify_mvrv(cached['value'], ctype)}"
                     "（沿用本地快取）"
                 )
                 return cached
@@ -2067,8 +2079,10 @@ def fetch_all_market_data(now_tw, is_test):
     )
     mvrv["zone"] = mvrv_zone
     if mvrv.get("value") is not None:
+        mtype = mvrv.get("mvrv_type", "ratio")
+        mname = mvrv.get("display_name") or ("MVRV Z 分數" if mtype == "z_score" else "MVRV 比率")
         mvrv["report"] = (
-            f"MVRV {presentation.format_metric(mvrv['value'], 'ratio')}，判讀為{mvrv_zone}"
+            f"{mname} {presentation.format_mvrv(mvrv['value'], mtype)}，判讀為{mvrv_zone}"
             + (
                 "（備援估算，不是鏈上原值）"
                 if mvrv.get("is_estimate")

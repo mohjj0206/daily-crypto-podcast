@@ -1968,7 +1968,8 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         mdata.get("ma200d"),
     )
     slide_insights = {
-        "mvrv": presentation.format_metric(mvrv_info["value"], "ratio") if mvrv_info.get("value") is not None else "—",
+        "mvrv": presentation.format_metric(mvrv_info["value"], "mvrv") if mvrv_info.get("value") is not None else "—",
+        "mvrv_name": mvrv_info.get("display_name", "MVRV 比率"),
         "zone": market_zone,
         "mvrv_pct": mvrv_info.get("bar_pct", 40),
         "support": presentation.format_metric(mdata["btc_metrics"]["support"], "price"),
@@ -2263,7 +2264,8 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     badges = [(f"BTC {mdata['btc_pct']:+.2f}%", pct_fill)]
     mvrv_info = mdata.get("mvrv") or {}
     if mvrv_info.get("value") is not None:
-        badges.append((f"MVRV {presentation.format_metric(mvrv_info['value'], 'ratio')}", "#d97706"))
+        mvrv_label = mvrv_info.get("display_name", "MVRV")
+        badges.append((f"{mvrv_label} {presentation.format_metric(mvrv_info['value'], 'mvrv')}", "#d97706"))
     elif fng_num is not None:
         badges.append((f"恐慌 {int(fng_num)}", "#0369a1"))
     t_img = Image.new("RGB", (MAIN_VIDEO_WIDTH, MAIN_VIDEO_HEIGHT), "#070b14")

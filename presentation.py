@@ -295,6 +295,16 @@ def build_tutorial_cards(sections, lesson=None):
     return cards
 
 
+def format_usd_price(price):
+    """分級幣價格式化：≥100 整數、10–100 兩位、<10 四位。"""
+    value = float(price)
+    if value >= 100:
+        return f"${value:,.0f}"
+    if value >= 10:
+        return f"${value:.2f}"
+    return f"${value:.4f}"
+
+
 def format_usd(value):
     """具體美元金額四捨五入到整數，並加上千分位。負號放在錢字符號前面。"""
     rounded = round_usd(value)
@@ -302,15 +312,22 @@ def format_usd(value):
     return f"{sign}${abs(rounded):,}"
 
 
+def format_mvrv(value, mvrv_type="ratio"):
+    """MVRV 無單位鏈上指標，固定兩位小數。"""
+    return f"{float(value):.2f}"
+
+
 def format_metric(value, kind):
     """統一幣價、百分比、比值與市值／成交量的顯示精度。"""
     number = float(value)
     if kind == "price":
-        return format_usd(number)
+        return format_usd_price(number)
     if kind == "percent":
         return f"{number:+.2f}%"
     if kind == "ratio":
         return f"{number:.2f}"
+    if kind == "mvrv":
+        return format_mvrv(number)
     if kind == "btc":
         return f"{number:.8f}"
     if kind == "compact":
@@ -326,17 +343,39 @@ def format_metric(value, kind):
     raise ValueError(f"unknown metric kind: {kind}")
 
 
-def classify_mvrv(value):
+def classify_mvrv_ratio(value):
+    """MVRV 比率（市值／已實現價值倍數）區間判讀。"""
     ratio = float(value)
     if ratio < 1.0:
-        zone = "歷史底部低估區"
-    elif ratio < 2.4:
-        zone = "健康多頭推進區"
-    elif ratio <= 3.5:
-        zone = "市場過熱警戒區"
-    else:
-        zone = "週期極端泡沫區"
-    return zone
+        return "全網平均浮虧低估區"
+    if ratio < 1.8:
+        return "理性累積區"
+    if ratio < 2.8:
+        return "健康多頭推進區"
+    if ratio < 3.5:
+        return "市場偏熱警戒區"
+    return "極度過熱泡沫風險"
+
+
+def classify_mvrv_zscore(value):
+    """MVRV Z 分數（標準差尺度）區間判讀。"""
+    z = float(value)
+    if z < 0.1:
+        return "極度低估歷史底部"
+    if z < 1.5:
+        return "低估蓄勢"
+    if z < 3.5:
+        return "健康多頭推進"
+    if z < 6.0:
+        return "市場偏熱警戒"
+    return "極度過熱泡沫風險"
+
+
+def classify_mvrv(value, mvrv_type="ratio"):
+    """依 mvrv_type 分派到對應的區間判讀函式。"""
+    if mvrv_type == "z_score":
+        return classify_mvrv_zscore(value)
+    return classify_mvrv_ratio(value)
 
 
 def _as_float(value):
@@ -415,6 +454,9 @@ def sanitize_text(text):
     cleaned = re.sub(r"NT\$\s*", "$", cleaned)
     cleaned = re.sub(r"\bTWD\b", "USD", cleaned, flags=re.I)
     cleaned = re.sub(r"(公開資訊\s*){2,}", "公開資訊", cleaned)
+    cleaned = re.sub(r"第\s*\d+\s*則\s*新聞", "最新消息", cleaned)
+    cleaned = re.sub(r"新聞\s*\d+[、：:，]?", "最新消息", cleaned)
+    cleaned = re.sub(r"(?:本|這|該)?新聞\s*[一二三四五六七八九十\d]+", "最新消息", cleaned)
     return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
 
 

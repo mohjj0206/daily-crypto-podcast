@@ -898,6 +898,109 @@ def _episode_long_enough(part1_raw, part2_raw, is_test):
     return _spoken_chars(part1_raw) + _spoken_chars(part2_raw) >= 3200
 
 
+# ── 動態 YouTube Metadata 生成 ──────────────────────────────────
+
+def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
+    """生成 65–88 字高點擊率動態標題，依當日核心事件與反直覺衝突。"""
+    cur_p = mdata.get("cur_p", 0)
+    btc_pct = mdata.get("btc_pct", 0)
+    fng = mdata.get("fng_num", 50)
+    core_conflict = editorial_brief.get("core_conflict", "")
+    opening_hook = editorial_brief.get("opening_hook", "")
+
+    # 嘗試用 Gemini 生成高點擊標題
+    if not is_test:
+        prompt = f"""你是一位專業的加密貨幣 YouTube 頻道標題優化師。
+請根據以下當日核心資訊，撰寫一個 65–88 字元（含標點）的高點擊率中文標題。
+
+核心要求：
+1. 必須包含好奇心缺口（例如反直覺數據、衝突事件、懸念問題）
+2. 禁止使用「加密貨幣晨報」「BTC、ETH」等公版格式
+3. 必須具體提到當日最衝突的數字或事件
+4. 結尾加上「｜幣看趨勢」
+5. 嚴格控制在 65–88 字元
+
+當日數據：
+- BTC 現價：${cur_p:,.0f}，24H 漲跌：{btc_pct:+.2f}%
+- 恐慌貪婪指數：{fng}
+- 核心矛盾：{core_conflict}
+- 開場鉤子：{opening_hook}
+
+只輸出標題文字，不要任何多餘內容。"""
+        try:
+            title = call_gemini(prompt, max_output_tokens=200, timeout=30).strip()
+            title = sanitize_text(title)
+            if 65 <= len(title) <= 88 and "幣看趨勢" in title:
+                return title
+            print(f"Gemini 標題長度 {len(title)} 不在 65-88 範圍，使用備援。")
+        except Exception as e:
+            print(f"Gemini 標題生成失敗，使用備援：{e}")
+
+    # 備援：依數據動態組裝
+    direction = "狂飆" if btc_pct > 3 else ("暴跌" if btc_pct < -3 else "震盪")
+    fear_label = "極度恐懼" if fng < 25 else ("貪婪" if fng > 75 else "中性")
+    conflict_short = core_conflict[:20] if core_conflict else "多空分歧加劇"
+    title = f" BTC {direction} {fng}恐慌？{conflict_short}｜幣看趨勢"
+    title = title.strip()
+    if len(title) > 88:
+        title = title[:85] + "｜幣看趨勢"
+    return title
+
+
+def _generate_yt_highlights(mdata, editorial_brief, slide_titles, is_test):
+    """生成 3 個核心懸念看點，作為說明欄前 3 行。"""
+    highlights = []
+    core_conflict = editorial_brief.get("core_conflict", "")
+    if core_conflict:
+        highlights.append(f"核心矛盾：{core_conflict[:60]}")
+    cur_p = mdata.get("cur_p", 0)
+    btc_pct = mdata.get("btc_pct", 0)
+    highlights.append(f"BTC ${cur_p:,.0f}（24H {btc_pct:+.2f}%），{'撐住' if btc_pct >= 0 else '失守'}關鍵均線")
+    if slide_titles and len(slide_titles) > 3:
+        highlights.append(f"本集重點：{slide_titles[3][:50]}")
+    elif len(highlights) < 3:
+        highlights.append("未來 24 小時關鍵條件推演與風險提示")
+    return highlights[:3]
+
+
+def _generate_yt_chapters(full_script, slide_titles, intro_duration=15.0):
+    """依逐字稿錨點與 slide_titles 生成 YouTube 章節時間軸。"""
+    import re as _re
+    chapters = []
+    anchor_pattern = _re.compile(r"\[SLIDE_(\d+)\]")
+    lines = full_script.splitlines()
+
+    # 計算每句字數比例，估算每個 slide 的起始秒數
+    total_chars = 0
+    slide_chars = {}
+    current_slide = 1
+    for line in lines:
+        text = anchor_pattern.sub("", line).strip()
+        if not text:
+            continue
+        m = anchor_pattern.search(line)
+        if m:
+            current_slide = int(m.group(1))
+        slide_chars[current_slide] = slide_chars.get(current_slide, 0) + len(text)
+        total_chars += len(text)
+
+    if total_chars == 0:
+        return chapters
+
+    # 以 4.5 字/秒估算語速
+    chars_per_sec = 4.5
+    elapsed = intro_duration
+    for slide_num in sorted(slide_chars.keys()):
+        duration = slide_chars[slide_num] / chars_per_sec
+        mins = int(elapsed // 60)
+        secs = int(elapsed % 60)
+        title = slide_titles[slide_num - 1] if slide_num - 1 < len(slide_titles) else f"段落 {slide_num}"
+        chapters.append(f"{mins:02d}:{secs:02d} {title}")
+        elapsed += duration
+
+    return chapters
+
+
 def generate_script(mdata, dca_data, config):
     cached = load_cached_script()
     if cached is not None:
@@ -1265,6 +1368,9 @@ def generate_script(mdata, dca_data, config):
         "full_script": full_script,
         "ai_title": ai_title,
         "video_title": video_title,
+        "yt_title": _generate_yt_title(mdata, editorial_brief, full_script, is_test),
+        "yt_highlights": _generate_yt_highlights(mdata, editorial_brief, slide_titles, is_test),
+        "yt_chapters": _generate_yt_chapters(full_script, slide_titles),
         "slide_news_details": slide_news_details,
         "slide_news": slide_news,
         "slide_24h_conditions": slide_24h_conditions,
