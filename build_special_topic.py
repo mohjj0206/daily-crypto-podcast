@@ -378,6 +378,10 @@ def call_gemini(prompt):
                 print(f"Gemini 模型 {model} 呼叫失敗，改試備援模型：{exc}")
                 last_error = exc
                 break
+    # Gemini 全線失敗（503/429/連線異常），自動切換 OpenRouter 免費模型第二備援
+    fallback = script_writer._call_openrouter_fallback(prompt, max_output_tokens=8192, timeout=240)
+    if fallback is not None:
+        return fallback
     if last_error:
         raise RuntimeError("所有 Gemini 文字模型均無法完成請求。") from None
     raise RuntimeError("沒有可用的 Gemini 模型。")

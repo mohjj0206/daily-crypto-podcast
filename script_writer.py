@@ -171,6 +171,72 @@ def reuse_script_enabled():
     return os.environ.get("REUSE_SCRIPT", "").strip().lower() == "true"
 
 
+def _call_openrouter_fallback(prompt_txt, max_output_tokens=8192, timeout=240):
+    """Gemini 全線 503/429 或連線異常時，自動改用 OpenRouter 免費模型寫稿。
+
+    依序嘗試 baidu/ernie-5.5-flash-preview:free、nvidia/nemotron-3-ultra-550b-a55b:free、
+    openrouter/free，回傳 choices[0].message.content，格式與 call_gemini() 完全一致。
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    tc_rule = (
+        "請全程使用道地台灣繁體中文（台灣財經習慣用語），嚴禁簡體字；"
+        "若要求 JSON 格式請直接輸出純 JSON。"
+    )
+    full_prompt = f"{prompt_txt}\n\n【格式要求】{tc_rule}"
+    openrouter_models = [
+        "baidu/ernie-5.5-flash-preview:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "openrouter/free",
+    ]
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://is.gd/2JOYTF",
+        "X-Title": "DailyCryptoPodcast",
+    }
+    last_err = None
+    for or_model in openrouter_models:
+        body = json.dumps({
+            "model": or_model,
+            "messages": [
+                {"role": "system", "content": tc_rule},
+                {"role": "user", "content": full_prompt},
+            ],
+            "max_tokens": max_output_tokens,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            res = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
+            content = res["choices"][0]["message"]["content"]
+            print(f"[OpenRouter 備援成功] 模型：{or_model}")
+            return content
+        except urllib.error.HTTPError as e:
+            err_msg = e.read().decode("utf-8", errors="ignore")
+            print(f"OpenRouter API Error ({e.code}) for model '{or_model}': {err_msg}")
+            last_err = e
+            continue
+        except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
+            print(f"OpenRouter model '{or_model}' timed out or lost connection: {e}")
+            last_err = e
+            continue
+        except Exception as e:
+            print(f"Error calling OpenRouter model '{or_model}': {e}")
+            last_err = e
+            continue
+
+    if last_err:
+        print(f"OpenRouter 所有免費備援模型皆失敗：{last_err}")
+    return None
+
+
 def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False, models=None):
     if models:
         models = list(models)
@@ -214,6 +280,11 @@ def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False
                 print(f"Error calling Gemini model '{model}': {e}")
                 last_err = e
                 break
+
+    # Gemini 全線失敗（503/429/連線異常），自動切換 OpenRouter 免費模型第二備援
+    fallback = _call_openrouter_fallback(prompt_txt, max_output_tokens=max_output_tokens, timeout=timeout)
+    if fallback is not None:
+        return fallback
 
     if last_err:
         raise last_err
