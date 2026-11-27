@@ -2054,6 +2054,9 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 sub_end = segment_cur + dur * (segment_weights[index] / total_chars)
 
             hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', sub_txt)
+            if idx == results[-1][0] and index == len(sub_segments) - 1:
+                # 最後一句在進入片尾前淡出，避免結尾字幕殘留在片尾畫面。
+                hl = r"{\\fad(0,600)}" + hl
             evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,315,315,0,,{hl}")
             segment_cur = sub_end
 
