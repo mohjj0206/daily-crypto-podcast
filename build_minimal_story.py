@@ -1223,6 +1223,25 @@ def render_short_story(story, main_result):
                         check=True,
                     )
                 clips.append(out)
+
+            broll_stats = broll_engine.get_episode_stats()[broll_engine.VERTICAL]
+            if os.environ.get("PIXABAY_API_KEY", "").strip():
+                coverage = (
+                    broll_stats["success"] / broll_stats["requested"]
+                    if broll_stats["requested"] else 0.0
+                )
+                print(
+                    f"[Minimal] Shorts Pixabay 覆蓋率：{broll_stats['success']}/"
+                    f"{broll_stats['requested']}（{coverage:.0%}）"
+                )
+                min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
+                if coverage < min_coverage:
+                    raise RuntimeError(
+                        f"Shorts Pixabay B-Roll 覆蓋率 {coverage:.0%}，"
+                        f"低於最低要求 {min_coverage:.0%}；請檢查 API Key／配額／直式素材搜尋。"
+                    )
+            else:
+                print("[Minimal] 未設定 Pixabay API Key，Shorts 將使用預設動態底圖。")
         finally:
             browser.close()
 
