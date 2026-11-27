@@ -621,7 +621,7 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label):
             bars.append(
                 '<div class="chart-row">'
                 f'<div class="chart-label">{html.escape(point["label"])}</div>'
-                '<div class="chart-track"><div class="chart-bar" '
+                f'<div class="chart-track"><div class="chart-bar {"negative" if point["value"] < 0 else "positive"}" '
                 f'style="width:{width:.1f}%"></div></div>'
                 f'<div class="chart-value">{value_text}{html.escape(chart.get("unit") or "")}</div>'
                 '</div>'
@@ -683,6 +683,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .chart-label {{ color: #c9d6e7; font-size: 22px; overflow-wrap: anywhere; }}
 .chart-track {{ height: 22px; border-radius: 20px; background: rgba(148,163,184,.18); overflow: hidden; }}
 .chart-bar {{ height: 100%; border-radius: 20px; background: linear-gradient(90deg,#38bdf8,#fbbf24); }}
+.chart-bar.negative {{ background: linear-gradient(90deg,#fb7185,#be123c); }}
 .chart-value {{ color: #fbbf24; font-size: 22px; font-weight: 800; text-align: right; }}
 .insights {{ display: flex; flex-direction: column; gap: 22px; }}
 .insight {{ display: flex; align-items: flex-start; gap: 16px; color: #e8eef7;
