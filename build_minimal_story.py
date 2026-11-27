@@ -516,16 +516,36 @@ def build_custom_story(material, prices):
             json_mode=True,
         )
         story = _normalize_story(raw, [], prices)
-    except Exception as err:  # 模型 429／解析失敗時改用內建保底故事
-        print(f"[Minimal] 自訂素材寫稿失敗，改用內建保底故事：{err}")
-        story = _fallback_story([], prices)
-    total = sum(len(d[1]) for d in story["opening"])
-    for slide in story["slides"]:
-        total += sum(len(d[1]) for d in slide["dialogue"])
-    print(
-        f"[Minimal] 自訂主題：{story['topic_title']}｜頁數 {len(story['slides'])}"
-        f"｜口播約 {total} 字"
-    )
+        # 深度報導模式採取 Fail Closed：頁數或內容量不足就停止製片，
+        # 絕不可改用與 CHATGPT.TXT 無關的通用保底故事。
+        slide_count = len(story["slides"])
+        if slide_count != 9:
+            raise ValueError(
+                f"深度報導應產出 9 頁分析簡報，實際只有 {slide_count} 頁。"
+            )
+        page_lengths = [
+            sum(len(dialogue_text) for _, dialogue_text in slide["dialogue"])
+            for slide in story["slides"]
+        ]
+        total = sum(page_lengths) + sum(len(d[1]) for d in story["opening"])
+        if any(length < 180 for length in page_lengths):
+            raise ValueError(
+                "至少一頁口播少於 180 字，內容深度不足："
+                + ", ".join(str(length) for length in page_lengths)
+            )
+        if not 2300 <= total <= 3800:
+            raise ValueError(
+                f"深度報導口播總字數不合格：{total} 字（要求 2,300～3,800 字）。"
+            )
+        print(
+            f"[Minimal] 深度報導品質檢查通過：9 頁｜口播 {total} 字｜"
+            f"各頁字數 {page_lengths}"
+        )
+    except Exception as err:
+        print(f"[Minimal] CHATGPT.TXT 深度報導製稿失敗，停止本次製片以保留原始素材：{err}")
+        raise RuntimeError(
+            "CHATGPT.TXT 深度報導未通過品質檢查；已中止製片，不會改用一般新聞或保底故事。"
+        ) from err
     return story
 
 
