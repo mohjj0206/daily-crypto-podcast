@@ -1747,14 +1747,17 @@ def fetch_btc_mvrv(drawdown_pct=None):
                 continue
             try:
                 market_cap = float(row.get("CapMrktCurUSD"))
-                realized_cap = float(row.get("CapRealUSD"))
                 observed = as_utc(row.get("time"))
             except (TypeError, ValueError, OverflowError):
                 continue
             if not math.isfinite(market_cap) or market_cap <= 0:
                 continue
-            # 分母使用整段可用歷史的市值序列；已實現市值只用來計算最新分子。
+            # 分母使用整段可用歷史的市值序列；不因早期 realized cap 缺值而縮短標準差樣本。
             market_caps.append(market_cap)
+            try:
+                realized_cap = float(row.get("CapRealUSD"))
+            except (TypeError, ValueError, OverflowError):
+                continue
             if not math.isfinite(realized_cap) or realized_cap <= 0:
                 continue
             valid_rows.append((observed, market_cap, realized_cap))
