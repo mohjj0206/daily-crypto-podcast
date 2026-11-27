@@ -378,6 +378,10 @@ def _normalize_story(raw, news_items, prices):
                 "lines": lines,
                 "metrics": _normalize_metrics(slide.get("metrics")),
                 "chart": _normalize_chart(slide.get("chart")),
+                "source_sections": [
+                    _clean_text(section) for section in (slide.get("source_sections") or [])
+                    if str(section).strip()
+                ],
                 "dialogue": dialogue,
             }
         )
@@ -444,6 +448,18 @@ def build_story(news_items, prices):
 
 
 # ── CHATGPT.txt 自訂深度素材 × 生活比喻 寫稿引擎 ─────────────
+def _extract_source_sections(material):
+    """擷取原文的一級章節標題，作為深度影片的最低覆蓋清單。"""
+    sections = []
+    for line in (material or "").splitlines():
+        match = re.match(r"^\s*([一二三四五六七八九十]+、\s*.+?)\s*$", line)
+        if match:
+            title = match.group(1).strip()
+            if title not in sections:
+                sections.append(title)
+    return sections
+
+
 def _build_custom_prompt(material, prices):
     btc = prices.get("BTC") or {}
     eth = prices.get("ETH") or {}
@@ -457,6 +473,8 @@ def _build_custom_prompt(material, prices):
     else:
         opening = "開場第一句話不要報價，直接切入這份自訂深度素材的核心主題。"
 
+    required_sections = _extract_source_sections(material)
+    section_checklist = "\n".join(f"- {section}" for section in required_sections)
     return f"""今日日期：{TODAY_STR}
 
 【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔 9 頁、約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的《投資家富士》風格雙人生活化比喻深度長談。
@@ -465,6 +483,8 @@ def _build_custom_prompt(material, prices):
 
 【寫稿硬性規則】
 1. 忠於素材：必須完整覆蓋素材中的全部核心論點、數據與洞察，不得遺漏或捏造新事件。
+1A. 章節覆蓋：下列原文一級章節必須全部分配到 9 頁，逐字填入各頁 source_sections；不可漏掉、改寫標題或只在片尾一筆帶過。
+{section_checklist}
 2. 強制生活比喻法：凡是解釋任何區塊鏈技術、宏觀經濟或鏈上指標，必須先用一個台灣人秒懂的生活場景打比方，再用白話拆解數據與背後邏輯，嚴禁堆砌枯燥術語。
 3. 雙人對話：由「男」（比特汪）與「女」（以太喵）兩位主播交替口播，生動生活化、有來有往。
 4. 所有數字（價格、百分比、倍數）都要寫進口播，字幕會保留原始格式（如 0.6、27.53%）。
@@ -483,6 +503,7 @@ def _build_custom_prompt(material, prices):
       "lines": ["分析重點1", "分析重點2", "分析重點3"],
       "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義"}}],
       "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2]}},
+      "source_sections": ["必須逐字引用上方清單中的原文一級章節標題"],
       "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
     }}
   ]
@@ -516,6 +537,16 @@ def build_custom_story(material, prices):
             timeout=300,
             json_mode=True,
         )
+        raw_data = json.loads(raw)
+        required_sections = _extract_source_sections(material)
+        covered_sections = {
+            section
+            for slide in (raw_data.get("slides") or [])
+            for section in (slide.get("source_sections") or [])
+        }
+        missing_sections = [section for section in required_sections if section not in covered_sections]
+        if missing_sections:
+            raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
         story = _normalize_story(raw, [], prices)
         # 深度報導模式採取 Fail Closed：頁數或內容量不足就停止製片，
         # 絕不可改用與 CHATGPT.TXT 無關的通用保底故事。
@@ -785,6 +816,25 @@ def _fmt_ass(seconds):
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
 
+def _wrap_ass_subtitle(text, max_width, font_size=54):
+    """依實際字型像素寬度換行，避免中英混排字幕超出畫面安全區。"""
+    font = ImageFont.truetype(media_engine.get_system_font_path(), font_size)
+    paragraphs = str(text or "").replace("\r", "").splitlines()
+    wrapped = []
+    for paragraph in paragraphs:
+        current = ""
+        for char in paragraph:
+            candidate = current + char
+            if current and font.getlength(candidate) > max_width:
+                wrapped.append(current)
+                current = char
+            else:
+                current = candidate
+        if current:
+            wrapped.append(current)
+    return r"\N".join(wrapped)
+
+
 def build_ass(events, out_path):
     header = (
         "[Script Info]\nScriptType: v4.00+\n"
@@ -793,8 +843,8 @@ def build_ass(events, out_path):
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Main,Noto Sans CJK TC,66,&H00FFFFFF,&H00FFFFFF,&H00202838,&H64000000,"
-        "-1,0,0,0,100,100,0,0,1,3,1,2,80,80,70,1\n\n"
+        "Style: Main,Noto Sans CJK TC,54,&H00FFFFFF,&H00FFFFFF,&H00202838,&H64000000,"
+        "-1,0,0,0,100,100,0,0,1,3,1,2,180,180,250,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -802,9 +852,10 @@ def build_ass(events, out_path):
     for start, end, text in events:
         if not text or end <= start:
             continue
-        safe = presentation.sanitize_text(text).replace("\n", " ")
+        safe = presentation.sanitize_text(text)
+        safe = _wrap_ass_subtitle(safe, max(400, MAIN_W - 420), font_size=54)
         lines.append(
-            f"Dialogue: 0,{_fmt_ass(start)},{_fmt_ass(end)},Main,,0,0,0,,{safe}"
+            f"Dialogue: 0,{_fmt_ass(start)},{_fmt_ass(end)},Main,,180,180,250,,{safe}"
         )
     # libass 對完全沒有 Dialogue 的 ASS 會報錯退出（exit status 234），
     # 因此若沒有任何有效事件，補一行 1 秒的空白佔位對白，確保表頭完整可用。
@@ -1104,6 +1155,13 @@ apply(a);if(a<nodes.length-1)requestAnimationFrame(tick);}}apply(-1);requestAnim
 def render_short_story(story, main_result):
     W, H = media_engine.SHORT_VIDEO_WIDTH, media_engine.SHORT_VIDEO_HEIGHT
     short_pages = main_result["pages"][:2]
+    short_total = min(60.0, sum(item["dur"] for item in short_pages))
+    remaining = short_total
+    clip_durations = []
+    for item in short_pages:
+        clip_duration = min(item["dur"], max(0.0, remaining))
+        clip_durations.append(clip_duration)
+        remaining -= clip_duration
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
@@ -1113,13 +1171,16 @@ def render_short_story(story, main_result):
         try:
             clips = []
             for i, item in enumerate(short_pages):
+                clip_duration = clip_durations[i]
+                if clip_duration <= 0:
+                    continue
                 # 每頁 Shorts 也輪替套用直式 Pixabay 實景動態底片。
                 short_broll_path = broll_engine.fetch_pixabay_broll(
                     story.get("broll_keywords"), broll_engine.VERTICAL
                 )
                 doc = _short_html(item["page"], item["reveal"], short_broll_path)
                 out = f"story_short_p{i}.mp4"
-                rec_sec = item["dur"] + 0.4
+                rec_sec = clip_duration + 0.4
                 with tempfile.TemporaryDirectory() as rd:
                     ctx = browser.new_context(
                         viewport={"width": W, "height": H}, device_scale_factor=1,
@@ -1137,7 +1198,7 @@ def render_short_story(story, main_result):
                         ["ffmpeg", "-y", "-i", video.path(),
                          "-vf", f"fps={FPS},scale={W}:{H}:flags=lanczos,"
                                 f"trim=duration={rec_sec:.4f},setpts=PTS-STARTPTS,format=yuv420p",
-                         "-t", f"{item['dur']:.4f}", "-an", "-r", str(FPS),
+                         "-t", f"{clip_duration:.4f}", "-an", "-r", str(FPS),
                          "-c:v", "libx264", "-preset", "medium",
                          "-crf", media_engine.VIDEO_CRF, "-pix_fmt", "yuv420p", out],
                         check=True,
@@ -1146,7 +1207,13 @@ def render_short_story(story, main_result):
         finally:
             browser.close()
 
-    short_audio = concat_audio([p["audio"] for p in short_pages], "story_short_audio.mp3")
+    short_audio_full = concat_audio([p["audio"] for p in short_pages], "story_short_audio_full.mp3")
+    short_audio = "story_short_audio.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", short_audio_full, "-t", f"{short_total:.4f}",
+         "-c:a", "libmp3lame", "-q:a", "2", short_audio],
+        check=True,
+    )
     list_name = "story_short_concat.txt"
     with open(list_name, "w", encoding="utf-8") as handle:
         for fn in clips:
@@ -1228,7 +1295,7 @@ def main():
         thumb_path="story_thumb.jpg",
         main_title=story["yt_title"],
         main_description=story_description,
-        short_title=f"{story['yt_title']}｜60 秒精華 #Shorts",
+        short_title=f"{story['yt_title']}｜{int(short_total)} 秒精華 #Shorts",
         short_description=(
             f"完整極簡故事：https://is.gd/2JOYTF\n\n"
             "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
@@ -1241,16 +1308,12 @@ def main():
         ),
     )
 
-    # 製片成功後，若使用了 CHATGPT.txt 自訂素材，還原為預設註解狀態（防止重複製片）。
-    if used_chatgpt:
-        reset_chatgpt_file(chatgpt_path)
-
     if not enable_yt:
         print("[ENABLE_YOUTUBE_UPLOAD=false] 跳過 YouTube 上傳，保留 story_main.mp4 等供 Releases 預覽。")
         return
     youtube = youtube_uploader.build_youtube_client()
     if youtube is None:
-        return
+        raise RuntimeError("YouTube 用戶端建立失敗；保留 CHATGPT.txt 原始素材，不執行重置。")
     description = (
         open("story_metadata.txt", encoding="utf-8").read()
         if os.path.exists("story_metadata.txt") else ""
