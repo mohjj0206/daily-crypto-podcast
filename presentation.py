@@ -61,10 +61,10 @@ def dark_css(has_broll=False):
 _WRONG_DOG_NAME = re.compile(r"位元[汪犬]")
 
 _EMOTION = {
-    "excited": {"rate": "108%", "pitch": "+1.5st", "break": "180ms"},
-    "serious": {"rate": "92%", "pitch": "-1.5st", "break": "320ms"},
-    "analytical": {"rate": "100%", "pitch": "+0st", "break": "140ms"},
-    "debate": {"rate": "106%", "pitch": "+0.5st", "break": "80ms"},
+    "excited": {"rate": "108%", "pitch": "+1.5st", "break": "140ms"},
+    "serious": {"rate": "98%", "pitch": "-1.5st", "break": "220ms"},
+    "analytical": {"rate": "105%", "pitch": "+0st", "break": "110ms"},
+    "debate": {"rate": "108%", "pitch": "+0.5st", "break": "70ms"},
 }
 _EMOTION_TAG = re.compile(r"\[(excited|serious|analytical|debate)\]")
 _NUMBER = re.compile(r"\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|\$?\d+(?:\.\d+)?%?")
@@ -721,8 +721,8 @@ def build_ssml_inner(text):
         r'<break time="160ms"/><emphasis level="moderate"><say-as interpret-as="cardinal">\1</say-as></emphasis>',
         spoken,
     )
-    spoken = re.sub(r"([，、])", r'\1<break time="120ms"/>', spoken)
-    spoken = re.sub(r"([。！？!?])", r'\1<break time="280ms"/>', spoken)
+    spoken = re.sub(r"([，、])", r'\1<break time="90ms"/>', spoken)
+    spoken = re.sub(r"([。！？!?])", r'\1<break time="200ms"/>', spoken)
     style = _EMOTION[emotion]
     return (
         f'<prosody rate="{style["rate"]}" pitch="{style["pitch"]}">'
