@@ -811,12 +811,17 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     insights = slide_data.get("insights") or {}
     insight_labels = slide_data.get("insight_labels") or {}
     mvrv_pct = int(insights.get("mvrv_pct") or 40)
+    mvrv_markup = ""
+    if insights.get("mvrv_available"):
+        mvrv_markup = (
+            f"<article><small>{html.escape(str(insight_labels.get('mvrv', 'MVRV Z-Score')))}</small>"
+            f"<strong>{html.escape(str(insights.get('mvrv', '')))}</strong>"
+            f"<em>{html.escape(str(insights.get('zone', '')))}</em>"
+            "<div class=\"mvrv-bar\"><i></i></div></article>"
+        )
     insight_markup = (
-        f"<article><small>{html.escape(str(insight_labels.get('mvrv', 'MVRV Z-Score')))}</small>"
-        f"<strong>{html.escape(str(insights.get('mvrv', '—')))}</strong>"
-        f"<em>{html.escape(str(insights.get('zone', '')))}</em>"
-        "<div class=\"mvrv-bar\"><i></i></div></article>"
-        f"<article><small>{html.escape(str(insight_labels.get('level', '支撐 / 壓力')))}</small>"
+        mvrv_markup
+        + f"<article><small>{html.escape(str(insight_labels.get('level', '支撐 / 壓力')))}</small>"
         f"<strong class=\"pulse\">{html.escape(str(insights.get('support', '—')))}</strong>"
         f"<em>{html.escape(str(insights.get('resistance', '—')))}</em></article>"
         f"<article><small>{html.escape(str(insight_labels.get('indicator', 'RSI / 均線')))}</small>"
@@ -2270,9 +2275,10 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             ),
         })
     mvrv_info = mdata.get("mvrv") or {}
-    market_zone = mvrv_info.get("zone") or "未取得有效 MVRV Z-Score"
+    market_zone = mvrv_info.get("zone") or ""
     slide_insights = {
-        "mvrv": presentation.format_metric(mvrv_info["value"], "mvrv") if mvrv_info.get("value") is not None else "—",
+        "mvrv_available": bool(mvrv_info.get("mvrv_type") == "z_score" and mvrv_info.get("value") is not None),
+        "mvrv": presentation.format_metric(mvrv_info["value"], "mvrv") if mvrv_info.get("value") is not None else "",
         "mvrv_name": mvrv_info.get("display_name", "MVRV Z-Score"),
         "zone": market_zone,
         "mvrv_pct": mvrv_info.get("bar_pct", 40),
@@ -2283,7 +2289,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             f"100日 {presentation.format_metric(float(mdata['ma100d']), 'price')} / "
             f"200日 {presentation.format_metric(float(mdata['ma200d']), 'price')}"
         ),
-        "headline": market_zone if market_zone and market_zone != "—" else "先看價格確認",
+        "headline": market_zone if market_zone else "先看價格確認",
         "detail": (
             f"帳本 {presentation.format_metric(dca_return_pct, 'percent')}"
             if dca_return_pct is not None else "部位沿用最近一筆有效紀錄"
