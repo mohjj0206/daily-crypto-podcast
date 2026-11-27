@@ -2026,7 +2026,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 slide_start_times[slide_number] = (
                     intro_video_duration + speech_elapsed + dur * fractional_offset
                 )
-        tw_txt = cc.convert(txt)
+        # OpenCC 可能把「比特汪」轉成「位元汪」，轉換後必須再跑角色名正規化。\n        tw_txt = presentation.display_text(cc.convert(txt))
 
         split_txt = [part.strip() for part in re.split(r'[，。！？、；：…!?;\n]+', tw_txt) if part.strip()]
         sub_segments = []
