@@ -1360,6 +1360,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
       return;
     }}
     const start = performance.now();
+    let clockOffset = 0;
     function apply(activeIndex) {{
       for (let i = 0; i < nodes.length; i++) {{
         const node = nodes[i];
@@ -1369,8 +1370,12 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
         else node.classList.add("is-hidden");
       }}
     }}
+    window.resetSlideRevealClock = () => {{
+      clockOffset = (performance.now() - start) / 1000;
+      apply(-1);
+    }};
     function tick(now) {{
-      const t = (now - start) / 1000;
+      const t = Math.max(0, (now - start) / 1000 - clockOffset);
       let activeIndex = -1;
       for (let i = 0; i < times.length; i++) {{
         if (t >= times[i]) activeIndex = i;
@@ -1399,6 +1404,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
             page.evaluate("() => document.fonts.ready.then(() => true)")
             if not page.evaluate("() => window.fitSlideLayout()"):
                 print(f"Slide {idx} required final auto-fit scaling to stay inside its safe area.")
+            page.evaluate("() => window.resetSlideRevealClock && window.resetSlideRevealClock()")
             page.wait_for_timeout(max(1, round(capture_preroll * 1000)))
             poster_path = os.path.join(record_dir, "poster.png")
             page.screenshot(path=poster_path)
