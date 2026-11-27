@@ -175,35 +175,53 @@ def calculate_slide_durations(slide_start_times, speech_duration, video_intro_du
 
 
 def compute_slide_reveal_timestamps(results, slide_anchor_positions, slide_count):
-    """依各段真實 TTS 音檔秒數，算出每頁投影片各重點節點的揭示時間點。
+    """依真實 TTS 秒數計算每頁揭示時間，並正確處理插值錨點落在句子中間的情況。
 
-    回傳 {slide_number: [相對於該頁起始的累積秒數, ...]}。
-    同一頁若被 TTS 字節上限切成多段子音檔，這裡以該頁所屬全部子音檔的
-    真實 ffprobe 實長加總，確保換頁與動態彈出時間軸和語音播報對齊。
+    回傳每頁相對於該頁起始的累積秒數。當缺少明確 [SLIDE_n] 標記而使用
+    小數錨點時，只計入該句實際落在本頁的音訊比例，避免簡報重點延遲出現。
     """
     ordered = sorted(results, key=lambda item: item[0])
     durations = {idx: float(dur) for idx, _fn, _line, dur in ordered}
     reveal_map = {}
+    last_dialogue_index = max(durations) if durations else -1
+
     for slide_number in range(1, slide_count + 1):
         anchor = slide_anchor_positions.get(slide_number)
-        if anchor is None:
+        if anchor is None or last_dialogue_index < 0:
             reveal_map[slide_number] = []
             continue
-        start_idx = int(anchor)
-        # 該頁涵蓋的對話：從本頁錨點對話起，到下一頁錨點對話（不含）為止。
-        next_positions = [
-            int(pos) for num, pos in slide_anchor_positions.items()
-            if num > slide_number and int(pos) > start_idx
+
+        start_position = max(0.0, float(anchor))
+        later_positions = [
+            float(position)
+            for number, position in slide_anchor_positions.items()
+            if number > slide_number and float(position) > start_position
         ]
-        end_idx = min(next_positions) if next_positions else (max(durations) + 1 if durations else start_idx + 1)
+        end_position = min(later_positions) if later_positions else float(last_dialogue_index + 1)
+        end_position = min(end_position, float(last_dialogue_index + 1))
+        if end_position <= start_position:
+            reveal_map[slide_number] = []
+            continue
+
+        first_index = int(start_position)
+        final_index = min(last_dialogue_index, int(math.ceil(end_position) - 1))
         cumulative = 0.0
         stamps = []
-        for idx in range(start_idx, end_idx):
-            cumulative += durations.get(idx, 0.0)
-            stamps.append(round(cumulative, 3))
+        for dialogue_index in range(first_index, final_index + 1):
+            duration = durations.get(dialogue_index, 0.0)
+            segment_start = start_position - dialogue_index if dialogue_index == first_index else 0.0
+            segment_end = (
+                end_position - dialogue_index
+                if dialogue_index == final_index and end_position < dialogue_index + 1
+                else 1.0
+            )
+            fraction = max(0.0, min(1.0, segment_end) - max(0.0, segment_start))
+            cumulative += duration * fraction
+            if fraction > 0:
+                stamps.append(round(cumulative, 3))
         reveal_map[slide_number] = stamps
-    return reveal_map
 
+    return reveal_map
 
 # ── Google TTS 語音合成 ──────────────────────────────────────────
 
