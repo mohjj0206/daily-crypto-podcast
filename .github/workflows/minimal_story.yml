@@ -86,6 +86,7 @@ jobs:
           [ -f story_short.mp4 ] && FILES+=(story_short.mp4)
           [ -f story_thumb.jpg ] && FILES+=(story_thumb.jpg)
           [ -f story_metadata.txt ] && FILES+=(story_metadata.txt)
+          [ -f story_broll_manifest.json ] && FILES+=(story_broll_manifest.json)
           [ -f publish_bundle.json ] && FILES+=(publish_bundle.json)
 
           if [ ${#FILES[@]} -gt 0 ]; then
@@ -106,4 +107,5 @@ jobs:
             story_short.mp4
             story_thumb.jpg
             story_metadata.txt
+            story_broll_manifest.json
           retention-days: 5
