@@ -659,7 +659,7 @@ def build_custom_story(material, prices):
 {json.dumps(raw_data, ensure_ascii=False)}
 """
             repaired_raw = script_writer.call_gemini(
-                STORY_SYSTEM_PROMPT + "\\n\\n" + repair_prompt,
+                STORY_SYSTEM_PROMPT + "\n\n" + repair_prompt,
                 max_output_tokens=16384,
                 timeout=300,
                 json_mode=True,
