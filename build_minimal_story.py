@@ -820,7 +820,7 @@ def distribute_reveal(n_lines, total_dur):
         return []
     per = total_dur / n_lines
     return [round(per * (i + 1), 3) for i in range(n_lines)]
-# ── 底部 66pt 字幕（ASS） ────────────────────────────────
+# ── 底部 54pt 自動換行字幕（ASS） ────────────────────────
 def _fmt_ass(seconds):
     seconds = max(0.0, seconds)
     h, r = divmod(seconds, 3600)
