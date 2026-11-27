@@ -531,14 +531,11 @@ def highlight_key_numbers(text, state=None):
 # ── Playwright 簡報渲染 ──────────────────────────────────────────
 
 def _resolve_reveal_timestamps(reveal_timestamps, node_count, window_sec):
-    """正規化每頁各重點節點的揭示時間點為遞增秒數陣列（Progressive Kinetic Reveal）。
-
-    介面預留：下一階段 media_engine 會傳入對應該頁各句 TTS 音檔的累積真實秒數
-    （reveal_timestamps: list[float]，單位秒）。未提供或格式不合時，回退為平均
-    分布於錄製窗口內的 fallback 時間軸，確保動畫在擷取期間完整可見。
-    """
+    """將重點揭示點對齊整張投影片的真實口播時長，而非壓縮到短錄影窗口。"""
     if node_count <= 0:
         return []
+
+    window = max(0.0, float(window_sec))
     values = []
     if isinstance(reveal_timestamps, (list, tuple)):
         for item in reveal_timestamps:
@@ -547,25 +544,30 @@ def _resolve_reveal_timestamps(reveal_timestamps, node_count, window_sec):
             except (TypeError, ValueError):
                 continue
             if value >= 0:
-                values.append(value)
-    if len(values) < node_count:
-        start = max(0.0, float(window_sec)) * 0.12
-        span = max(0.0, float(window_sec) * 0.78)
-        step = span / (node_count - 1) if node_count > 1 else 0.0
-        fallback = [start + step * i for i in range(node_count)]
-        values = (values + fallback)[:node_count]
+                values.append(min(value, window))
+
+    # TTS 時間點包含本頁所有口播句。節點數通常少於句數，因此均勻抽樣
+    # 整段口播的時間軸，避免所有重點只在頁面前段出現、後半段長時間靜止。
+    if len(values) >= node_count:
+        if node_count == 1:
+            selected = [values[0]]
+        else:
+            selected = [
+                values[round(index * (len(values) - 1) / (node_count - 1))]
+                for index in range(node_count)
+            ]
     else:
-        # 真實 TTS 累積秒數可能超出錄製窗口（record_seconds 上限），
-        # 等比例縮放進窗口內，保留各節點相對時序，確保每點都能在擷取期間彈出。
-        window = max(0.0, float(window_sec))
-        max_value = max(values[:node_count]) if values[:node_count] else 0.0
-        if window > 0 and max_value > window:
-            scale = (window * 0.96) / max_value
-            values = [value * scale for value in values]
+        # 標記或口播句數不足時，退回整頁均勻揭示；不混接不連續的真實時間點。
+        start = min(window * 0.10, 0.5)
+        end = max(start, window * 0.88)
+        step = (end - start) / (node_count - 1) if node_count > 1 else 0.0
+        selected = [start + step * index for index in range(node_count)]
+
     ordered = []
     last = -1.0
-    for value in values[:node_count]:
-        value = max(value, last + 0.05)
+    min_gap = min(0.05, window / max(node_count * 2, 1))
+    for value in selected:
+        value = min(window, max(float(value), last + min_gap))
         ordered.append(round(value, 3))
         last = value
     return ordered
@@ -753,8 +755,10 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
         f'{html.escape(str(item.get("detail", "")))}</span></div>'
         for item in slide_data.get("ticker_items", [])
     )
-    record_seconds = min(float(dur_sec), 6.0)
-    remaining = max(0.0, float(dur_sec) - record_seconds)
+    # 讓瀏覽器動畫與 TTS 使用同一段真實時間軸。
+    # 舊版只錄 6 秒再以 tpad 凍結最後一格，造成長頁面大部分時間完全靜止。
+    record_seconds = float(dur_sec)
+    remaining = 0.0
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
     if reveal_timestamps is None:
         reveal_timestamps = slide_data.get("reveal_timestamps")
@@ -831,6 +835,34 @@ body {{
 @keyframes gridFlow {{
   from {{ transform: translate3d(0, 0, 0); }}
   to {{ transform: translate3d(48px, 24px, 0); }}
+}}
+/* 四組場景光色輪替，避免每頁都是相同的深藍網格背景。 */
+.slide-stage.scene-1::before {{
+  background:
+    radial-gradient(ellipse at 12% 78%, rgba(244,63,94,.20), transparent 36%),
+    radial-gradient(ellipse at 88% 18%, rgba(245,158,11,.17), transparent 38%),
+    linear-gradient(rgba(251,191,36,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(251,191,36,.045) 1px, transparent 1px);
+  background-size: auto, auto, 54px 54px, 54px 54px;
+  animation: gridFlow 13s linear infinite;
+}}
+.slide-stage.scene-2::before {{
+  background:
+    radial-gradient(ellipse at 18% 18%, rgba(167,139,250,.22), transparent 36%),
+    radial-gradient(ellipse at 82% 78%, rgba(52,211,153,.16), transparent 40%),
+    linear-gradient(rgba(167,139,250,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(52,211,153,.045) 1px, transparent 1px);
+  background-size: auto, auto, 44px 44px, 44px 44px;
+  animation: gridFlow 21s linear infinite reverse;
+}}
+.slide-stage.scene-3::before {{
+  background:
+    radial-gradient(ellipse at 50% 8%, rgba(56,189,248,.22), transparent 38%),
+    radial-gradient(ellipse at 50% 92%, rgba(244,114,182,.14), transparent 42%),
+    linear-gradient(rgba(56,189,248,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56,189,248,.045) 1px, transparent 1px);
+  background-size: auto, auto, 62px 62px, 62px 62px;
+  animation: gridFlow 16s linear infinite;
 }}
 .broll-bg {{
   position: absolute; inset: 0; z-index: 0;
@@ -1192,6 +1224,18 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   opacity: 1 !important; visibility: visible !important; transform: translateY(0) scale(1.02);
   border-color: rgba(251, 191, 36, .9) !important;
   box-shadow: 0 0 24px rgba(251, 191, 36, .35), 0 0 0 1px rgba(251, 191, 36, .55) inset;
+  animation: activeNodePulse 2.8s ease-in-out infinite;
+}}
+@keyframes activeNodePulse {{
+  0%, 100% {{ filter: drop-shadow(0 0 0 rgba(251,191,36,0)); }}
+  50% {{ filter: drop-shadow(0 0 10px rgba(251,191,36,.34)); }}
+}}
+.timeline-card.is-active {{
+  animation: timelineFocus 2.8s ease-in-out infinite !important;
+}}
+@keyframes timelineFocus {{
+  0%, 100% {{ box-shadow: 0 0 18px rgba(251,191,36,.12); }}
+  50% {{ box-shadow: 0 0 34px rgba(251,191,36,.36); }}
 }}
 .reveal-node.is-active,
 .reveal-node.is-active .step-text,
@@ -1205,7 +1249,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 </style>
 </head>
 <body>
-<div class="slide-stage kinetic" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
+<div class="slide-stage kinetic scene-{(idx - 1) % 4}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
 {broll_markup}
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
