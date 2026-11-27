@@ -360,8 +360,21 @@ def fill_slide_bodies_from_narration(slides, full_script):
             raise RuntimeError(
                 f"第 {index} 張投影片的 [SLIDE_{index}] 沒有對應口播內容，停止輸出。"
             )
+        # 標題保留該頁口播開頭；內文則從整頁口播分布取樣，
+        # 避免只顯示前幾句，漏掉本頁後段才出現的時事、數據或風險。
         slide["title"] = candidates[0]["text"]
-        body_candidates = candidates[1:3] if slide.get("layout") == "versus_clash" else candidates[1:4]
+        remaining_candidates = candidates[1:]
+        body_limit = 2 if slide.get("layout") == "versus_clash" else 3
+        if len(remaining_candidates) <= body_limit:
+            body_candidates = remaining_candidates
+        elif body_limit == 1:
+            body_candidates = [remaining_candidates[len(remaining_candidates) // 2]]
+        else:
+            sample_indexes = [
+                round(position * (len(remaining_candidates) - 1) / (body_limit - 1))
+                for position in range(body_limit)
+            ]
+            body_candidates = [remaining_candidates[position] for position in sample_indexes]
         if slide.get("layout") == "versus_clash" and len(body_candidates) < 2:
             raise RuntimeError(
                 f"第 {index} 張 VS 簡報缺少兩個可由口播支持的對照論點，停止輸出，避免補入未播報內容。"
@@ -370,7 +383,7 @@ def fill_slide_bodies_from_narration(slides, full_script):
             body_candidates = candidates[:1]
         slide["body"] = "\n".join(item["text"] for item in body_candidates)
         slide["_body_timeline"] = body_candidates
-        slide["body_source"] = "narration_anchor_strict"
+        slide["body_source"] = "narration_anchor_distributed"
         slide["title_source"] = "narration_anchor_strict"
     return slides
 
