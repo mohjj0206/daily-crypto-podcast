@@ -1751,15 +1751,13 @@ def fetch_btc_mvrv(drawdown_pct=None):
                 observed = as_utc(row.get("time"))
             except (TypeError, ValueError, OverflowError):
                 continue
-            if (
-                not math.isfinite(market_cap)
-                or not math.isfinite(realized_cap)
-                or market_cap <= 0
-                or realized_cap <= 0
-            ):
+            if not math.isfinite(market_cap) or market_cap <= 0:
+                continue
+            # 分母使用整段可用歷史的市值序列；已實現市值只用來計算最新分子。
+            market_caps.append(market_cap)
+            if not math.isfinite(realized_cap) or realized_cap <= 0:
                 continue
             valid_rows.append((observed, market_cap, realized_cap))
-            market_caps.append(market_cap)
 
         if len(valid_rows) < 365:
             raise ValueError(
