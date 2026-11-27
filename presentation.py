@@ -242,6 +242,16 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
     show_format = show_format or {}
     format_id = show_format.get("id") or "debate"
     beats = DAILY_STORY_BEATS.get(format_id) or DAILY_STORY_BEATS["debate"]
+    # 不同節目形式採用不同篇幅，保留該模式最後的結論幕，避免每日固定相同張數。
+    beat_counts = {
+        "debate": 7, "history_mirror": 6, "deep_story": 7,
+        "psychology_flow": 6, "case_file": 8, "data_detective": 7,
+        "scenario_lab": 8, "myth_busting": 6, "capital_flow": 7,
+        "volatility_lab": 7,
+    }
+    beat_limit = beat_counts.get(format_id, len(beats))
+    if len(beats) > beat_limit:
+        beats = beats[:beat_limit - 1] + [beats[-1]]
     price = format_usd(mdata.get("cur_p")) if mdata.get("cur_p") not in (None, "") else "比特幣"
     pct = mdata.get("btc_pct")
     move = f"{float(pct):+.2f}%" if isinstance(pct, (int, float)) else ""
