@@ -279,6 +279,50 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
     return slides
 
 
+def fill_slide_bodies_from_narration(slides, full_script):
+    """依 [SLIDE_n] 錨點擷取該頁實際口播句，讓圖卡文字與主播正在說的內容一致。"""
+    slide_lines = {}
+    current_slide = None
+    anchor_pattern = re.compile(r"\[SLIDE_(\d+)\]")
+    dialogue_pattern = re.compile(r"^(男|女)[：:]\s*(.*)$")
+
+    for raw_line in str(full_script or "").splitlines():
+        match = dialogue_pattern.match(raw_line.strip())
+        if not match:
+            continue
+        spoken = match.group(2).strip()
+        anchor_match = anchor_pattern.search(spoken)
+        if anchor_match:
+            current_slide = int(anchor_match.group(1))
+            spoken = anchor_pattern.sub("", spoken).strip()
+        if current_slide is None or not spoken:
+            continue
+
+        spoken = _EMOTION_TAG.sub("", spoken).strip()
+        spoken = sanitize_text(spoken)
+        fragments = re.split(r"[，。！？、；：…!?;\n]+", spoken)
+        bucket = slide_lines.setdefault(current_slide, [])
+        for fragment in fragments:
+            fragment = fragment.strip(" ，、；：。！？!?;")
+            if len(fragment) < 4:
+                continue
+            condensed = condense_slide_line(fragment)
+            if condensed and condensed not in bucket:
+                bucket.append(condensed)
+            if len(bucket) >= 3:
+                break
+
+    for index, slide in enumerate(slides or [], 1):
+        candidates = slide_lines.get(index) or []
+        if candidates:
+            slide["body"] = "\n".join(candidates[:3])
+            slide["body_source"] = "narration_anchor"
+        else:
+            slide["body"] = limit_slide_body(slide.get("body"))
+            slide["body_source"] = "editorial_fallback"
+    return slides
+
+
 def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
     """依版型填入對應結構化文案：金句幕、VS對決幕、圖表焦點幕、三步驟推演幕。"""
     news = [item for item in (news_details or []) if isinstance(item, dict)]
