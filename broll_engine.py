@@ -62,6 +62,12 @@ _query_rotation = {"index": 0}
 # 最近一次 API 查詢失敗原因（供日誌印出）。
 _LAST_QUERY_ERROR = ""
 
+# 本集 B-Roll 使用統計，區分主片橫式與 Shorts 直式。
+_episode_stats = {
+    HORIZONTAL: {"requested": 0, "success": 0, "failed": 0, "missing_key": 0},
+    VERTICAL: {"requested": 0, "success": 0, "failed": 0, "missing_key": 0},
+}
+
 # 偵測中文字元（含 CJK 統一表意文字）。
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 
@@ -72,6 +78,14 @@ def reset_episode_rotation():
     _episode_used[VERTICAL] = []
     _keyword_rotation["index"] = 0
     _query_rotation["index"] = 0
+    for stats in _episode_stats.values():
+        for key in stats:
+            stats[key] = 0
+
+
+def get_episode_stats():
+    """回傳本集 Pixabay 使用統計，供製片流程檢查實際覆蓋率。"""
+    return {orientation: dict(stats) for orientation, stats in _episode_stats.items()}
 
 
 def _next_fallback_keyword():
@@ -189,11 +203,13 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
         成功時回傳本地 MP4 檔案路徑並印出成功日誌；無金鑰、查無結果、API 錯誤
         或逾時一律印出對應日誌後回傳 None。
     """
+    orient = _orientation(orientation)
+    _episode_stats[orient]["requested"] += 1
     if not _api_key():
+        _episode_stats[orient]["missing_key"] += 1
         print("[Pixabay B-Roll] 警告：未偵測到 PIXABAY_API_KEY 環境變數")
         return None
 
-    orient = _orientation(orientation)
     cache_path = _cache_dir(cache_dir)
     used = _episode_used[orient]
 
@@ -242,11 +258,13 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
                     continue
                 local = dest
             used.append(video_id)
+            _episode_stats[orient]["success"] += 1
             print(
                 f"[Pixabay B-Roll] 成功套用實景動態影片：{query} -> "
                 f"{os.path.basename(local)}"
             )
             return local
 
+    _episode_stats[orient]["failed"] += 1
     print(f"[Pixabay B-Roll] 查詢失敗 ({last_reason})，退回預設暗底")
     return None
