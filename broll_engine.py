@@ -129,7 +129,7 @@ def _query_pixabay(keyword, orientation):
         "q": keyword,
         "video_type": "film",
         "orientation": orientation,
-        "category": "business",
+        # 不鎖定 business 類別；新聞事件、資安、挖礦與科技素材常被歸在其他類別。
         "safesearch": "true",
         "per_page": "20",
     }
@@ -213,20 +213,17 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
     cache_path = _cache_dir(cache_dir)
     used = _episode_used[orient]
 
-    # 組出查詢順序：先使用者英文關鍵字，再輪替保底池，最後備援池，去重。
-    queries = _clean_keywords(keywords)
+    # 每頁最多查 4 組，避免每張投影片為了找素材連續打十多次 API。
+    # 優先使用本頁播報衍生的前 2 組具體關鍵字，再用輪替通用詞保底。
+    queries = _clean_keywords(keywords)[:2]
     fallback_keyword = _next_fallback_keyword()
     if fallback_keyword not in queries:
         queries.append(fallback_keyword)
-    for fallback in FALLBACK_KEYWORD_POOL:
-        if fallback not in queries:
-            queries.append(fallback)
-
-    # 每頁順移查詢起點，避免連續多頁都用同一組關鍵字命中同一支底片。
-    if queries:
-        shift = _query_rotation["index"] % len(queries)
-        queries = queries[shift:] + queries[:shift]
-        _query_rotation["index"] += 1
+    fallback_index = _query_rotation["index"] % len(FALLBACK_KEYWORD_POOL)
+    fallback_keyword_2 = FALLBACK_KEYWORD_POOL[fallback_index]
+    if fallback_keyword_2 not in queries:
+        queries.append(fallback_keyword_2)
+    _query_rotation["index"] += 1
 
     last_reason = "查無結果"
     for query in queries:
