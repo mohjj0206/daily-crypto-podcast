@@ -254,14 +254,33 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
         "dual": {"role":"thermometer","title":f"BTC {price}：與 ETH 的相對強弱","accent":"#a78bfa","body":f"{mdata.get('s1') or ''}\n{mdata.get('eth_slide') or ''}".strip(),"chart":"dual"},
         "rotation": {"role":"thermometer","title":f"資金輪動：BTC {move}，誰真的在動？","accent":"#34d399","body":mdata.get("coins_summary") or "安靜的幣種一筆帶過。","chart":"bars"},
     }
-    scan_orders = {
-        "debate":("fear","dual","rotation"), "history_mirror":("dual","fear","rotation"),
-        "deep_story":("rotation","dual","fear"), "psychology_flow":("fear","rotation","dual"),
-        "case_file":("dual","rotation","fear"), "data_detective":("rotation","fear","dual"),
-        "scenario_lab":("dual","fear","rotation"), "myth_busting":("fear","dual","rotation"),
-        "capital_flow":("rotation","dual","fear"), "volatility_lab":("fear","rotation","dual"),
+    # 不再每集固定掃過恐慌、BTC/ETH、六幣三張快篩；各節目形式只挑與敘事主軸有關的模組。
+    module_orders = {
+        "debate": ("fear", "dual", "rotation"),
+        "history_mirror": ("dual", "rotation"),
+        "deep_story": ("rotation", "fear"),
+        "psychology_flow": ("fear", "rotation"),
+        "case_file": ("dual", "rotation", "fear"),
+        "data_detective": ("rotation", "dual"),
+        "scenario_lab": ("dual", "fear"),
+        "myth_busting": ("fear", "dual"),
+        "capital_flow": ("rotation", "dual"),
+        "volatility_lab": ("fear", "rotation"),
     }
-    slides = [dict(modules[key]) for key in scan_orders.get(format_id, scan_orders["debate"])]
+    slides = [dict(modules[key]) for key in module_orders.get(format_id, module_orders["debate"])]
+    mvrv = mdata.get("mvrv") or {}
+    if (
+        format_id in {"history_mirror", "data_detective", "scenario_lab"}
+        and mvrv.get("mvrv_type") == "z_score"
+        and mvrv.get("value") is not None
+    ):
+        slides.append({
+            "role": "story",
+            "title": f"MVRV Z-Score {float(mvrv['value']):.2f}：{mvrv.get('zone') or '鏈上估值位置'}",
+            "accent": "#f59e0b",
+            "body": mvrv.get("report") or "以歷史市值標準差衡量 BTC 估值位置",
+            "chart": "focus",
+        })
     if show_dca:
         slides.append({"role":"dca","title":f"模擬帳本：價格 {price} 對績效的影響","accent":"#fbbf24","body":dca_body or "模擬定期定額帳本。","chart":"dca"})
     accents = ["#fbbf24","#fb7185","#a78bfa","#38bdf8","#f472b6","#34d399","#f59e0b","#e2e8f0"]
