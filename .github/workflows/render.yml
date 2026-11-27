@@ -110,7 +110,7 @@ jobs:
           if [ -n "$(git status --porcelain history_db)" ]; then
             git add history_db
             git commit -m "chore: update editorial learning history"
-            git pull --rebase origin main
+            git -c rebase.autoStash=true pull --rebase origin main
             git push origin main
           fi
 
@@ -123,6 +123,6 @@ jobs:
           if [ -n "$(git status --porcelain dca_portfolio.json)" ]; then
             git add dca_portfolio.json
             git commit -m "chore: update BTC DCA portfolio ledger"
-            git pull --rebase origin main
+            git -c rebase.autoStash=true pull --rebase origin main
             git push origin main
           fi
