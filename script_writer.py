@@ -1311,7 +1311,7 @@ def generate_script(mdata, dca_data, config):
 6. 為全部 {slide_count} 頁簡報分別擬定新聞級標題（slide_titles，順序嚴格對應：{slide_slots}），禁止任何每天都能套用的公版標題。
 7. slide_news：3 筆焦點新聞圖卡摘要（含 source_news_number, slide_title, positive, risk）。
 8. slide_week：3 句未來 24 小時情境推演條件（情境A、情境B、防守底線）。
-9. 【極簡圖解文案】所有會出現在投影片上的文字（slide_titles、slide_news 的 positive/risk、slide_week）都必須極簡：每句禁止超過 15 字，且濃縮為「1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭（如 15 分鐘 ➔ 6 秒）」，營造高留白呼吸感。口播逐字稿不受此限，只有投影片文字要短。
+9. 【極簡圖解文案】所有會出現在投影片上的文字（slide_titles、slide_news 的 positive/risk、slide_week）都必須極簡：每句禁止超過 15 字，且濃縮為「1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭（如 15 分鐘 ➔ 6 秒）」，每頁至少提供 2～3 條有資訊的短句，主內容應充分利用畫面中央約 65～75% 的可用區域；保留必要留白，但不得只放標題或單行文字造成大面積空白。口播逐字稿不受此限，只有投影片文字要短。
 
 只輸出合法 JSON 物件，格式：
 {{
