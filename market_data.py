@@ -1893,7 +1893,7 @@ def fetch_btc_mvrv(drawdown_pct=None):
                 cached["zone"] = presentation.classify_mvrv_zscore(cached["value"])
                 cached["report"] = (
                     f"MVRV Z-Score {presentation.format_mvrv(cached['value'], 'z_score')}，"
-                    f"判讀為{cached['zone']}（沿用 48 小時內 CoinMetrics 快取）"
+                    f"判讀為{cached['zone']}（沿用 48 小時內 {cached_source} 快取）"
                 )
                 print(f"[MVRV Z-Score] 即時來源暫不可用，沿用有效快取 {cached['as_of']}")
                 return cached
