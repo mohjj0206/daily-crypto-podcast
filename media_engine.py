@@ -775,7 +775,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     )
     # 讓瀏覽器動畫與 TTS 使用同一段真實時間軸。
     # 舊版只錄 6 秒再以 tpad 凍結最後一格，造成長頁面大部分時間完全靜止。
-    # 多錄 0.5 秒，並以 clone padding 保證投影片輸出不短於口播時間軸。
+    # 海報前導後多錄 0.25 秒緩衝，並以 clone padding 保證投影片不短於口播時間軸。
     capture_preroll = 0.75
     tail_record_seconds = max(0.1, float(dur_sec) - capture_preroll + 0.25)
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
