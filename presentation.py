@@ -352,6 +352,10 @@ def fill_slide_bodies_from_narration(slides, full_script):
             )
         slide["title"] = candidates[0]["text"]
         body_candidates = candidates[1:3] if slide.get("layout") == "versus_clash" else candidates[1:4]
+        if slide.get("layout") == "versus_clash" and len(body_candidates) < 2:
+            raise RuntimeError(
+                f"第 {index} 張 VS 簡報缺少兩個可由口播支持的對照論點，停止輸出，避免補入未播報內容。"
+            )
         if not body_candidates:
             body_candidates = candidates[:1]
         slide["body"] = "\n".join(item["text"] for item in body_candidates)
