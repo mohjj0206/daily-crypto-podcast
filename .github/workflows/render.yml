@@ -102,7 +102,8 @@ jobs:
           retention-days: 5
 
       - name: Commit and push DCA ledger
-        if: ${{ inputs.test_mode != true }}
+        # 手動預覽（未啟用 YouTube 上傳）不應寫回 DCA 帳本；排程與正式手動發布照常更新。
+        if: ${{ inputs.test_mode != true && (github.event_name != 'workflow_dispatch' || inputs.enable_youtube_upload == true) }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
