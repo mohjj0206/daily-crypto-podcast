@@ -275,9 +275,10 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
     return slides
 
 def fill_slide_bodies_from_narration(slides, full_script):
-    """每張投影片只使用自己 [SLIDE_n] 錨點之後的實際口播，禁止無聲 fallback。"""
+    """簡報短句直接取自口播，並保留每個短句所屬 TTS 對話與句內位置。"""
     slide_lines = {}
     current_slide = None
+    dialogue_index = 0
     anchor_pattern = re.compile(r"\[SLIDE_(\d+)\]")
     dialogue_pattern = re.compile(r"^(男|女)[：:]\s*(.*)$")
     slide_count = len(slides or [])
@@ -303,15 +304,23 @@ def fill_slide_bodies_from_narration(slides, full_script):
 
         spoken = _EMOTION_TAG.sub("", spoken).strip()
         spoken = sanitize_text(spoken)
-        fragments = re.split(r"[，。！？、；：…!?;\n]+", spoken)
+        fragments = [
+            fragment.strip(" ，、；：。！？!?;")
+            for fragment in re.split(r"[，。！？、；：…!?;\n]+", spoken)
+        ]
+        fragments = [fragment for fragment in fragments if len(fragment) >= 4]
         bucket = slide_lines.setdefault(current_slide, [])
-        for fragment in fragments:
-            fragment = fragment.strip(" ，、；：。！？!?;")
-            if len(fragment) < 4:
-                continue
+        fragment_count = max(1, len(fragments))
+        for fragment_index, fragment in enumerate(fragments):
             condensed = condense_slide_line(fragment)
-            if condensed and condensed not in bucket:
-                bucket.append(condensed)
+            if condensed and not any(item["text"] == condensed for item in bucket):
+                bucket.append({
+                    "text": condensed,
+                    "dialogue_index": dialogue_index,
+                    "fragment_index": fragment_index,
+                    "fragment_count": fragment_count,
+                })
+        dialogue_index += 1
 
     for index, slide in enumerate(slides or [], 1):
         candidates = slide_lines.get(index) or []
@@ -319,12 +328,16 @@ def fill_slide_bodies_from_narration(slides, full_script):
             raise RuntimeError(
                 f"第 {index} 張投影片的 [SLIDE_{index}] 沒有對應口播內容，停止輸出。"
             )
-        # 標題也取自該頁口播，避免 AI 另寫標題造成「標題講 A、主播講 B」。
-        slide["title"] = candidates[0]
-        slide["body"] = "\n".join((candidates[1:4] or candidates[:1]))
+        slide["title"] = candidates[0]["text"]
+        body_candidates = candidates[1:3] if slide.get("layout") == "versus_clash" else candidates[1:4]
+        if not body_candidates:
+            body_candidates = candidates[:1]
+        slide["body"] = "\n".join(item["text"] for item in body_candidates)
+        slide["_body_timeline"] = body_candidates
         slide["body_source"] = "narration_anchor_strict"
         slide["title_source"] = "narration_anchor_strict"
     return slides
+
 
 
 def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
@@ -434,10 +447,22 @@ def format_usd_price(price):
 
 
 def format_usd(value):
-    """具體美元金額四捨五入到整數，並加上千分位。負號放在錢字符號前面。"""
+    """BTC、ETH、SOL、ZEC 等高價幣報價四捨五入到整數。"""
     rounded = round_usd(value)
     sign = "-" if rounded < 0 else ""
-    return f"{sign}${abs(rounded):,}"
+    return f"{sign}$" + f"{abs(rounded):,}"
+
+
+def format_coin_price(symbol, value):
+    """依幣種固定精度：BTC/ETH/SOL/ZEC 整數；XRP/ADA 保留四位小數。"""
+    code = str(symbol or "").upper()
+    number = float(value)
+    sign = "-" if number < 0 else ""
+    if code in {"XRP", "ADA"}:
+        return f"{sign}$" + f"{abs(number):,.4f}"
+    if code in {"BTC", "ETH", "SOL", "ZEC"}:
+        return format_usd(number)
+    return format_usd_price(number)
 
 
 def format_mvrv(value, mvrv_type="ratio"):
@@ -731,29 +756,33 @@ def infer_emotion(raw):
 
 
 def pronounce_for_tts(text):
-    """僅供 Google TTS 發音用的臨時副本轉換（絕不回寫字幕／簡報）。
-
-    - 只針對數字模式做中文發音轉換，不刪除小數點或比值。
-    - 百分比 27.53% → 百分之27點53；比值 2.01:1 → 2點01比1；
-      數字間小數點 (\\d)\\.(\\d) → \\1點\\2。
-    - 正常中文詞彙（如「有一點」「重點」）完全不受影響。
-    """
+    """僅供 Google TTS 發音用：小數點後逐位念，字幕與簡報原文不變。"""
     s = str(text or "")
     if not s:
         return s
-    # 百分比：27.53% → 百分之27點53（先處理，避免 % 干擾後續小數點規則）。
-    def _pct(match):
-        inner = match.group(1).replace(".", "點")
-        return f"百分之{inner}"
-    s = re.sub(r"(\d+(?:\.\d+)?)\s*%", _pct, s)
-    # 比值：2.01:1 → 2點01比1。
-    def _ratio(match):
-        left = match.group(1).replace(".", "點")
-        right = match.group(2).replace(".", "點")
+
+    def decimal_spoken(value):
+        whole, fraction = value.split(".", 1)
+        return f"{whole}點" + " ".join(fraction)
+
+    s = re.sub(
+        r"(\d+\.\d+)%", lambda match: "百分之" + decimal_spoken(match.group(1)), s
+    )
+
+    def ratio_spoken(match):
+        left, right = match.group(1), match.group(2)
+        if "." in left:
+            left = decimal_spoken(left)
+        if "." in right:
+            right = decimal_spoken(right)
         return f"{left}比{right}"
-    s = re.sub(r"(\d+(?:\.\d+)?)\s*[:：]\s*(\d+(?:\.\d+)?)", _ratio, s)
-    # 其餘數字間的小數點 → 點。
-    s = re.sub(r"(\d)\.(\d)", r"\1點\2", s)
+
+    s = re.sub(r"(\d+(?:\.\d+)?)\s*[:：]\s*(\d+(?:\.\d+)?)", ratio_spoken, s)
+    s = re.sub(
+        r"(?<![\d.])(\d+\.\d+)(?![\d.])",
+        lambda match: decimal_spoken(match.group(1)),
+        s,
+    )
     return s
 
 
