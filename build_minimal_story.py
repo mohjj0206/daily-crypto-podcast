@@ -9,12 +9,14 @@
 輸出：story_main.mp4、story_short.mp4、story_thumb.jpg、story_metadata.txt。
 """
 
+import base64
 import html
 import json
 import os
 import re
 import subprocess
 import tempfile
+import unicodedata
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
@@ -637,11 +639,16 @@ def build_custom_story(material, prices):
 
 # ── 極簡高留白舞台 HTML ──────────────────────────────────
 def _broll_background_html(broll_path):
+    """將 Pixabay MP4 內嵌為 data URI，避開 Playwright set_content 的 file:// 權限限制。"""
     if not broll_path:
         return ""
+    if not os.path.isfile(broll_path) or os.path.getsize(broll_path) < 1024:
+        raise RuntimeError(f"Pixabay 素材不存在或檔案異常：{broll_path}")
+    with open(broll_path, "rb") as handle:
+        encoded = base64.b64encode(handle.read()).decode("ascii")
     return (
-        '<video class="broll" autoplay muted loop playsinline '
-        f'src="file://{os.path.abspath(broll_path)}"></video>'
+        '<video class="broll" autoplay muted loop playsinline preload="auto" '
+        f'src="data:video/mp4;base64,{encoded}"></video>'
         '<div class="dark-mask"></div>'
     )
 
@@ -710,7 +717,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; }}
 .dark-mask {{ position: absolute; inset: 0; z-index: 1;
-  background: rgba(3, 7, 16, 0.78); }}
+  background: rgba(3, 7, 16, 0.46); }}
 .content {{ position: relative; z-index: 3; height: 100%; display: flex; flex-direction: column; }}
 .topline {{ display: flex; align-items: center; justify-content: space-between;
   color: #9fb4d1; font-size: 24px; letter-spacing: 3px; font-weight: 700; }}
@@ -813,6 +820,18 @@ def render_slide_video(idx, slide, dur_sec, reveal_seconds, broll_path, browser,
         try:
             page.set_content(html_doc, wait_until="load")
             page.evaluate("() => document.fonts.ready.then(() => true)")
+            if broll_path:
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('.broll'); "
+                    "return !!v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0; }",
+                    timeout=20000,
+                )
+                page.evaluate("() => document.querySelector('.broll').play()")
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('.broll'); return v && v.currentTime > 0.15; }",
+                    timeout=10000,
+                )
+                print(f"[Minimal] 已確認 Pixabay 影片正在播放：{os.path.basename(broll_path)}")
             page.wait_for_timeout(max(1, round(record_seconds * 1000)))
         finally:
             context.close()
@@ -875,26 +894,45 @@ def _fmt_ass(seconds):
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
 
-def _wrap_ass_subtitle(text, max_width, font_size=54):
-    """依實際字型像素寬度換行，避免中英混排字幕超出畫面安全區。"""
+def _clean_subtitle_text(text):
+    """字幕去除中英文標點；保留 1.25、27.53% 等數字格式。"""
+    source = presentation.strip_bracket_tags(
+        presentation.sanitize_text(str(text or ""))
+    )
+    source = re.sub(r"\s+", " ", source).strip()
+    cleaned = []
+    for index, char in enumerate(source):
+        if char == "." and index > 0 and index + 1 < len(source):
+            if source[index - 1].isdigit() and source[index + 1].isdigit():
+                cleaned.append(char)
+                continue
+        if unicodedata.category(char).startswith("P"):
+            continue
+        cleaned.append(char)
+    return re.sub(r"\s+", " ", "".join(cleaned)).strip()
+
+
+def _split_ass_subtitle(text, max_width, font_size=54):
+    """依字型實際寬度切成單行片段；每個片段獨立計時，絕不使用 ASS 多行換行。"""
     font = ImageFont.truetype(media_engine.get_system_font_path(), font_size)
-    paragraphs = str(text or "").replace("\r", "").splitlines()
-    wrapped = []
-    for paragraph in paragraphs:
-        current = ""
-        for char in paragraph:
-            candidate = current + char
-            if current and font.getlength(candidate) > max_width:
-                wrapped.append(current)
-                current = char
-            else:
-                current = candidate
-        if current:
-            wrapped.append(current)
-    return r"\N".join(wrapped)
+    tokens = re.findall(r"\d+(?:\.\d+)?%?|[A-Za-z]+(?:[A-Za-z0-9._-]*[A-Za-z0-9])?|.", text)
+    chunks = []
+    current = ""
+    for token in tokens:
+        candidate = current + token
+        if current and font.getlength(candidate) > max_width:
+            if current.strip():
+                chunks.append(current.strip())
+            current = token.strip()
+        else:
+            current = candidate
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
 
 
 def build_ass(events, out_path):
+    """逐行字幕：同一時間只顯示一行，依口播時長分配每行顯示時間。"""
     header = (
         "[Script Info]\nScriptType: v4.00+\n"
         f"PlayResX: {MAIN_W}\nPlayResY: {MAIN_H}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
@@ -903,25 +941,40 @@ def build_ass(events, out_path):
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         "Style: Main,Noto Sans CJK TC,54,&H00FFFFFF,&H00FFFFFF,&H00202838,&H64000000,"
-        "-1,0,0,0,100,100,0,0,1,3,1,2,180,180,250,1\n\n"
+        "-1,0,0,0,100,100,0,0,1,3,1,2,280,280,235,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+    font = ImageFont.truetype(media_engine.get_system_font_path(), 54)
     lines = []
-    for start, end, text in events:
-        if not text or end <= start:
+    max_width = max(400, MAIN_W - 560)
+    for start, end, spoken in events:
+        if end <= start:
             continue
-        safe = presentation.sanitize_text(text)
-        safe = _wrap_ass_subtitle(safe, max(400, MAIN_W - 420), font_size=54)
-        lines.append(
-            f"Dialogue: 0,{_fmt_ass(start)},{_fmt_ass(end)},Main,,180,180,250,,{safe}"
-        )
-    # libass 對完全沒有 Dialogue 的 ASS 會報錯退出（exit status 234），
-    # 因此若沒有任何有效事件，補一行 1 秒的空白佔位對白，確保表頭完整可用。
+        clean = _clean_subtitle_text(spoken)
+        if not clean:
+            continue
+        chunks = _split_ass_subtitle(clean, max_width, font_size=54)
+        if not chunks:
+            continue
+        weights = [max(1.0, font.getlength(chunk)) for chunk in chunks]
+        total_weight = sum(weights)
+        duration = end - start
+        elapsed_weight = 0.0
+        line_start = start
+        for index, (chunk, weight) in enumerate(zip(chunks, weights)):
+            elapsed_weight += weight
+            line_end = end if index == len(chunks) - 1 else start + duration * elapsed_weight / total_weight
+            if line_end > line_start:
+                lines.append(
+                    f"Dialogue: 0,{_fmt_ass(line_start)},{_fmt_ass(line_end)},Main,,280,280,235,,{chunk}"
+                )
+            line_start = line_end
     if not lines:
         lines.append("Dialogue: 0,0:00:00.00,0:00:01.00,Main,,0,0,0,,")
     with open(out_path, "w", encoding="utf-8") as handle:
         handle.write(header + "\n".join(lines) + "\n")
+    print(f"[Minimal] 逐行字幕完成：{len(lines)} 行；每個時間區間僅一行，已移除標點。")
     return out_path
 
 
@@ -995,6 +1048,96 @@ def _ensure_nonempty_file(path, label):
     return size
 
 
+def _mux_story_avatars(video_path, audio_path, output_path, subtitle_path, speaker_intervals, speech_end):
+    """沿用 Render and Upload Podcast 的 VTuber 合成方式，依實際說話時間切換兩位主持人。"""
+    talk_videos = {
+        "cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
+        "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None,
+    }
+    assets = media_engine.create_speaker_avatars(talk_videos)
+    cat_speaking = "+".join(
+        f"between(t,{start:.6f},{end:.6f})" for start, end in speaker_intervals["F"]
+    ) or "0"
+    dog_speaking = "+".join(
+        f"between(t,{start:.6f},{end:.6f})" for start, end in speaker_intervals["M"]
+    ) or "0"
+    speech_window = f"between(t,0,{speech_end:.6f})"
+    command = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path]
+    indexes = {}
+
+    def add_input(name, path, is_video=False):
+        indexes[name] = len(indexes) + 2
+        if is_video:
+            command.extend(["-stream_loop", "-1", "-i", path])
+        else:
+            command.extend(["-loop", "1", "-framerate", str(FPS), "-i", path])
+
+    add_input("cat_idle", assets["cat_idle"])
+    add_input("cat_talk", talk_videos["cat"] or assets["cat_speaking"], bool(talk_videos["cat"]))
+    add_input("dog_idle", assets["dog_idle"])
+    add_input("dog_talk", talk_videos["dog"] or assets["dog_speaking"], bool(talk_videos["dog"]))
+    if any(talk_videos.values()):
+        add_input("circle_mask", assets["circle_mask"])
+    for speaker in ("cat", "dog"):
+        if talk_videos[speaker]:
+            add_input(f"{speaker}_ring", assets[f"{speaker}_ring"])
+
+    filters = [f"[0:v]ass='{_escape_filter_path(subtitle_path)}'[v_sub]"]
+    active = [speaker for speaker in ("cat", "dog") if talk_videos[speaker]]
+    if len(active) == 2:
+        filters.append(f"[{indexes['circle_mask']}:v]format=gray,split=2[cat_mask][dog_mask]")
+    elif active:
+        filters.append(f"[{indexes['circle_mask']}:v]format=gray[{active[0]}_mask]")
+    for speaker in active:
+        filters.append(
+            f"[{indexes[f'{speaker}_talk']}:v]fps={FPS},"
+            "scale=252:252:force_original_aspect_ratio=increase,crop=252:252,setsar=1,format=rgba"
+            f"[{speaker}_square];[{speaker}_square][{speaker}_mask]alphamerge[{speaker}_talk_circle]"
+        )
+    cat_talk = "[cat_talk_circle]" if talk_videos["cat"] else f"[{indexes['cat_talk']}:v]"
+    dog_talk = "[dog_talk_circle]" if talk_videos["dog"] else f"[{indexes['dog_talk']}:v]"
+    filters.extend([
+        f"[v_sub][{indexes['cat_idle']}:v]overlay=x=42:y=817.5:enable='{speech_window}*not({cat_speaking})'[v_cat_idle]",
+        f"[v_cat_idle]{cat_talk}overlay=x=42:y='804+6*sin(t*14)':eval=frame:enable='{cat_speaking}'[v_cat_talk]",
+    ])
+    stage = "v_cat_talk"
+    if talk_videos["cat"]:
+        filters.append(
+            f"[{stage}][{indexes['cat_ring']}:v]overlay=x=42:y='804+6*sin(t*14)':eval=frame:enable='{cat_speaking}'[v_cat_speaking]"
+        )
+        stage = "v_cat_speaking"
+    filters.extend([
+        f"[{stage}][{indexes['dog_idle']}:v]overlay=x=1653:y=817.5:enable='{speech_window}*not({dog_speaking})'[v_dog_idle]",
+        f"[v_dog_idle]{dog_talk}overlay=x=1653:y='804+6*sin(t*16)':eval=frame:enable='{dog_speaking}'[v_dog_talk]",
+    ])
+    stage = "v_dog_talk"
+    if talk_videos["dog"]:
+        filters.append(
+            f"[{stage}][{indexes['dog_ring']}:v]overlay=x=1653:y='804+6*sin(t*16)':eval=frame:enable='{dog_speaking}'[v_dog_speaking]"
+        )
+        stage = "v_dog_speaking"
+    filters.append(f"[{stage}]null[v_out]")
+    command.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "[v_out]", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "medium", "-crf", media_engine.VIDEO_CRF,
+        "-r", str(FPS), "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", output_path,
+    ])
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        print("[Minimal] VTuber 雙人動畫合成失敗：")
+        print(result.stderr[-3000:])
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
+    print(
+        "[Minimal] VTuber 動畫已合成："
+        f"以太喵={'影片動畫' if talk_videos['cat'] else '靜態說話圖'}，"
+        f"比特汪={'影片動畫' if talk_videos['dog'] else '靜態說話圖'}"
+    )
+
+
 def render_main_story(story):
     pages = build_pages(story)
     broll_engine.reset_episode_rotation()
@@ -1002,6 +1145,7 @@ def render_main_story(story):
     # 1. 逐頁合成 TTS，算出每頁時長與字幕事件。
     page_data = []
     subtitle_events = []
+    speaker_intervals = {"F": [], "M": []}
     cursor = 0.0
     all_audio = []
     global_index = 0
@@ -1012,8 +1156,12 @@ def render_main_story(story):
         page_dur = 0.0
         page_audio = []
         for idx, fn, display, dur in synth:
+            segment_start = cursor + page_dur
             page_dur += dur
-            subtitle_events.append((cursor + page_dur - dur, cursor + page_dur, display))
+            segment_end = cursor + page_dur
+            subtitle_events.append((segment_start, segment_end, display))
+            role = groups[idx][0] if idx < len(groups) else "男"
+            speaker_intervals["F" if role == "女" else "M"].append((segment_start, segment_end))
             page_audio.append(fn)
         page_audio_path = concat_audio(page_audio, f"story_page_{len(page_data)}.mp3")
         reveal = distribute_reveal(len(page["lines"]), page_dur)
@@ -1042,37 +1190,78 @@ def render_main_story(story):
             ],
         )
         try:
+            if not broll_engine._api_key():
+                raise RuntimeError(
+                    "Minimal Story 必須使用 Pixabay 實景素材，但未設定 PIXABAY_API_KEY；"
+                    "已停止輸出，避免再次產生沒有 Pixabay 的影片。"
+                )
             slide_videos = []
+            broll_manifest = []
+            last_broll_path = None
+            validated_broll = set()
             for i, item in enumerate(page_data):
                 label = "開場" if i == 0 else f"{i:02d}"
-                # 每一頁都輪替呼叫 Pixabay，確保每頁投影片都有實景動態底片。
-                broll_path = broll_engine.fetch_pixabay_broll(
+                requested_broll = broll_engine.fetch_pixabay_broll(
                     story.get("broll_keywords"), broll_engine.HORIZONTAL
                 )
+                reused = False
+                if requested_broll:
+                    broll_path = requested_broll
+                    last_broll_path = requested_broll
+                elif last_broll_path:
+                    broll_path = last_broll_path
+                    reused = True
+                    print(
+                        f"[Minimal] 第 {i + 1} 頁 Pixabay 查詢未命中，"
+                        f"沿用上一支已驗證素材：{os.path.basename(broll_path)}"
+                    )
+                else:
+                    raise RuntimeError(
+                        "Pixabay 第一支實景影片下載失敗，停止製片；"
+                        "不允許以暗底或空白畫面冒充 Pixabay 素材。"
+                    )
+                if broll_path not in validated_broll:
+                    probe = subprocess.check_output(
+                        [
+                            "ffprobe", "-v", "error", "-show_entries",
+                            "stream=codec_type", "-of", "json", broll_path,
+                        ],
+                        text=True,
+                    )
+                    stream_info = json.loads(probe)
+                    if not any(x.get("codec_type") == "video" for x in stream_info.get("streams", [])):
+                        raise RuntimeError(f"Pixabay 素材沒有可解碼的影像串流：{broll_path}")
+                    validated_broll.add(broll_path)
                 out = render_slide_video(
                     i, item["page"], item["dur"], item["reveal"],
                     broll_path, browser, label,
                 )
                 slide_videos.append(out)
+                broll_manifest.append({
+                    "slide": i + 1,
+                    "asset": os.path.basename(broll_path),
+                    "source": "Pixabay",
+                    "reused": reused,
+                })
 
-            broll_stats = broll_engine.get_episode_stats()[broll_engine.HORIZONTAL]
-            if broll_engine._api_key():
-                coverage = (
-                    broll_stats["success"] / broll_stats["requested"]
-                    if broll_stats["requested"] else 0.0
+            if len(broll_manifest) != len(page_data) or not validated_broll:
+                raise RuntimeError("Pixabay 實際套用檢查未通過，停止輸出。")
+            with open("story_broll_manifest.json", "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "source": "Pixabay",
+                        "slides": broll_manifest,
+                        "unique_assets": len(validated_broll),
+                        "applied_slides": len(broll_manifest),
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
                 )
-                print(
-                    f"[Minimal] 主片 Pixabay 覆蓋率：{broll_stats['success']}/"
-                    f"{broll_stats['requested']}（{coverage:.0%}）"
-                )
-                min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
-                if coverage < min_coverage:
-                    raise RuntimeError(
-                        f"主片 Pixabay B-Roll 覆蓋率 {coverage:.0%}，"
-                        f"低於最低要求 {min_coverage:.0%}；停止輸出，請檢查 API Key／配額／素材搜尋。"
-                    )
-            else:
-                print("[Minimal] 未設定 Pixabay API Key，主片將使用預設動態底圖。")
+            print(
+                f"[Minimal] Pixabay 實際套用完成：{len(broll_manifest)}/{len(page_data)} 頁，"
+                f"使用 {len(validated_broll)} 支已驗證影片。"
+            )
         finally:
             browser.close()
 
@@ -1112,48 +1301,13 @@ def render_main_story(story):
     mixed = "story_mixed.mp3"
     media_engine.mix_voice_with_bed(full_audio, mixed, transition_times)
 
-    avatar_size = 190
-    avatars = media_engine.create_speaker_avatars(
-        {"cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
-         "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None}
-    )
-    cat_img = resolve_avatar_input(avatars["cat_idle"], "cat")
-    dog_img = resolve_avatar_input(avatars["dog_idle"], "dog")
-
-    # 執行 FFmpeg 前，逐一確認所有輸入檔案存在且非空，避免盲猜 exit status 234。
+    # 執行 FFmpeg 前確認主片底片與字幕存在，再依每段 TTS 時間疊入兩位主持人的動態頭像。
     _ensure_nonempty_file("story_base.mp4", "主片底片")
     _ensure_nonempty_file(ass_path, "字幕檔")
-    _ensure_nonempty_file(cat_img, "貓頭像")
-    _ensure_nonempty_file(dog_img, "狗頭像")
-
-    margin = 48
-    bottom = MAIN_H - avatar_size - 150
-    filter_complex = (
-        f"[0:v]subtitles='{_escape_filter_path(ass_path)}'[base];"
-        f"[1:v]scale={avatar_size}:{avatar_size}[cat];"
-        f"[2:v]scale={avatar_size}:{avatar_size}[dog];"
-        f"[base][cat]overlay={margin}:{bottom}[v1];"
-        f"[v1][dog]overlay={MAIN_W - avatar_size - margin}:{bottom}[vout]"
+    _mux_story_avatars(
+        "story_base.mp4", mixed, "story_main.mp4", ass_path,
+        speaker_intervals, dialogue_end,
     )
-    result = subprocess.run(
-        [
-            "ffmpeg", "-y", "-i", "story_base.mp4", "-i", cat_img, "-i", dog_img,
-            "-i", mixed,
-            "-filter_complex", filter_complex, "-map", "[vout]", "-map", "3:a",
-            "-c:v", "libx264", "-preset", "medium", "-crf", media_engine.VIDEO_CRF,
-            "-pix_fmt", "yuv420p", "-r", str(FPS),
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest",
-            "story_main.mp4",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print("[Minimal] FFmpeg 主片合成失敗，stderr 末尾內容：")
-        print(result.stderr[-2000:])
-        raise subprocess.CalledProcessError(
-            result.returncode, result.args, output=result.stdout, stderr=result.stderr
-        )
     print(f"[Minimal] 主片完成：story_main.mp4（口播 {dialogue_end:.1f}s + 片尾）")
     return {"dialogue_end": dialogue_end, "pages": page_data}
 
