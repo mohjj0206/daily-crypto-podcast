@@ -786,7 +786,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     # 讓輸出影片的 0 秒仍對應口播時間軸的 0 秒。
     reveal_list = [
         round(value + capture_preroll, 3)
-        for value in _resolve_reveal_timestamps(reveal_timestamps, reveal_count, record_seconds)
+        for value in _resolve_reveal_timestamps(reveal_timestamps, reveal_count, float(dur_sec))
     ]
     reveal_ts_json = json.dumps(reveal_list)
 
