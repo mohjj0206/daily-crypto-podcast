@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -73,7 +75,29 @@ jobs:
             echo "CHATGPT.txt 無實質變動，略過重置提交。"
           else
             git commit -m "chore(minimal): reset CHATGPT.txt after deep-dive production [skip ci]"
-            git push origin HEAD:main
+
+            # Rendering can take 20+ minutes. Other workflows or manual commits may
+            # update main while this job is rendering, so rebase and retry safely.
+            PUSHED=false
+            for attempt in 1 2 3; do
+              echo "同步遠端 main（第 ${attempt}/3 次）..."
+              git fetch origin main
+              if ! git rebase origin/main; then
+                echo "遠端變更與 CHATGPT 重置提交發生衝突；保留遠端內容並停止，不強制覆蓋。"
+                git rebase --abort || true
+                exit 1
+              fi
+              if git push origin HEAD:main; then
+                PUSHED=true
+                break
+              fi
+              echo "推送期間 main 再次更新，準備重新同步..."
+            done
+
+            if [ "$PUSHED" != "true" ]; then
+              echo "重試 3 次後仍無法推送 CHATGPT 重置提交。"
+              exit 1
+            fi
           fi
 
       - name: Publish preview to GitHub Releases
