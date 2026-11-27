@@ -155,7 +155,7 @@ def prepare_learning_insights():
         "recent_catchphrases": recent_catchphrases,
         "recent_format_ids": [
             row["format_id"] for row in rows if row.get("format_id")
-        ][-3:],
+        ][-5:],
         "previous_warnings": previous,
         "history_days": len(rows),
     }
