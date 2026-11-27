@@ -775,8 +775,9 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     )
     # 讓瀏覽器動畫與 TTS 使用同一段真實時間軸。
     # 舊版只錄 6 秒再以 tpad 凍結最後一格，造成長頁面大部分時間完全靜止。
-    record_seconds = float(dur_sec)
-    remaining = 0.0
+    # 多錄 0.5 秒，並以 clone padding 保證投影片輸出不短於口播時間軸。
+    record_seconds = float(dur_sec) + 0.5
+    remaining = max(0.0, float(dur_sec))
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
     if reveal_timestamps is None:
         reveal_timestamps = slide_data.get("reveal_timestamps")
@@ -1400,7 +1401,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
         filters = (
             f"fps={VIDEO_FPS},scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
             f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS"
-            f"{tpad_filter},format=yuv420p"
+            f"{tpad_filter},trim=duration={float(dur_sec):.6f},format=yuv420p"
         )
         subprocess.run(
             [
