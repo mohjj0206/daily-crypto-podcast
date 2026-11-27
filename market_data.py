@@ -5,6 +5,7 @@ import json
 import time
 import calendar
 import math
+import statistics
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone, timedelta
@@ -1690,118 +1691,139 @@ def load_dca_usd_snapshot(current_btc_usd):
     return dca_usd_view(portfolio, current_btc_usd)
 
 
-def _estimate_mvrv(drawdown_pct):
-    drawdown = -20.0 if drawdown_pct is None else float(drawdown_pct)
-    drawdown = max(-80.0, min(0.0, drawdown))
-    return round(2.8 + (drawdown / 80.0) * 2.0, 2)
-
-
 def fetch_btc_mvrv(drawdown_pct=None):
-    """先向 CoinMetrics 社群 API 取市值與實現市值，失敗再改查 Blockchain.com 的 MVRV。"""
-    cache_path = os.path.join("cache", "mvrv_cache.json")
+    """以 CoinMetrics 歷史市值與實現市值計算真實 MVRV Z-Score，不以回撤代理值冒充。"""
+    cache_path = os.path.join("cache", "mvrv_zscore_cache.json")
     coinmetrics_url = (
         "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
-        "?assets=btc&metrics=CapMrktCurUSD,CapRealUSD&frequency=1d&page_size=5"
+        "?assets=btc&metrics=CapMrktCurUSD,CapRealUSD&frequency=1d"
+        "&start_time=2010-01-01&page_size=10000"
     )
-    blockchain_url = "https://api.blockchain.info/charts/mvrv?timespan=30days&format=json"
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": "Mozilla/5.0 DailyCryptoPodcast/1.0",
         "Accept": "application/json",
     }
 
-    def pack(value, source, is_estimate, market_cap=None, realized=None, as_of=None):
-        num = float(value)
-        mvrv_type = "z_score" if (num < 0 or num > 4.2) else "ratio"
-        zone = presentation.classify_mvrv(num, mvrv_type)
-        display_name = "MVRV Z 分數" if mvrv_type == "z_score" else "MVRV 比率"
+    def as_utc(value):
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+    def pack(value, source, market_cap, realized_cap, stddev, as_of):
+        number = float(value)
+        if not math.isfinite(number) or number < -10 or number > 30:
+            raise ValueError(f"CoinMetrics produced implausible MVRV Z-Score: {number}")
+        zone = presentation.classify_mvrv_zscore(number)
         return {
-            "value": round(num, 2),
-            "mvrv_type": mvrv_type,
-            "display_name": display_name,
+            "value": round(number, 2),
+            "mvrv_type": "z_score",
+            "display_name": "MVRV Z-Score",
             "zone": zone,
             "source": source,
-            "is_estimate": is_estimate,
+            "is_estimate": False,
             "market_cap": market_cap,
-            "realized_cap": realized,
+            "realized_cap": realized_cap,
+            "market_cap_stddev": stddev,
             "as_of": as_of,
-            "bar_pct": max(4, min(100, int((num + 1) / 8.0 * 100))) if mvrv_type == "z_score"
-            else max(4, min(100, int(num / 4.0 * 100))),
+            "bar_pct": max(0, min(100, int((number + 1) / 8.0 * 100))),
             "report": (
-                f"{display_name} {presentation.format_mvrv(num, mvrv_type)}，判讀為{zone}"
-                + ("（備援估算，不是鏈上原值）" if is_estimate else f"（{source}）")
+                f"MVRV Z-Score {presentation.format_mvrv(number, 'z_score')}，"
+                f"判讀為{zone}（{source}，截至 {as_of[:10]}；"
+                "以歷史市值標準差計算）"
             ),
         }
 
-    def store(result):
+    try:
+        payload = fetch_json(
+            coinmetrics_url, timeout=30, headers=headers, cache_bust_param=None
+        )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("CoinMetrics returned no historical BTC asset-metric rows.")
+
+        valid_rows = []
+        market_caps = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                market_cap = float(row.get("CapMrktCurUSD"))
+                realized_cap = float(row.get("CapRealUSD"))
+                observed = as_utc(row.get("time"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if (
+                not math.isfinite(market_cap)
+                or not math.isfinite(realized_cap)
+                or market_cap <= 0
+                or realized_cap <= 0
+            ):
+                continue
+            valid_rows.append((observed, market_cap, realized_cap))
+            market_caps.append(market_cap)
+
+        if len(valid_rows) < 365:
+            raise ValueError(
+                f"CoinMetrics history too short for a defensible Z-Score: {len(valid_rows)} days."
+            )
+        valid_rows.sort(key=lambda item: item[0])
+        observed, current_market_cap, current_realized_cap = valid_rows[-1]
+        age = datetime.now(timezone.utc) - observed
+        if age < timedelta(minutes=-5) or age > timedelta(days=3):
+            raise ValueError(f"CoinMetrics MVRV source is stale: {observed.isoformat()}")
+        market_cap_stddev = statistics.pstdev(market_caps)
+        if not math.isfinite(market_cap_stddev) or market_cap_stddev <= 0:
+            raise ValueError("CoinMetrics market-cap standard deviation is invalid.")
+
+        # 標準 MVRV Z-Score = (Market Cap - Realized Cap) / 歷史 Market Cap 標準差。
+        z_score = (current_market_cap - current_realized_cap) / market_cap_stddev
+        result = pack(
+            z_score,
+            "CoinMetrics historical CapMrktCurUSD / CapRealUSD",
+            current_market_cap,
+            current_realized_cap,
+            market_cap_stddev,
+            observed.isoformat(),
+        )
         os.makedirs("cache", exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as cache_file:
             json.dump(result, cache_file, ensure_ascii=False, indent=2)
+        print(
+            f"[MVRV Z-Score] 即時計算完成：{result['value']:.2f}｜"
+            f"有效歷史樣本 {len(valid_rows)} 天｜來源 CoinMetrics｜{observed.date()}"
+        )
         return result
-
-    try:
-        payload = fetch_json(
-            coinmetrics_url, timeout=20, headers=headers, cache_bust_param=None
-        )
-        rows = payload.get("data") if isinstance(payload, dict) else None
-        parsed = None
-        for row in reversed(rows or []):
-            market_cap = float(row.get("CapMrktCurUSD") or 0)
-            realized = float(row.get("CapRealUSD") or 0)
-            if market_cap > 0 and realized > 0:
-                parsed = (market_cap / realized, market_cap, realized, row.get("time"))
-                break
-        if parsed is None:
-            raise ValueError("CoinMetrics returned no MVRV pair.")
-        return store(pack(parsed[0], "CoinMetrics", False, parsed[1], parsed[2], parsed[3]))
     except Exception as error:
-        print(f"CoinMetrics MVRV failed; trying Blockchain.com: {error}")
+        print(f"[MVRV Z-Score] CoinMetrics 即時計算失敗：{error}")
 
-    try:
-        chart = fetch_json(
-            blockchain_url, timeout=20, headers=headers, cache_bust_param=None
-        )
-        points = chart.get("values") if isinstance(chart, dict) else None
-        parsed_point = None
-        for point in reversed(points or []):
-            if not isinstance(point, dict) or point.get("y") in (None, ""):
-                continue
-            value = float(point["y"])
-            if value > 0:
-                parsed_point = (value, point.get("x"))
-                break
-        if parsed_point is None:
-            raise ValueError("Blockchain.com returned no MVRV point.")
-        return store(pack(parsed_point[0], "Blockchain.com", False, as_of=parsed_point[1]))
-    except Exception as error:
-        print(f"Blockchain.com MVRV failed; trying cache: {error}")
-
+    # 僅允許沿用 48 小時內、且明確標記為 Z-Score 的快取；舊 MVRV Ratio 不可冒充。
     try:
         if os.path.exists(cache_path):
             with open(cache_path, encoding="utf-8") as cache_file:
                 cached = json.load(cache_file)
-            if cached.get("value"):
-                cached["source"] = "local-cache"
+            cached_time = as_utc(cached.get("as_of"))
+            cache_age = datetime.now(timezone.utc) - cached_time
+            if (
+                cached.get("mvrv_type") == "z_score"
+                and cached.get("value") is not None
+                and timedelta(0) <= cache_age <= timedelta(hours=48)
+            ):
+                cached["source"] = "CoinMetrics (48h cache)"
+                cached["display_name"] = "MVRV Z-Score"
                 cached["is_estimate"] = False
-                ctype = cached.get("mvrv_type", "ratio")
-                cname = cached.get("display_name") or (
-                    "MVRV Z 分數" if ctype == "z_score" else "MVRV 比率"
-                )
-                cached["mvrv_type"] = ctype
-                cached["display_name"] = cname
+                cached["zone"] = presentation.classify_mvrv_zscore(cached["value"])
                 cached["report"] = (
-                    f"{cname} {presentation.format_mvrv(cached['value'], ctype)}，"
-                    f"判讀為{cached.get('zone') or presentation.classify_mvrv(cached['value'], ctype)}"
-                    "（沿用本地快取）"
+                    f"MVRV Z-Score {presentation.format_mvrv(cached['value'], 'z_score')}，"
+                    f"判讀為{cached['zone']}（沿用 48 小時內 CoinMetrics 快取）"
                 )
+                print(f"[MVRV Z-Score] 即時來源暫不可用，沿用有效快取 {cached['as_of']}")
                 return cached
     except (OSError, ValueError, TypeError, KeyError) as error:
-        print(f"MVRV cache unreadable: {error}")
+        print(f"[MVRV Z-Score] 快取不可用：{error}")
 
-    estimated = _estimate_mvrv(drawdown_pct)
-    return pack(estimated, "drawdown-proxy", True)
+    raise RuntimeError(
+        "無法取得新鮮的 BTC MVRV Z-Score，且沒有 48 小時內有效快取；"
+        "停止製片，禁止用 MVRV Ratio 或價格回撤估算值代替 Z-Score。"
+    )
 
 
 def fetch_mvrv(drawdown_pct=None):
@@ -2068,27 +2090,13 @@ def fetch_all_market_data(now_tw, is_test):
         okx_spot_volume_metrics,
     )
 
-    mvrv = fetch_btc_mvrv(btc_metrics.get("current_drawdown_pct"))
-    mvrv_zone = presentation.refine_market_zone(
-        mvrv.get("zone"),
-        mvrv.get("value"),
-        mvrv.get("is_estimate"),
-        fng_num,
-        spot_prices.get("BTC"),
-        btc_metrics.get("sma_200"),
+    mvrv = fetch_btc_mvrv()
+    # Z-Score 必須沿用自身的標準差區間，不得再被恐慌指數／均線覆寫判讀。
+    mvrv_zone = mvrv["zone"]
+    mvrv["report"] = (
+        f"MVRV Z-Score {presentation.format_mvrv(mvrv['value'], 'z_score')}，"
+        f"判讀為{mvrv_zone}（{mvrv['source']}）"
     )
-    mvrv["zone"] = mvrv_zone
-    if mvrv.get("value") is not None:
-        mtype = mvrv.get("mvrv_type", "ratio")
-        mname = mvrv.get("display_name") or ("MVRV Z 分數" if mtype == "z_score" else "MVRV 比率")
-        mvrv["report"] = (
-            f"{mname} {presentation.format_mvrv(mvrv['value'], mtype)}，判讀為{mvrv_zone}"
-            + (
-                "（備援估算，不是鏈上原值）"
-                if mvrv.get("is_estimate")
-                else f"（{mvrv.get('source') or '已取得'}）"
-            )
-        )
     dca_snapshot = load_dca_usd_snapshot(spot_prices["BTC"])
     custom_references = fetch_custom_sources(tw_tz)
 
@@ -2097,7 +2105,7 @@ def fetch_all_market_data(now_tw, is_test):
         sgn = "+" if pct >= 0 else ""
         r_txt = f" | RSI {rsi}" if rsi else ""
         coins_lines.append(
-            f"{name}: {presentation.format_usd(spot_prices[name])} ({sgn}{pct:.2f}%{r_txt})"
+            f"{name}: {presentation.format_coin_price(name, spot_prices[name])} ({sgn}{pct:.2f}%{r_txt})"
         )
     coins_summary = "\n".join(coins_lines)
 
