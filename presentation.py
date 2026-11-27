@@ -562,6 +562,78 @@ def limit_slide_body(body):
     return "\n".join(condensed)
 
 
+_CN_DIGIT_MAP = {
+    "零": "0", "〇": "0", "一": "1", "二": "2", "兩": "2", "三": "3",
+    "四": "4", "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
+}
+_CN_NUMBER_CHARS = "零〇一二兩三四五六七八九十百千"
+
+
+def _chinese_number_to_int(token):
+    """將明確的中文數字片段轉為整數；純數字序列保留逐位讀法。"""
+    raw = str(token or "")
+    if not raw:
+        return None
+    if all(char in _CN_DIGIT_MAP for char in raw):
+        return int("".join(_CN_DIGIT_MAP[char] for char in raw))
+    section = 0
+    number = 0
+    units = {"十": 10, "百": 100, "千": 1000}
+    for char in raw:
+        if char in _CN_DIGIT_MAP:
+            number = int(_CN_DIGIT_MAP[char])
+        elif char in units:
+            unit = units[char]
+            section += (number if number else 1) * unit
+            number = 0
+        else:
+            return None
+    return section + number
+
+
+def normalize_chinese_numerals(text):
+    """字幕與簡報中的中文數字轉為阿拉伯數字，避免零點五八七等寫法。"""
+    value = str(text or "")
+    digit_chars = "零〇一二兩三四五六七八九"
+
+    percent_pattern = re.compile(
+        rf"百分之([{_CN_NUMBER_CHARS}]+)(?:點([{digit_chars}]+))?"
+    )
+
+    def percent_replacement(match):
+        whole = _chinese_number_to_int(match.group(1))
+        if whole is None:
+            return match.group(0)
+        fraction = match.group(2)
+        return (
+            f"{whole}.{''.join(_CN_DIGIT_MAP[ch] for ch in fraction)}%"
+            if fraction else f"{whole}%"
+        )
+
+    value = percent_pattern.sub(percent_replacement, value)
+
+    decimal_pattern = re.compile(
+        rf"([{_CN_NUMBER_CHARS}]+)點([{digit_chars}]+)"
+    )
+
+    def decimal_replacement(match):
+        whole = _chinese_number_to_int(match.group(1))
+        fraction = "".join(_CN_DIGIT_MAP[ch] for ch in match.group(2))
+        return f"{whole}.{fraction}" if whole is not None else match.group(0)
+
+    value = decimal_pattern.sub(decimal_replacement, value)
+
+    unit_pattern = re.compile(
+        rf"([{_CN_NUMBER_CHARS}]+)(?=(?:年|月|日|枚|顆|美元|倍|週|周|天|小時|分鐘|秒|個|次|位|項|家|筆|%))"
+    )
+
+    def unit_replacement(match):
+        number = _chinese_number_to_int(match.group(1))
+        return str(number) if number is not None else match.group(0)
+
+    return unit_pattern.sub(unit_replacement, value)
+
+
 def sanitize_text(text):
     """腳本、字幕、簡報共用的後處理：角色名、禁忌詞、台幣字樣。"""
     cleaned = strip_bracket_tags(text)
@@ -590,6 +662,7 @@ def sanitize_text(text):
     cleaned = re.sub(r"第\s*\d+\s*則\s*新聞", "最新消息", cleaned)
     cleaned = re.sub(r"新聞\s*\d+[、：:，]?", "最新消息", cleaned)
     cleaned = re.sub(r"(?:本|這|該)?新聞\s*[一二三四五六七八九十\d]+", "最新消息", cleaned)
+    cleaned = normalize_chinese_numerals(cleaned)
     return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
 
 
