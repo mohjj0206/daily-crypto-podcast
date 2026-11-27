@@ -778,7 +778,6 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     # 多錄 0.5 秒，並以 clone padding 保證投影片輸出不短於口播時間軸。
     capture_preroll = 0.75
     record_seconds = float(dur_sec) + capture_preroll + 0.25
-    remaining = max(0.0, float(dur_sec))
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
     if reveal_timestamps is None:
         reveal_timestamps = slide_data.get("reveal_timestamps")
@@ -823,10 +822,6 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
         f"<article><small>{html.escape(str(insight_labels.get('conclusion', '今日結論')))}</small>"
         f"<strong>{html.escape(str(insights.get('headline', '紀律觀察')))}</strong>"
         f"<em>{html.escape(str(insights.get('detail', '')))}</em></article>"
-    )
-    tpad_filter = (
-        f",tpad=stop_mode=clone:stop_duration={remaining:.6f}"
-        if remaining > 0 else ""
     )
     html_doc = f"""<!doctype html>
 <html lang="zh-Hant">
