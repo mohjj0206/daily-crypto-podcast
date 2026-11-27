@@ -2207,6 +2207,16 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     slide_reveal_map = compute_slide_reveal_timestamps(
         results, slide_anchor_positions, slide_count, sdata.get("visual_slides")
     )
+    # 簡報節點與 TTS 時間必須一對一；不允許缺少對應時退回整頁平均揭示。
+    for slide_number, slide in enumerate(sdata.get("visual_slides") or [], 1):
+        timeline = slide.get("_body_timeline") or []
+        reveal_times = slide_reveal_map.get(slide_number) or []
+        if not timeline or len(timeline) != len(reveal_times):
+            raise RuntimeError(
+                f"第 {slide_number} 張簡報的文字節點與口播時間軸不匹配："
+                f"nodes={len(timeline)}, timestamps={len(reveal_times)}；停止輸出錯配影片。"
+            )
+    print(f"[Slide Sync] {slide_count} 張簡報已完成文字節點／TTS 時間一對一驗證。")
     dca_snapshot = mdata.get("dca_snapshot") or {}
     dca_return_pct = dca_snapshot.get("roi_pct")
     if dca_return_pct is None and show_dca:
