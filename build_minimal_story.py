@@ -466,6 +466,39 @@ def _extract_source_sections(material):
     return sections
 
 
+def _section_coverage_keywords(title):
+    """從章節標題取出可驗證的核心詞，容許模型漏填 metadata 但正文確實有涵蓋。"""
+    text = re.sub(r"^[一二三四五六七八九十]+、", "", str(title or "")).lower()
+    for phrase in (
+        "什麼是", "它解決了", "為什麼", "憑什麼", "最容易混淆的",
+        "給一般投資人的", "實戰檢核清單", "硬核技術面深度拆解",
+        "真實用途與", "估值迷思破解", "破題懸念",
+    ):
+        text = text.replace(phrase, " ")
+    keywords = set(re.findall(r"[a-z][a-z0-9.]*|\d+(?:\.\d+)?", text))
+    for run in re.findall(r"[\u4e00-\u9fff]+", text):
+        if len(run) == 2:
+            keywords.add(run)
+        elif len(run) > 2:
+            keywords.update(run[index:index + 2] for index in range(len(run) - 1))
+    return keywords
+
+
+def _section_covered_by_content(title, slides):
+    """以章節標題核心詞檢查口播與投影片文字，避免 metadata 漏填造成誤判。"""
+    keywords = _section_coverage_keywords(title)
+    if not keywords:
+        return False, []
+    fragments = []
+    for slide in slides:
+        fragments.extend([slide.get("big", "")] + list(slide.get("lines") or []))
+        for item in slide.get("dialogue") or []:
+            fragments.append(item.get("text", "") if isinstance(item, dict) else str(item))
+    content = " ".join(str(value) for value in fragments).lower()
+    matched = sorted(keyword for keyword in keywords if keyword in content)
+    return len(matched) >= min(2, len(keywords)), matched
+
+
 def _build_custom_prompt(material, prices):
     btc = prices.get("BTC") or {}
     eth = prices.get("ETH") or {}
@@ -546,12 +579,26 @@ def build_custom_story(material, prices):
         )
         raw_data = json.loads(raw)
         required_sections = _extract_source_sections(material)
+        raw_slides = raw_data.get("slides") or []
         covered_sections = {
             section
-            for slide in (raw_data.get("slides") or [])
+            for slide in raw_slides
             for section in (slide.get("source_sections") or [])
         }
-        missing_sections = [section for section in required_sections if section not in covered_sections]
+        missing_sections = []
+        inferred_coverage = {}
+        for section in required_sections:
+            if section in covered_sections:
+                continue
+            is_covered, matched = _section_covered_by_content(section, raw_slides)
+            inferred_coverage[section] = matched
+            if not is_covered:
+                missing_sections.append(section)
+        if inferred_coverage:
+            print(
+                "[Minimal] 章節正文覆蓋補充檢查："
+                + json.dumps(inferred_coverage, ensure_ascii=False)
+            )
         if missing_sections:
             raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
         story = _normalize_story(raw, [], prices, require_source=True)
