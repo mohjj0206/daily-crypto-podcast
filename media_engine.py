@@ -777,7 +777,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     # 舊版只錄 6 秒再以 tpad 凍結最後一格，造成長頁面大部分時間完全靜止。
     # 多錄 0.5 秒，並以 clone padding 保證投影片輸出不短於口播時間軸。
     capture_preroll = 0.75
-    record_seconds = float(dur_sec) + capture_preroll + 0.25
+    tail_record_seconds = max(0.1, float(dur_sec) - capture_preroll + 0.25)
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
     if reveal_timestamps is None:
         reveal_timestamps = slide_data.get("reveal_timestamps")
@@ -1398,6 +1398,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
             record_video_size={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
         )
         page = context.new_page()
+        recording_started_at = time.monotonic()
         video = page.video
         try:
             page.set_content(html_doc, wait_until="load")
@@ -1406,9 +1407,10 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
                 print(f"Slide {idx} required final auto-fit scaling to stay inside its safe area.")
             page.evaluate("() => window.resetSlideRevealClock && window.resetSlideRevealClock()")
             page.wait_for_timeout(max(1, round(capture_preroll * 1000)))
+            capture_offset = time.monotonic() - recording_started_at
             poster_path = os.path.join(record_dir, "poster.png")
             page.screenshot(path=poster_path)
-            page.wait_for_timeout(max(1, round((record_seconds - capture_preroll) * 1000)))
+            page.wait_for_timeout(max(1, round(tail_record_seconds * 1000)))
         finally:
             context.close()
         recording_path = video.path()
@@ -1416,7 +1418,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
         poster_filter = (
             f"[0:v]fps={VIDEO_FPS},scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
             f"trim=duration={capture_preroll:.6f},setpts=PTS-STARTPTS,format=yuv420p[poster];"
-            f"[1:v]trim=start={capture_preroll:.6f},setpts=PTS-STARTPTS,fps={VIDEO_FPS},"
+            f"[1:v]trim=start={capture_offset:.6f},setpts=PTS-STARTPTS,fps={VIDEO_FPS},"
             f"scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
             f"tpad=stop_mode=clone:stop_duration={float(dur_sec):.6f},"
             f"trim=duration={tail_duration:.6f},format=yuv420p[tail];"
@@ -2924,6 +2926,7 @@ window.fitShortLayout = () => {{
                     },
                 )
                 page = context.new_page()
+                recording_started_at = time.monotonic()
                 video = page.video
                 try:
                     page.set_content(short_html, wait_until="load")
@@ -2932,9 +2935,11 @@ window.fitShortLayout = () => {{
                         raise ValueError("Short-video HTML exceeds its safe area.")
                     capture_preroll = 0.75
                     page.wait_for_timeout(round(capture_preroll * 1000))
+                    capture_offset = time.monotonic() - recording_started_at
                     poster_path = os.path.join(video_dir, "short_poster.png")
                     page.screenshot(path=poster_path)
-                    page.wait_for_timeout(round(render_duration * 1000))
+                    short_tail_record_seconds = max(0.1, render_duration - capture_preroll + 0.25)
+                    page.wait_for_timeout(round(short_tail_record_seconds * 1000))
                 finally:
                     context.close()
                 recording_path = video.path()
@@ -2942,7 +2947,7 @@ window.fitShortLayout = () => {{
                 short_poster_filter = (
                     f"[0:v]fps={VIDEO_FPS},scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:flags=lanczos,"
                     f"trim=duration={capture_preroll:.6f},setpts=PTS-STARTPTS,format=yuv420p[poster];"
-                    f"[1:v]trim=start={capture_preroll:.6f},setpts=PTS-STARTPTS,fps={VIDEO_FPS},"
+                    f"[1:v]trim=start={capture_offset:.6f},setpts=PTS-STARTPTS,fps={VIDEO_FPS},"
                     f"scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:flags=lanczos,"
                     f"tpad=stop_mode=clone:stop_duration={render_duration:.6f},"
                     f"trim=duration={short_tail_duration:.6f},format=yuv420p[tail];"
