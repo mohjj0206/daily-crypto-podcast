@@ -101,17 +101,28 @@ jobs:
             !dor_vtober.mp4
           retention-days: 5
 
+      - name: Commit editorial learning history
+        # 正式渲染即保存選題、主軸與品質警告；即使只產生 Release 預覽、沒有上傳 YouTube 也要累積歷史。
+        if: ${{ inputs.test_mode != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain history_db)" ]; then
+            git add history_db
+            git commit -m "chore: update editorial learning history"
+            git pull --rebase origin main
+            git push origin main
+          fi
+
       - name: Commit and push DCA ledger
-        # 手動預覽（未啟用 YouTube 上傳）不應寫回 DCA 帳本；排程與正式手動發布照常更新。
+        # DCA 帳本仍只在正式 YouTube 發布時更新，預覽不寫回帳本。
         if: ${{ inputs.test_mode != true && (github.event_name != 'workflow_dispatch' || inputs.enable_youtube_upload == true) }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain dca_portfolio.json history_db)" ]; then
-            git add dca_portfolio.json history_db
-            git commit -m "chore: update BTC DCA portfolio ledger and learning history"
-            git checkout -- .
-            git clean -fd
+          if [ -n "$(git status --porcelain dca_portfolio.json)" ]; then
+            git add dca_portfolio.json
+            git commit -m "chore: update BTC DCA portfolio ledger"
             git pull --rebase origin main
             git push origin main
           fi
