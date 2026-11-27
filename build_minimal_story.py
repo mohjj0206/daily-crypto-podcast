@@ -282,7 +282,7 @@ def _build_story_prompt(news_items, prices):
 }}
 
 【slides 規則】
-- 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
+- 建議依素材內容安排約 6～10 頁，但不是硬性頁數；可少於或多於此範圍。以完整論點、合理段落節奏與口播總長為優先，禁止為湊頁數拆散或重複內容。全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
 - 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「具體事件與數據推演」，嚴禁空泛重複或湊字。
 - 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；沒有數值依據時可少於 2 個，嚴禁捏造。
 - 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
@@ -524,7 +524,7 @@ def _build_custom_prompt(material, prices):
 
 【寫稿硬性規則】
 1. 忠於素材：必須完整覆蓋素材中的全部核心論點、數據與洞察，不得遺漏或捏造新事件。
-1A. 章節覆蓋：下列原文一級章節必須全部分配到 9 頁，逐字填入各頁 source_sections；不可漏掉、改寫標題或只在片尾一筆帶過。
+1A. 章節覆蓋：下列原文一級章節必須全部納入簡報，逐字填入相關頁面的 source_sections；不可漏掉、改寫標題或只在片尾一筆帶過。
 {section_checklist}
 2. 強制生活比喻法：凡是解釋任何區塊鏈技術、宏觀經濟或鏈上指標，必須先用一個台灣人秒懂的生活場景打比方，再用白話拆解數據與背後邏輯，嚴禁堆砌枯燥術語。
 3. 雙人對話：由「男」（比特汪）與「女」（以太喵）兩位主播交替口播，生動生活化、有來有往。
@@ -565,87 +565,8 @@ def _build_custom_prompt(material, prices):
 """
 
 
-def _split_dialogue_for_extra_slide(slide, min_chars=150):
-    """只拆分既有口播，不新增論點或文字；將一頁拆成前後兩頁。"""
-    utterances = []
-    for role, text in slide.get("dialogue") or []:
-        # 依完整句子切分，保留原字句與主播角色。
-        sentences = [
-            part.strip()
-            for part in re.split(r"(?<=[。！？；])", str(text))
-            if part.strip()
-        ]
-        if not sentences and str(text).strip():
-            sentences = [str(text).strip()]
-        utterances.extend((role, sentence) for sentence in sentences)
-
-    if len(utterances) < 2:
-        return None
-
-    total_chars = sum(len(text) for _, text in utterances)
-    best = None
-    for cut in range(1, len(utterances)):
-        left = sum(len(text) for _, text in utterances[:cut])
-        right = total_chars - left
-        if left < min_chars or right < min_chars:
-            continue
-        score = abs(left - right)
-        if best is None or score < best[0]:
-            best = (score, cut)
-
-    if best is None:
-        return None
-
-    cut = best[1]
-    first = dict(slide)
-    second = dict(slide)
-    first["dialogue"] = utterances[:cut]
-    second["dialogue"] = utterances[cut:]
-    first["lines"] = (slide.get("lines") or [])[:2]
-    second["lines"] = (slide.get("lines") or [])[2:4]
-    first["source_sections"] = list(slide.get("source_sections") or [])
-    second["source_sections"] = []
-    # KPI 與圖表只放在前頁，避免同一組數據被重複呈現。
-    second["metrics"] = []
-    second["chart"] = None
-    base_title = str(slide.get("big") or "核心分析")
-    second["big"] = (base_title[:12] + "・續")[:16]
-    return first, second
-
-
-def _ensure_nine_slides(story, min_chars=150):
-    """模型少產頁時，僅將足夠長的既有口播拆頁；絕不補寫或複製內容。"""
-    slides = list(story.get("slides") or [])
-    original_count = len(slides)
-    while len(slides) < 9:
-        candidates = sorted(
-            range(len(slides)),
-            key=lambda index: sum(len(text) for _, text in slides[index].get("dialogue") or []),
-            reverse=True,
-        )
-        split_done = False
-        for index in candidates:
-            parts = _split_dialogue_for_extra_slide(slides[index], min_chars=min_chars)
-            if parts is None:
-                continue
-            slides[index:index + 1] = [parts[0], parts[1]]
-            split_done = True
-            break
-        if not split_done:
-            raise ValueError(
-                f"模型只產出 {original_count} 頁，現有口播無法在不新增／重複內容下拆成 9 頁；"
-                "請重新生成深度報導。"
-            )
-    if len(slides) > 9:
-        raise ValueError(f"模型產出 {len(slides)} 頁，超過深度報導要求的 9 頁。")
-    if len(slides) != original_count:
-        print(f"[Minimal] 模型原始 {original_count} 頁；已依原口播句界拆分為 9 頁，未新增或複製內容。")
-    story["slides"] = slides
-    return story
-
-
 def build_custom_story(material, prices):
-    """把 CHATGPT.txt 自訂深度素材改寫為 9 頁深度分析長談。
+    """把 CHATGPT.txt 自訂深度素材改寫為頁數彈性的深度分析長談。
 
     模型呼叫、JSON 解析或內容品質檢查失敗時直接中止，
     不得使用通用保底故事取代使用者提供的深度報導。
@@ -683,34 +604,20 @@ def build_custom_story(material, prices):
         if missing_sections:
             raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
         story = _normalize_story(raw, [], prices, require_source=True)
-        # 若模型少產頁，只能將既有長口播按完整句界拆分；不得補寫或複製內容。
-        # 若原文句子無法安全拆成足夠長度，仍維持 Fail Closed。
-        story = _ensure_nine_slides(story, min_chars=150)
+        # 頁數不設硬性門檻；品質以原文章節覆蓋、有效口播與全片總字數判斷。
+        # 不為了湊固定頁數而拆句、複製或新增內容。
         page_lengths = [
             sum(len(dialogue_text) for _, dialogue_text in slide["dialogue"])
             for slide in story["slides"]
         ]
         total = sum(page_lengths) + sum(len(d[1]) for d in story["opening"])
-        # 單頁長度只作為極端過短的防呆，不以 180 字硬切斷整集。
-        # 深度仍由原文一級章節覆蓋、9 頁結構及全片總口播字數共同把關。
-        minimum_page_chars = 150
-        short_pages = [
-            (index + 1, length)
-            for index, length in enumerate(page_lengths)
-            if length < minimum_page_chars
-        ]
-        if short_pages:
-            raise ValueError(
-                f"有頁面口播低於 {minimum_page_chars} 字，內容可能不完整："
-                + ", ".join(f"第{index}頁 {length}字" for index, length in short_pages)
-            )
         if not 2300 <= total <= 3800:
             raise ValueError(
                 f"深度報導口播總字數不合格：{total} 字（要求 2,300～3,800 字，含開場）。"
             )
         print(
-            f"[Minimal] 深度報導品質檢查通過：9 頁｜口播 {total} 字｜"
-            f"各頁字數 {page_lengths}"
+            f"[Minimal] 深度報導品質檢查通過：{len(story['slides'])} 頁｜"
+            f"口播 {total} 字｜各頁字數 {page_lengths}"
         )
     except Exception as err:
         print(f"[Minimal] CHATGPT.TXT 深度報導製稿失敗，停止本次製片以保留原始素材：{err}")
