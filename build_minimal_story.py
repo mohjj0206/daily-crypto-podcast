@@ -1288,6 +1288,7 @@ def main():
         open("story_metadata.txt", encoding="utf-8").read()
         if os.path.exists("story_metadata.txt") else ""
     )
+    short_total = min(60.0, sum(item["dur"] for item in main_result["pages"][:2]))
     youtube_uploader.write_publish_bundle(
         pipeline_type="story",
         main_video_path="story_main.mp4",
