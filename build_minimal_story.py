@@ -558,6 +558,7 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label):
         '</div>'
         for item in metrics[:4]
     )
+    metrics_section = f'<div class="metrics">{metric_markup}</div>' if metric_markup else ""
     chart_markup = ""
     if chart and chart.get("points"):
         max_value = max(abs(point["value"]) for point in chart["points"]) or 1.0
@@ -581,9 +582,9 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label):
         )
     else:
         chart_markup = (
-            '<section class="panel">'
-            '<div class="panel-title">本頁分析重點</div>'
-            f'<div class="insights">{line_markup}</div>'
+            '<section class="panel chart-placeholder">'
+            '<div class="panel-title">數據圖表</div>'
+            '<div class="placeholder-note">本頁沒有足夠的可比較數值，避免使用推測數據製圖</div>'
             '</section>'
         )
     reveal_json = json.dumps([round(x, 3) for x in reveal_seconds])
@@ -624,6 +625,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .panel {{ min-width: 0; padding: 24px 28px; border: 1px solid rgba(125,160,205,.25);
   border-radius: 18px; background: rgba(8,19,37,.92); overflow: hidden; }}
 .panel-title {{ color: #ffffff; font-size: 30px; font-weight: 800; margin-bottom: 22px; }}
+.placeholder-note {{ color: #9fb4d1; font-size: 25px; line-height: 1.6; padding-top: 24px; }}
 .chart-row {{ display: grid; grid-template-columns: 170px 1fr 150px; gap: 16px;
   align-items: center; margin: 22px 0; }}
 .chart-label {{ color: #c9d6e7; font-size: 22px; overflow-wrap: anywhere; }}
@@ -645,7 +647,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   <div class="content">
     <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
     <div class="headline"><div class="headline-mark"></div><div class="big">{big}</div></div>
-    <div class="metrics">{metric_markup}</div>
+    {metrics_section}
     <div class="lower">
       {chart_markup}
       <section class="panel">
