@@ -1224,7 +1224,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   opacity: 1 !important; visibility: visible !important; transform: translateY(0) scale(1.02);
   border-color: rgba(251, 191, 36, .9) !important;
   box-shadow: 0 0 24px rgba(251, 191, 36, .35), 0 0 0 1px rgba(251, 191, 36, .55) inset;
-  animation: activeNodePulse 2.8s ease-in-out infinite;
+  animation: activeNodePulse 2.8s ease-in-out infinite !important;
 }}
 @keyframes activeNodePulse {{
   0%, 100% {{ filter: drop-shadow(0 0 0 rgba(251,191,36,0)); }}
@@ -2283,6 +2283,11 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                     "broll_path": broll_path,
                     "reveal_timestamps": slide_reveal_map.get(idx),
                 }
+                print(
+                    f"[Slide Render] {idx}/{slide_count}｜"
+                    f"口播對齊時長 {slide_durations[idx - 1]:.2f}s｜"
+                    f"重點揭示 {slide_reveal_map.get(idx, [])}"
+                )
                 render_animated_slide(
                     idx, slide_data, slide_durations[idx - 1], f"p{idx}.mp4", browser,
                     reveal_timestamps=slide_reveal_map.get(idx),
