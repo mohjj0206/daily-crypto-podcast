@@ -1407,6 +1407,27 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
         try:
             page.set_content(html_doc, wait_until="load")
             page.evaluate("() => document.fonts.ready.then(() => true)")
+            # 不只確認檔案存在：必須確認 Chromium 真正解碼並播放 Pixabay 影片，
+            # 否則禁止把「已下載」誤當成「已顯示」。
+            if slide_data.get("broll_path"):
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('.broll-bg'); "
+                    "return !!v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0; }",
+                    timeout=20000,
+                )
+                page.evaluate(
+                    "() => { const v = document.querySelector('.broll-bg'); "
+                    "if (v) { v.muted = true; v.play(); } }"
+                )
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('.broll-bg'); "
+                    "return !!v && v.currentTime > 0.15; }",
+                    timeout=10000,
+                )
+                print(
+                    f"[Pixabay B-Roll] 第 {idx} 頁已確認影片解碼播放："
+                    f"{os.path.basename(slide_data['broll_path'])}"
+                )
             if not page.evaluate("() => window.fitSlideLayout()"):
                 print(f"Slide {idx} required final auto-fit scaling to stay inside its safe area.")
             page.evaluate("() => window.resetSlideRevealClock && window.resetSlideRevealClock()")
