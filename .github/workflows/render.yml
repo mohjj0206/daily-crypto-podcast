@@ -46,7 +46,8 @@ jobs:
       - name: Run render and upload script
         env:
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
-          ENABLE_YOUTUBE_UPLOAD: ${{ vars.ENABLE_YOUTUBE_UPLOAD || inputs.enable_youtube_upload || 'false' }}
+          # 手動執行時嚴格遵守 input，false 不得被 Repository Variable 的 true 覆蓋；排程仍沿用 Repository Variable。
+          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_youtube_upload || (github.event_name != 'workflow_dispatch' && vars.ENABLE_YOUTUBE_UPLOAD == 'true') }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
