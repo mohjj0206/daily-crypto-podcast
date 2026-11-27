@@ -172,13 +172,10 @@ def reuse_script_enabled():
 
 
 def _call_openrouter_fallback(prompt_txt, max_output_tokens=8192, timeout=240):
-    """Gemini 全線 503/429 或連線異常時，自動改用 OpenRouter 免費模型寫稿。
-
-    依序嘗試 baidu/ernie-5.5-flash-preview:free、nvidia/nemotron-3-ultra-550b-a55b:free、
-    openrouter/free，回傳 choices[0].message.content，格式與 call_gemini() 完全一致。
-    """
+    """Gemini 全線失敗時改用 OpenRouter；只接受非空文字，暫時性錯誤會退避重試。"""
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
+        print("[OpenRouter] 未設定 OPENROUTER_API_KEY，略過備援。")
         return None
 
     tc_rule = (
@@ -198,6 +195,8 @@ def _call_openrouter_fallback(prompt_txt, max_output_tokens=8192, timeout=240):
         "X-Title": "DailyCryptoPodcast",
     }
     last_err = None
+    transient_http_codes = (408, 425, 429, 500, 502, 503, 504)
+
     for or_model in openrouter_models:
         body = json.dumps({
             "model": or_model,
@@ -207,34 +206,70 @@ def _call_openrouter_fallback(prompt_txt, max_output_tokens=8192, timeout=240):
             ],
             "max_tokens": max_output_tokens,
         }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST",
-        )
-        try:
-            res = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
-            content = res["choices"][0]["message"]["content"]
-            print(f"[OpenRouter 備援成功] 模型：{or_model}")
-            return content
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode("utf-8", errors="ignore")
-            print(f"OpenRouter API Error ({e.code}) for model '{or_model}': {err_msg}")
-            last_err = e
-            continue
-        except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
-            print(f"OpenRouter model '{or_model}' timed out or lost connection: {e}")
-            last_err = e
-            continue
-        except Exception as e:
-            print(f"Error calling OpenRouter model '{or_model}': {e}")
-            last_err = e
-            continue
+
+        for attempt in range(3):
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=body,
+                headers=headers,
+                method="POST",
+            )
+            try:
+                raw = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8")
+                res = json.loads(raw)
+                choices = res.get("choices") or []
+                message = choices[0].get("message") if choices else None
+                content = message.get("content") if isinstance(message, dict) else None
+
+                # 部分供應商可能回傳 content=null/空字串；不能把它誤判為備援成功。
+                if isinstance(content, list):
+                    content = "".join(
+                        item.get("text", "") for item in content
+                        if isinstance(item, dict) and item.get("type") == "text"
+                    )
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("OpenRouter 回應缺少有效的 message.content")
+
+                print(f"[OpenRouter 備援成功] 模型：{or_model}")
+                return content.strip()
+
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode("utf-8", errors="ignore")
+                print(f"OpenRouter API Error ({e.code}) for model '{or_model}': {err_msg}")
+                last_err = e
+                if e.code in transient_http_codes and attempt < 2:
+                    wait_seconds = min(2 ** (attempt + 1), 8)
+                    retry_after = e.headers.get("Retry-After") if e.headers else None
+                    if retry_after:
+                        try:
+                            wait_seconds = min(max(float(retry_after), 1), 30)
+                        except (TypeError, ValueError):
+                            pass
+                    print(f"[OpenRouter] 暫時性錯誤，{wait_seconds:.0f} 秒後重試 ({attempt + 1}/2)。")
+                    time.sleep(wait_seconds)
+                    continue
+                break
+            except (TimeoutError, urllib.error.URLError, ConnectionError) as e:
+                print(f"OpenRouter model '{or_model}' connection error: {e}")
+                last_err = e
+                if attempt < 2:
+                    wait_seconds = min(2 ** (attempt + 1), 8)
+                    print(f"[OpenRouter] {wait_seconds} 秒後重試 ({attempt + 1}/2)。")
+                    time.sleep(wait_seconds)
+                    continue
+                break
+            except (ValueError, KeyError, IndexError, json.JSONDecodeError) as e:
+                print(f"OpenRouter model '{or_model}' 回應格式無效：{e}")
+                last_err = e
+                break
+            except Exception as e:
+                print(f"Error calling OpenRouter model '{or_model}': {e}")
+                last_err = e
+                break
 
     if last_err:
-        print(f"OpenRouter 所有免費備援模型皆失敗：{last_err}")
-    return None
+        raise RuntimeError(f"Gemini 與 OpenRouter 備援模型皆未能產生有效文字；最後錯誤：{last_err}") from last_err
+    raise RuntimeError("Gemini 與 OpenRouter 備援模型皆未能產生有效文字。")
 
 
 def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False, models=None):
