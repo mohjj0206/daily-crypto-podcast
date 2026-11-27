@@ -894,9 +894,10 @@ body {{
 }}
 .broll-veil {{
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  /* 保留暗色文字可讀性，但不可把 Pixabay 影像幾乎整層蓋掉。 */
   background:
-    radial-gradient(ellipse at 50% 42%, rgba(7,11,20,.58), rgba(7,11,20,.88) 78%),
-    rgba(7, 11, 20, .82);
+    radial-gradient(ellipse at 50% 42%, rgba(7,11,20,.22), rgba(7,11,20,.48) 78%),
+    rgba(7, 11, 20, .30);
 }}
 .ticker {{
   position: absolute; inset: 0 0 auto; z-index: 2; height: 84px;
@@ -2313,13 +2314,30 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 if layout == "chart_spotlight" and not (chart_path or ctype == "gauge"):
                     layout = "impact_quote"
 
-                # B-Roll：有 broll_query 的段落底圖替換為 Pixabay 1080p 實景動態影片。
-                broll_query = planned_item.get("broll_query", "")
+                # B-Roll：優先根據「本頁實際播報標題＋內文」即時產生搜尋詞，
+                # 不再依賴上游可能不存在的 planned_item["broll_query"]。
+                broll_query = (
+                    presentation.assign_broll_query({
+                        "title": title,
+                        "body": body,
+                        "layout": layout,
+                        "role": planned_item.get("role", ""),
+                    })
+                    or planned_item.get("broll_query", "")
+                )
                 broll_path = None
                 if broll_query and layout != "chart_spotlight":
+                    print(f"[Pixabay B-Roll] 第 {idx} 頁依口播內容搜尋：{broll_query}")
                     broll_path = broll_engine.fetch_pixabay_broll(
                         broll_query, orientation=broll_engine.HORIZONTAL
                     )
+                    if broll_path:
+                        print(
+                            f"[Pixabay B-Roll] 第 {idx} 頁已下載素材："
+                            f"{os.path.basename(broll_path)}"
+                        )
+                    else:
+                        print(f"[Pixabay B-Roll] 第 {idx} 頁未取得素材，將記錄於覆蓋率檢查。")
 
                 if layout == "versus_clash":
                     if "利多" in body or "風險" in body:
@@ -2357,6 +2375,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 print(
                     f"[Slide Render] {idx}/{slide_count}｜"
                     f"口播對齊時長 {slide_durations[idx - 1]:.2f}s｜"
+                    f"Pixabay={'已套用' if broll_path else '無素材'}｜"
                     f"重點揭示 {slide_reveal_map.get(idx, [])}"
                 )
                 render_animated_slide(
@@ -2365,6 +2384,30 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 )
         finally:
             browser.close()
+
+    # 主片 B-Roll 覆蓋率驗收：有設定 API Key 卻沒有成功素材時，不再靜默輸出全暗底影片。
+    broll_stats = broll_engine.get_episode_stats()[broll_engine.HORIZONTAL]
+    coverage = (
+        broll_stats["success"] / broll_stats["requested"]
+        if broll_stats["requested"] else 0.0
+    )
+    print(
+        f"[Pixabay B-Roll] 主片素材統計：成功 {broll_stats['success']}/"
+        f"{broll_stats['requested']}｜失敗 {broll_stats['failed']}｜"
+        f"缺少金鑰 {broll_stats['missing_key']}｜覆蓋率 {coverage:.0%}"
+    )
+    if os.environ.get("PIXABAY_API_KEY", "").strip():
+        min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
+        if broll_stats["requested"] and coverage < min_coverage:
+            raise RuntimeError(
+                f"主片 Pixabay B-Roll 覆蓋率 {coverage:.0%}，低於最低要求 "
+                f"{min_coverage:.0%}；停止輸出，請檢查 API Key、Pixabay 配額與下載日誌。"
+            )
+    elif broll_stats["requested"]:
+        raise RuntimeError(
+            "主片有需要實景底片的頁面，但未設定 PIXABAY_API_KEY；"
+            "停止輸出，避免再次產生沒有 Pixabay 畫面的影片。"
+        )
 
     create_outro_frame()
     if has_intro_video:
