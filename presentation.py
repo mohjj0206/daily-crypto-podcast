@@ -127,47 +127,66 @@ DAILY_LAYOUTS = ("impact_quote", "versus_clash", "chart_spotlight", "timeline_st
 
 DAILY_STORY_BEATS = {
     "debate": [
-        ("多頭先把話說完", "focus"),
-        ("以太喵逐條反駁", "focus"),
-        ("分歧落在這個價", "btc_structure"),
-        ("誰的條件先被驗證", "focus"),
-        ("空頭看到的風險", "compare"),
-        ("多頭還缺哪一個確認", "focus"),
-        ("未來一天只看三點", "focus"),
-        ("交鋒之後留下的紀律", "focus"),
+        ("多頭論點先過第一關", "focus"), ("空頭反證：量價有沒有跟上", "compare"),
+        ("雙方真正分歧的價位", "btc_structure"), ("現貨與槓桿誰在主導", "bars"),
+        ("最強反方證據", "focus"), ("多頭還缺哪個確認", "focus"),
+        ("兩種走法的觸發條件", "focus"), ("交鋒後留下的結論", "focus"),
     ],
     "history_mirror": [
-        ("今天的結構長得像哪一段", "btc_structure"),
-        ("對上哪一個歷史階段", "focus"),
-        ("當時籌碼怎麼換手", "focus"),
-        ("相似結構裡的陷阱", "compare"),
-        ("這次明顯不同的地方", "focus"),
-        ("價格要怎麼確認", "focus"),
-        ("未來一天只看三點", "focus"),
-        ("鏡像之後的紀律", "focus"),
+        ("今天的結構與過去哪裡相似", "btc_structure"), ("當時市場處於哪個階段", "focus"),
+        ("歷史上籌碼如何換手", "bars"), ("相似走勢曾出現的陷阱", "compare"),
+        ("這次與歷史最大的不同", "focus"), ("哪些條件不能直接類比", "focus"),
+        ("歷史劇本的驗證價位", "focus"), ("這次不能忽略的變數", "focus"),
     ],
     "deep_story": [
-        ("事件表面先看懂", "compare"),
-        ("背後的資金動機", "focus"),
-        ("連鎖效應會碰到誰", "focus"),
-        ("數據有沒有對上故事", "btc_structure"),
-        ("反例與被忽略的風險", "focus"),
-        ("安靜的幣不用展開", "bars"),
-        ("未來一天只看三點", "focus"),
-        ("調查收到哪裡", "focus"),
+        ("事件發生：先還原時間線", "compare"), ("誰受影響、誰可能受益", "focus"),
+        ("資金流向透露的第二層訊息", "bars"), ("事件如何傳導到 BTC", "btc_structure"),
+        ("市場可能忽略的反作用力", "focus"), ("哪些說法仍缺乏證據", "focus"),
+        ("事件後續的三個觀察點", "focus"), ("調查結論：目前能確定什麼", "focus"),
     ],
     "psychology_flow": [
-        ("追高的人在想什麼", "focus"),
-        ("恐慌賣出的人在想什麼", "focus"),
-        ("觀望資金站在哪裡", "compare"),
-        ("換手可能發生在這個價", "btc_structure"),
-        ("情緒和價格為什麼分開", "focus"),
-        ("這個行為陷阱", "focus"),
-        ("未來一天只看三點", "focus"),
-        ("看懂心理之後的紀律", "focus"),
+        ("追高資金正在承擔什麼", "focus"), ("恐慌賣壓從哪裡來", "bars"),
+        ("觀望資金等待哪個訊號", "compare"), ("情緒與價格的落差", "btc_structure"),
+        ("散戶最容易誤判的地方", "focus"), ("籌碼可能在哪裡換手", "focus"),
+        ("情緒反轉需要什麼條件", "focus"), ("把情緒轉成可執行紀律", "focus"),
+    ],
+    "case_file": [
+        ("案件現場：今天發生了什麼", "compare"), ("第一份證據：價格留下的痕跡", "btc_structure"),
+        ("第二份證據：資金去了哪裡", "bars"), ("時間線：事件如何逐步發酵", "focus"),
+        ("嫌疑假說：多方解讀", "focus"), ("反證：空方如何拆解", "compare"),
+        ("尚未解開的關鍵問題", "focus"), ("目前證據支持哪個結論", "focus"),
+    ],
+    "data_detective": [
+        ("先找出最不合理的數字", "compare"), ("拆開數字背後的分母", "focus"),
+        ("價格與成交量是否說同一件事", "bars"), ("鏈上指標能否交叉驗證", "btc_structure"),
+        ("資料支持的解釋", "focus"), ("資料尚不能證明的部分", "focus"),
+        ("下一個能推翻假說的數據", "focus"), ("數據調查暫時結案", "focus"),
+    ],
+    "scenario_lab": [
+        ("基準情境：市場維持現狀", "btc_structure"), ("上行情境：需要哪些條件", "focus"),
+        ("下行情境：風險如何擴散", "compare"), ("三種情境的觸發價位", "focus"),
+        ("哪個指標最先發出警報", "bars"), ("情境失效的判斷方式", "focus"),
+        ("未來 24 小時決策樹", "focus"), ("不預測方向，只定義應對", "focus"),
+    ],
+    "myth_busting": [
+        ("市場今天最流行的說法", "impact_quote"), ("這個說法忽略了什麼", "compare"),
+        ("拿價格數據來驗證", "btc_structure"), ("再用資金數據交叉檢查", "bars"),
+        ("哪些部分是真的", "focus"), ("哪些部分被過度延伸", "focus"),
+        ("如果看錯，會先出現什麼", "focus"), ("拆完迷思後的實際結論", "focus"),
+    ],
+    "capital_flow": [
+        ("資金入口：新增流動性在哪", "bars"), ("穩定幣供給透露的訊號", "focus"),
+        ("現貨買盤是否真的進場", "compare"), ("槓桿資金正在放大什麼", "btc_structure"),
+        ("資金從哪個市場流向哪裡", "focus"), ("流入不等於立即上漲", "focus"),
+        ("下一個資金流向觀察點", "focus"), ("資金地圖給出的結論", "focus"),
+    ],
+    "volatility_lab": [
+        ("波動突然放大的位置", "btc_structure"), ("哪一側部位最脆弱", "compare"),
+        ("清算與成交量的連鎖反應", "bars"), ("支撐失守後的傳導路徑", "focus"),
+        ("反向擠壓需要什麼條件", "focus"), ("波動收斂還是準備再擴張", "focus"),
+        ("高波動下的三個風險點", "focus"), ("把波動轉成風險界線", "focus"),
     ],
 }
-
 
 def opening_conflict_body(mdata):
     """第 1 頁只放情緒和價格有沒有打架，不放免責大字。"""
@@ -218,66 +237,42 @@ def assign_daily_layout(slide, index=0):
 
 
 def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
-    """開頭三頁快篩，其餘八頁留給當日模式。週五或 26 日再加一頁帳本。"""
+    """依當日節目模式重排市場快篩，並套用不同敘事分鏡，避免每日固定同一順序。"""
     mdata = mdata or {}
     show_format = show_format or {}
-    beats = DAILY_STORY_BEATS.get(show_format.get("id")) or DAILY_STORY_BEATS["debate"]
+    format_id = show_format.get("id") or "debate"
+    beats = DAILY_STORY_BEATS.get(format_id) or DAILY_STORY_BEATS["debate"]
     price = format_usd(mdata.get("cur_p")) if mdata.get("cur_p") not in (None, "") else "比特幣"
     pct = mdata.get("btc_pct")
     move = f"{float(pct):+.2f}%" if isinstance(pct, (int, float)) else ""
     fear = mdata.get("fng_num")
-    fear_name = ""
     today_fng = mdata.get("today_fng") or {}
-    if isinstance(today_fng, dict):
-        fear_name = str(today_fng.get("value_classification") or "")
+    fear_name = str(today_fng.get("value_classification") or "") if isinstance(today_fng, dict) else ""
     fear_line = f"恐慌指數 {int(fear)} {fear_name}".strip() if isinstance(fear, (int, float)) else "情緒溫度"
-    slides = [
-        {
-            "role": "thermometer",
-            "title": f"{fear_line}，{price} 有跟著怕嗎？",
-            "accent": "#38bdf8",
-            "body": opening_conflict_body(mdata),
-            "chart": "summary",
-        },
-        {
-            "role": "thermometer",
-            "title": f"均線快篩：{price} 與以太坊同一頁",
-            "accent": "#a78bfa",
-            "body": f"{mdata.get('s1') or ''}\n{mdata.get('eth_slide') or ''}".strip(),
-            "chart": "dual",
-        },
-        {
-            "role": "thermometer",
-            "title": "六幣快篩：只點名今天真的在動的",
-            "accent": "#34d399",
-            "body": mdata.get("coins_summary") or "安靜的幣種一筆帶過。",
-            "chart": "bars",
-        },
-    ]
+    modules = {
+        "fear": {"role":"thermometer","title":f"{fear_line}：市場真的在怕嗎？","accent":"#38bdf8","body":opening_conflict_body(mdata),"chart":"summary"},
+        "dual": {"role":"thermometer","title":f"BTC {price}：與 ETH 的相對強弱","accent":"#a78bfa","body":f"{mdata.get('s1') or ''}\n{mdata.get('eth_slide') or ''}".strip(),"chart":"dual"},
+        "rotation": {"role":"thermometer","title":f"資金輪動：BTC {move}，誰真的在動？","accent":"#34d399","body":mdata.get("coins_summary") or "安靜的幣種一筆帶過。","chart":"bars"},
+    }
+    scan_orders = {
+        "debate":("fear","dual","rotation"), "history_mirror":("dual","fear","rotation"),
+        "deep_story":("rotation","dual","fear"), "psychology_flow":("fear","rotation","dual"),
+        "case_file":("dual","rotation","fear"), "data_detective":("rotation","fear","dual"),
+        "scenario_lab":("dual","fear","rotation"), "myth_busting":("fear","dual","rotation"),
+        "capital_flow":("rotation","dual","fear"), "volatility_lab":("fear","rotation","dual"),
+    }
+    slides = [dict(modules[key]) for key in scan_orders.get(format_id, scan_orders["debate"])]
     if show_dca:
-        slides.append({
-            "role": "dca",
-            "title": f"模擬帳本對上 {price}",
-            "accent": "#fbbf24",
-            "body": dca_body or "模擬定期定額帳本。",
-            "chart": "dca",
-        })
-    accents = ["#fbbf24", "#fb7185", "#a78bfa", "#38bdf8", "#f472b6", "#34d399", "#f59e0b", "#e2e8f0"]
+        slides.append({"role":"dca","title":f"模擬帳本：價格 {price} 對績效的影響","accent":"#fbbf24","body":dca_body or "模擬定期定額帳本。","chart":"dca"})
+    accents = ["#fbbf24","#fb7185","#a78bfa","#38bdf8","#f472b6","#34d399","#f59e0b","#e2e8f0"]
     for index, (title, chart) in enumerate(beats):
-        slides.append({
-            "role": "story",
-            "title": title,
-            "accent": accents[index % len(accents)],
-            "body": show_format.get("title") or title,
-            "chart": chart,
-        })
+        slides.append({"role":"story","title":title,"accent":accents[index % len(accents)],"body":show_format.get("title") or title,"chart":chart})
     for idx, slide in enumerate(slides):
         slide["layout"] = assign_daily_layout(slide, idx)
         if slide["layout"] != "versus_clash":
             slide["body"] = limit_slide_body(slide.get("body"))
         slide["broll_query"] = assign_broll_query(slide)
     return slides
-
 
 def fill_slide_bodies_from_narration(slides, full_script):
     """依 [SLIDE_n] 錨點擷取該頁實際口播句，讓圖卡文字與主播正在說的內容一致。"""
