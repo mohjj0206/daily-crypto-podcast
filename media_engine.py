@@ -776,12 +776,18 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     # 讓瀏覽器動畫與 TTS 使用同一段真實時間軸。
     # 舊版只錄 6 秒再以 tpad 凍結最後一格，造成長頁面大部分時間完全靜止。
     # 多錄 0.5 秒，並以 clone padding 保證投影片輸出不短於口播時間軸。
-    record_seconds = float(dur_sec) + 0.5
+    capture_preroll = 0.75
+    record_seconds = float(dur_sec) + capture_preroll + 0.25
     remaining = max(0.0, float(dur_sec))
     pace = max(0.22, min(0.55, float(dur_sec) / 16.0))
     if reveal_timestamps is None:
         reveal_timestamps = slide_data.get("reveal_timestamps")
-    reveal_list = _resolve_reveal_timestamps(reveal_timestamps, reveal_count, record_seconds)
+    # 錄影最初 0.75 秒由已載入的海報畫面補上；揭示時間同步加上錄影預熱偏移，
+    # 讓輸出影片的 0 秒仍對應口播時間軸的 0 秒。
+    reveal_list = [
+        round(value + capture_preroll, 3)
+        for value in _resolve_reveal_timestamps(reveal_timestamps, reveal_count, record_seconds)
+    ]
     reveal_ts_json = json.dumps(reveal_list)
 
     # B-Roll 實景動態底圖：有 broll_path 時於 slide-stage 底層循環播放，
@@ -1394,21 +1400,33 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
             page.evaluate("() => document.fonts.ready.then(() => true)")
             if not page.evaluate("() => window.fitSlideLayout()"):
                 print(f"Slide {idx} required final auto-fit scaling to stay inside its safe area.")
-            page.wait_for_timeout(max(1, round(record_seconds * 1000)))
+            page.wait_for_timeout(max(1, round(capture_preroll * 1000)))
+            poster_path = os.path.join(record_dir, "poster.png")
+            page.screenshot(path=poster_path)
+            page.wait_for_timeout(max(1, round((record_seconds - capture_preroll) * 1000)))
         finally:
             context.close()
         recording_path = video.path()
-        filters = (
-            f"fps={VIDEO_FPS},scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
-            f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS"
-            f"{tpad_filter},trim=duration={float(dur_sec):.6f},format=yuv420p"
+        tail_duration = max(0.1, float(dur_sec) - capture_preroll)
+        poster_filter = (
+            f"[0:v]fps={VIDEO_FPS},scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
+            f"trim=duration={capture_preroll:.6f},setpts=PTS-STARTPTS,format=yuv420p[poster];"
+            f"[1:v]trim=start={capture_preroll:.6f},setpts=PTS-STARTPTS,fps={VIDEO_FPS},"
+            f"scale={MAIN_VIDEO_WIDTH}:{MAIN_VIDEO_HEIGHT}:flags=lanczos,"
+            f"tpad=stop_mode=clone:stop_duration={float(dur_sec):.6f},"
+            f"trim=duration={tail_duration:.6f},format=yuv420p[tail];"
+            "[poster][tail]concat=n=2:v=1:a=0[v]"
         )
         subprocess.run(
             [
-                "ffmpeg", "-y", "-i", recording_path,
-                "-vf", filters, "-t", f"{dur_sec:.6f}",
-                "-an", "-r", str(VIDEO_FPS), "-c:v", "libx264",
-                "-preset", "medium", "-crf", VIDEO_CRF, "-pix_fmt", "yuv420p", out_mp4,
+                "ffmpeg", "-y",
+                "-loop", "1", "-framerate", str(VIDEO_FPS),
+                "-t", f"{capture_preroll:.6f}", "-i", poster_path,
+                "-i", recording_path,
+                "-filter_complex", poster_filter, "-map", "[v]",
+                "-t", f"{dur_sec:.6f}", "-an", "-r", str(VIDEO_FPS),
+                "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
+                "-pix_fmt", "yuv420p", out_mp4,
             ],
             check=True,
         )
@@ -2903,20 +2921,31 @@ window.fitShortLayout = () => {{
                     page.evaluate("() => document.fonts.ready.then(() => true)")
                     if not page.evaluate("() => window.fitShortLayout()"):
                         raise ValueError("Short-video HTML exceeds its safe area.")
-                    # Playwright 錄影會有啟動／收尾緩衝，多錄 0.5 秒供 FFmpeg 精準裁切。
-                    page.wait_for_timeout(round((render_duration + 0.5) * 1000))
+                    capture_preroll = 0.75
+                    page.wait_for_timeout(round(capture_preroll * 1000))
+                    poster_path = os.path.join(video_dir, "short_poster.png")
+                    page.screenshot(path=poster_path)
+                    page.wait_for_timeout(round(render_duration * 1000))
                 finally:
                     context.close()
                 recording_path = video.path()
+                short_tail_duration = max(0.1, render_duration - capture_preroll)
+                short_poster_filter = (
+                    f"[0:v]fps={VIDEO_FPS},scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:flags=lanczos,"
+                    f"trim=duration={capture_preroll:.6f},setpts=PTS-STARTPTS,format=yuv420p[poster];"
+                    f"[1:v]trim=start={capture_preroll:.6f},setpts=PTS-STARTPTS,fps={VIDEO_FPS},"
+                    f"scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:flags=lanczos,"
+                    f"tpad=stop_mode=clone:stop_duration={render_duration:.6f},"
+                    f"trim=duration={short_tail_duration:.6f},format=yuv420p[tail];"
+                    "[poster][tail]concat=n=2:v=1:a=0[v]"
+                )
                 subprocess.run(
                     [
-                        "ffmpeg", "-y", "-i", recording_path,
-                        "-vf", (
-                            f"fps={VIDEO_FPS},scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:"
-                            "flags=lanczos,setpts=PTS-STARTPTS,"
-                            f"tpad=stop_mode=clone:stop_duration={render_duration:.6f},"
-                            f"trim=duration={render_duration:.6f},format=yuv420p"
-                        ),
+                        "ffmpeg", "-y",
+                        "-loop", "1", "-framerate", str(VIDEO_FPS),
+                        "-t", f"{capture_preroll:.6f}", "-i", poster_path,
+                        "-i", recording_path,
+                        "-filter_complex", short_poster_filter, "-map", "[v]",
                         "-t", f"{render_duration:.6f}", "-an", "-r", str(VIDEO_FPS),
                         "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
                         "-pix_fmt", "yuv420p", "short_visual.mp4",
