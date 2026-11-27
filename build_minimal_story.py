@@ -906,6 +906,9 @@ def _clean_subtitle_text(text):
             if source[index - 1].isdigit() and source[index + 1].isdigit():
                 cleaned.append(char)
                 continue
+        if char == "%" and index > 0 and source[index - 1].isdigit():
+            cleaned.append(char)
+            continue
         if unicodedata.category(char).startswith("P"):
             continue
         cleaned.append(char)
