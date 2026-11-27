@@ -13,6 +13,7 @@ from presentation import (
     EXCLUDED_PLATFORMS,
     build_tutorial_cards,
     fill_story_slide_bodies,
+    fill_slide_bodies_from_narration,
     fit_complete_phrase,
     format_usd,
     plan_daily_slides,
@@ -950,33 +951,69 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
 
 
 def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
+    """正式影片每幕至少 1,800 字；不足時最多補強兩輪，不再讓短稿靜默通過。"""
     if is_test:
         return act_text
-    chars = _spoken_chars(act_text)
-    if chars >= 1650:
-        return act_text
-    print(f"第 {act_num} 幕（{act_name}）目前 {chars} 字，偏短（目標 1,800~2,200 字），進行深度擴寫補強...")
-    expand_prompt = f"""以下是【幣看趨勢】播客第 {act_num} 幕（{act_name}）的口播對話。目前字數只有 {chars} 字，明顯偏短。
-請進行深入擴寫，字數嚴格要求達到 1,800 至 2,200 繁中字：
-1. 補充更多白話生動比喻、歷史牛熊對照、機構行為心理剖析與深層矛盾拆解。
-2. 保留原有角色（男：比特汪、女：以太喵）與所有 [SLIDE_x] 投影片錨點標記。
-3. 嚴禁連續報數字流水帳，嚴禁「謹慎觀望、注意風險」等萬用廢話套話。
-4. 只輸出對話逐字稿，不要 Markdown，不要包裹 JSON。
+
+    minimum_chars = 1800
+    maximum_chars = 2200
+    current_text = str(act_text or "").strip()
+    chars = _spoken_chars(current_text)
+    if chars >= minimum_chars:
+        return current_text
+
+    for attempt in range(1, 3):
+        missing = minimum_chars - chars
+        print(
+            f"第 {act_num} 幕（{act_name}）目前 {chars} 字，"
+            f"低於最低要求 {minimum_chars} 字，進行第 {attempt} 輪深度補強..."
+        )
+        expand_prompt = f"""以下是【幣看趨勢】播客第 {act_num} 幕（{act_name}）的口播對話。
+目前字數：{chars} 字；至少還缺 {missing} 字。
+請在保留原稿資訊與對話脈絡的前提下，補足深度，最後完整稿必須落在 {minimum_chars} 至 {maximum_chars} 個繁體中文字。
+要求：
+1. 只補充原稿尚未充分說明的因果、數據解讀、歷史對照、反方質疑與可驗證條件，不得換句話重複。
+2. 保留男：比特汪、女：以太喵角色，以及所有 [SLIDE_x] 投影片錨點；每個錨點都必須原樣保留且只出現一次。
+3. 不得捏造數據、新聞或來源；資料不足時明確說明限制。
+4. 嚴禁流水帳、空泛風險套話與冗長寒暄。
+5. 只輸出完整對話逐字稿，不要 Markdown、解說或 JSON。
 
 背景與核心脈絡：
 {context_hint}
 
-目前對話稿：
-{act_text}"""
-    try:
-        expanded = call_gemini(expand_prompt, max_output_tokens=16384, timeout=300)
-        if _spoken_chars(expanded) > chars:
-            print(f"第 {act_num} 幕擴寫成功：由 {chars} 字提升至 {_spoken_chars(expanded)} 字。")
-            return expanded
-    except Exception as e:
-        print(f"第 {act_num} 幕擴寫失敗，保留原稿：{e}")
-    return act_text
+目前完整對話稿：
+{current_text}"""
+        try:
+            expanded = call_gemini(expand_prompt, max_output_tokens=16384, timeout=300)
+            expanded = str(expanded or "").strip()
+            expanded_chars = _spoken_chars(expanded)
+            if expanded_chars >= minimum_chars and expanded_chars <= maximum_chars:
+                print(f"第 {act_num} 幕補強成功：{chars} → {expanded_chars} 字。")
+                return expanded
+            if expanded_chars > chars:
+                current_text = expanded
+                chars = expanded_chars
+                if chars >= minimum_chars:
+                    if chars > maximum_chars:
+                        print(
+                            f"第 {act_num} 幕補強後 {chars} 字，略超過建議上限 "
+                            f"{maximum_chars}，但已達最低完整長度。"
+                        )
+                    return current_text
+            else:
+                print(
+                    f"第 {act_num} 幕第 {attempt} 輪補強未增加有效字數"
+                    f"（原稿 {chars}、回傳 {expanded_chars}），保留較完整版本。"
+                )
+        except Exception as e:
+            print(f"第 {act_num} 幕第 {attempt} 輪補強失敗：{e}")
 
+    if chars < minimum_chars:
+        raise RuntimeError(
+            f"第 {act_num} 幕「{act_name}」只有 {chars} 字，"
+            f"低於最低要求 {minimum_chars} 字；停止後續影片製作，避免發布不完整內容。"
+        )
+    return current_text
 
 def _ensure_slide_anchors(script, slide_count):
     lines = script.split("\n")
@@ -1498,7 +1535,7 @@ def generate_script(mdata, dca_data, config):
     for slide, title in zip(visual_plan, slide_titles):
         slide["title"] = title
     fill_story_slide_bodies(visual_plan, editorial_lead, slide_news_details, slide_24h_conditions)
-    presentation.fill_slide_bodies_from_narration(visual_plan, full_script)
+    fill_slide_bodies_from_narration(visual_plan, full_script)
     opening_hook = editorial_brief.get("opening_hook") or _opening_hook(act1_raw)
 
     result = {
