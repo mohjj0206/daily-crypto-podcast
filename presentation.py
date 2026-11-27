@@ -97,32 +97,64 @@ BROLL_KEYWORD_POOL = {
 
 
 def assign_broll_query(slide):
-    """依版面與角色決定該頁的 Pixabay 英文關鍵字；純圖表頁回空字串。"""
+    """依該頁標題與實際播報內文產生 Pixabay 英文搜尋詞；純圖表頁不加底片。"""
     slide = slide or {}
     layout = slide.get("layout") or ""
-    chart = slide.get("chart") or ""
-    role = slide.get("role") or ""
     title = str(slide.get("title") or "")
+    body = str(slide.get("body") or "")
+    source = f"{title} {body}".lower()
 
-    # 純技術圖表頁保留圖表專注度。
-    if layout == "chart_spotlight" or chart in (
-        "dual", "bars", "dca", "btc_structure", "btc_rsi", "gauge",
-    ):
+    if layout == "chart_spotlight":
         return ""
 
-    if any(kw in title for kw in ("心理", "貪婪", "恐慌", "追高", "觀望", "行為")):
-        pool = BROLL_KEYWORD_POOL["psychology"]
-    elif any(kw in title for kw in ("宏觀", "經濟", "利率", "通膨", "資金", "24")):
-        pool = BROLL_KEYWORD_POOL["macro"]
-    elif any(kw in title for kw in ("歷史", "鏡像", "結構", "週線")):
-        pool = BROLL_KEYWORD_POOL["history"]
-    elif layout == "versus_clash" or role == "story":
-        pool = BROLL_KEYWORD_POOL["debate"]
-    elif any(kw in title for kw in ("新聞", "事件", "消息", "調查")):
-        pool = BROLL_KEYWORD_POOL["news"]
-    else:
-        pool = BROLL_KEYWORD_POOL["story"]
-    return ", ".join(pool[:3])
+    # 先依當頁播報的具體事件／名詞選圖，避免每頁都只搜泛用 bitcoin/finance。
+    topic_rules = [
+        (("sec", "證券交易委員會", "監管", "監管機構", "訴訟", "起訴"), "securities regulator, government building"),
+        (("etf", "現貨基金", "資金流入", "資金流出", "基金申購", "基金贖回"), "bitcoin etf, stock exchange trading"),
+        (("聯準會", "美聯儲", "fed", "利率", "降息", "升息", "通膨", "通胀"), "federal reserve, central bank, financial market"),
+        (("交易所", "binance", "coinbase", "okx", "交易平台"), "cryptocurrency exchange, trading floor"),
+        (("駭客", "黑客", "攻擊", "漏洞", "遭竊", "被盜", "資安"), "cybersecurity, server room, computer security"),
+        (("挖礦", "礦工", "算力", "礦場"), "bitcoin mining, data center, server racks"),
+        (("穩定幣", "usdt", "usdc", "支付", "清算"), "digital payment, fintech, financial technology"),
+        (("solana", "sol "), "solana blockchain, validator server, digital network"),
+        (("ethereum", "以太坊", "以太幣", "eth "), "ethereum blockchain, digital network, server room"),
+        (("比特幣", "bitcoin", "btc "), "bitcoin cryptocurrency, blockchain network, trading screen"),
+        (("巨鯨", "鯨魚", "鏈上", "錢包", "地址", "轉帳", "轉賬"), "blockchain data, digital network, data visualization"),
+        (("川普", "特朗普", "白宮", "制裁", "戰爭", "地緣政治", "選舉"), "world news, government building, global economy"),
+        (("破產", "倒閉", "清算", "債務", "裁員"), "financial district, office building, business news"),
+        (("恐慌", "貪婪", "追高", "拋售", "情緒", "散戶"), "stock market trader, trading floor, market volatility"),
+        (("宏觀", "經濟", "資金", "流動性", "美元", "債券"), "global finance, stock exchange, financial district"),
+    ]
+    selected = []
+    for terms, query in topic_rules:
+        if any(term in source for term in terms):
+            for part in query.split(", "):
+                if part not in selected:
+                    selected.append(part)
+            if len(selected) >= 3:
+                break
+
+    if len(selected) < 3:
+        if layout == "versus_clash" or slide.get("role") == "story":
+            fallback = BROLL_KEYWORD_POOL["debate"]
+        elif any(kw in source for kw in ("心理", "恐慌", "貪婪", "追高", "觀望", "行為")):
+            fallback = BROLL_KEYWORD_POOL["psychology"]
+        elif any(kw in source for kw in ("宏觀", "經濟", "利率", "通膨", "資金")):
+            fallback = BROLL_KEYWORD_POOL["macro"]
+        elif any(kw in source for kw in ("歷史", "鏡像", "結構", "週線")):
+            fallback = BROLL_KEYWORD_POOL["history"]
+        elif any(kw in source for kw in ("新聞", "事件", "消息", "調查")):
+            fallback = BROLL_KEYWORD_POOL["news"]
+        else:
+            fallback = BROLL_KEYWORD_POOL["story"]
+        for part in fallback:
+            if part not in selected:
+                selected.append(part)
+            if len(selected) >= 3:
+                break
+
+    return ", ".join(selected[:3])
+
 DAILY_LAYOUTS = ("impact_quote", "versus_clash", "chart_spotlight", "timeline_steps")
 
 DAILY_STORY_BEATS = {
