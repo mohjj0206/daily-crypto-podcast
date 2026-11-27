@@ -1491,6 +1491,7 @@ def generate_script(mdata, dca_data, config):
     for slide, title in zip(visual_plan, slide_titles):
         slide["title"] = title
     fill_story_slide_bodies(visual_plan, editorial_lead, slide_news_details, slide_24h_conditions)
+    presentation.fill_slide_bodies_from_narration(visual_plan, full_script)
     opening_hook = editorial_brief.get("opening_hook") or _opening_hook(act1_raw)
 
     result = {
