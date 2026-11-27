@@ -1261,7 +1261,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .reveal-node.is-active li,
 .reveal-node.is-active strong {{ color: #FBBF24 !important; }}
 .reveal-node.is-dimmed {{
-  opacity: 0.28 !important; visibility: visible !important; transform: translateY(0) scale(1);
+  opacity: 0.55 !important; visibility: visible !important; transform: translateY(0) scale(1);
   border-color: rgba(148, 163, 184, .32) !important;
   box-shadow: none !important; filter: saturate(0.85);
 }}
