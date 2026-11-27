@@ -1226,9 +1226,8 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .gauge-value small {{ color: #94a3b8; font-size: 24px; font-weight: 700; }}
 @keyframes heroPop {{ from {{ opacity: 0; transform: scale(.88) translateY(18px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
 
-/* ── Progressive Kinetic Focus：所有卡片預設 100% 清晰可見，
+/* ── Progressive Kinetic Focus：卡片保留各版型自己的進場動畫，
    語音講到哪張就加上金色發光邊框高亮，絕不隱形。 ── */
-.slide-stage.kinetic .reveal-node {{ animation: none !important; }}
 .reveal-node {{
   opacity: 1 !important; visibility: visible !important;
   transform: translateY(0) scale(1);
