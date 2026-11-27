@@ -1,16 +1,10 @@
-"""極簡故事圖解線（方案 A）——完全獨立主程式，不修改任何舊程式。
+"""深度故事圖解線（數據分析版型 A）——完全獨立主程式，不修改任何舊程式。
 
-設計目標（模仿《投資家富士》視覺節奏）：
-- 極簡高留白舞台：移除頂部數據條、底部指標卡與花俏方框，85% 畫面為深邃黑藍漸層
-  （或疊加 65% 暗化遮罩的 Pixabay 1080p 實景底片）。
-- 語音同步逐行亮起（Kinetic Typography）：中央 1 個大數字對比 ＋ 最多 3～4 行短句
-  （每行 ≤14 字），依該頁 TTS 累積秒數依序浮現；正在講的那行 56px 純白／琥珀金發光，
-  已講完的上一行退為柔和暗灰。
-- 僅左下／右下保留 190×190 貓狗雙主播圓形頭像與底部 66pt 字幕，12 秒動態片尾。
-- 單一重磅主題：從今日完整新聞正文只挑 1 個最震撼事件深挖，開頭 30 秒一句話帶過
-  BTC／ETH 現價，其餘 95% 深挖該主題，總長 10～13 分鐘、3,500～4,200 字。
-- 強制生活比喻法：解釋任何技術／宏觀／鏈上指標必先用台灣人秒懂的生活場景打比方。
-- 雙軌 TTS 數字發音：字幕保留 0.6、27.53%，送 TTS 前轉自然中文讀法。
+設計目標：
+- 深色專業財經數據分析版型：主標題、核心 KPI 卡、數據圖表與口播同步重點。
+- 僅呈現素材中有來源依據的數據；缺少可靠數值時不虛構圖表，改顯示分析重點。
+- 主片採 16:9 資訊圖解，Shorts 維持直式精華版型。
+- 雙人 TTS、逐頁字幕與 Pixabay 動態實景素材維持獨立運作。
 
 輸出：story_main.mp4、story_short.mp4、story_thumb.jpg、story_metadata.txt。
 """
@@ -277,7 +271,9 @@ def _build_story_prompt(news_items, prices):
   "slides": [
     {{
       "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
-      "lines": ["短句1", "短句2", "短句3"],
+      "lines": ["分析重點1", "分析重點2", "分析重點3"],
+      "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義"}}],
+      "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2]}},
       "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
     }}
   ]
@@ -286,9 +282,11 @@ def _build_story_prompt(news_items, prices):
 【slides 規則】
 - 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
 - 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「具體事件與數據推演」，嚴禁空泛重複或湊字。
-- 每頁 lines 為 2～{MAX_LINES_PER_SLIDE} 行極簡短句，每行 ≤{MAX_LINE_CHARS} 字；投影片畫面一律維持極簡短句，絕不可把整段口播塞進畫面。
-- 每頁 dialogue 為該頁要唸的 1～3 段對話，是畫面短句的口語展開。
-- big 為該頁唯一的視覺焦點（大數字對比或一句震撼短標）。
+- 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；沒有數值依據時可少於 2 個，嚴禁捏造。
+- 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
+- lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
+- dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
+- big 是本頁主標題，不再獨佔整張畫面的唯一資訊。
 
 【今日新聞正文】
 {news_joined}
@@ -297,6 +295,48 @@ def _build_story_prompt(news_items, prices):
 
 def _len_lines(slide):
     return [str(x).strip() for x in (slide.get("lines") or []) if str(x).strip()]
+
+
+def _normalize_metrics(raw_metrics):
+    """整理 KPI 卡片，只保留素材明確提供的數據。"""
+    metrics = []
+    for item in raw_metrics or []:
+        if not isinstance(item, dict):
+            continue
+        label = _clean_text(item.get("label"))
+        value = _clean_text(item.get("value"))
+        detail = _clean_text(item.get("detail"))
+        if label and value:
+            metrics.append({"label": label[:18], "value": value[:24], "detail": detail[:42]})
+        if len(metrics) >= 4:
+            break
+    return metrics
+
+
+def _normalize_chart(raw_chart):
+    """整理比較圖表；只接受明確數值，避免缺值或文字被誤畫成數據。"""
+    if not isinstance(raw_chart, dict):
+        return None
+    labels = raw_chart.get("labels") or []
+    values = raw_chart.get("values") or []
+    points = []
+    for label, value in zip(labels, values):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not str(label).strip():
+            continue
+        points.append({"label": _clean_text(label)[:14], "value": number})
+        if len(points) >= 6:
+            break
+    if len(points) < 2:
+        return None
+    return {
+        "title": _clean_text(raw_chart.get("title") or "數據比較")[:30],
+        "unit": _clean_text(raw_chart.get("unit") or "")[:12],
+        "points": points,
+    }
 
 
 def _normalize_story(raw, news_items, prices):
@@ -336,6 +376,8 @@ def _normalize_story(raw, news_items, prices):
             {
                 "big": _clean_text(slide.get("big"))[:16],
                 "lines": lines,
+                "metrics": _normalize_metrics(slide.get("metrics")),
+                "chart": _normalize_chart(slide.get("chart")),
                 "dialogue": dialogue,
             }
         )
@@ -438,7 +480,9 @@ def _build_custom_prompt(material, prices):
   "slides": [
     {{
       "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
-      "lines": ["短句1", "短句2", "短句3"],
+      "lines": ["分析重點1", "分析重點2", "分析重點3"],
+      "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義"}}],
+      "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2]}},
       "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
     }}
   ]
@@ -447,9 +491,11 @@ def _build_custom_prompt(material, prices):
 【slides 規則】
 - 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
 - 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「素材中的具體論點與數據推演」，嚴禁空泛重複或湊字。
-- 每頁 lines 為 2～{MAX_LINES_PER_SLIDE} 行極簡短句，每行 ≤{MAX_LINE_CHARS} 字；投影片畫面一律維持極簡短句，絕不可把整段口播塞進畫面。
-- 每頁 dialogue 為該頁要唸的 1～3 段對話，是畫面短句的口語展開。
-- big 為該頁唯一的視覺焦點（大數字對比或一句震撼短標）。
+- 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；沒有數值依據時可少於 2 個，嚴禁捏造。
+- 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
+- lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
+- dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
+- big 是本頁主標題，不再獨佔整張畫面的唯一資訊。
 
 【自訂深度素材正文】
 {material}
@@ -496,55 +542,123 @@ def _broll_background_html(broll_path):
 
 def _slide_html(slide, reveal_seconds, broll_path, page_label):
     big = html.escape(slide["big"])
-    lines = slide["lines"]
+    lines = slide.get("lines") or []
+    metrics = slide.get("metrics") or []
+    chart = slide.get("chart")
     line_markup = "".join(
-        f'<div class="line" data-i="{i}">{html.escape(ln)}</div>'
-        for i, ln in enumerate(lines)
+        f'<div class="insight" data-i="{i}"><span class="insight-index">{i + 1:02d}</span>'
+        f'<span>{html.escape(ln)}</span></div>'
+        for i, ln in enumerate(lines[:4])
     )
+    metric_markup = "".join(
+        '<div class="metric-card">'
+        f'<div class="metric-label">{html.escape(item["label"])}</div>'
+        f'<div class="metric-value">{html.escape(item["value"])}</div>'
+        f'<div class="metric-detail">{html.escape(item["detail"])}</div>'
+        '</div>'
+        for item in metrics[:4]
+    )
+    chart_markup = ""
+    if chart and chart.get("points"):
+        max_value = max(abs(point["value"]) for point in chart["points"]) or 1.0
+        bars = []
+        for point in chart["points"]:
+            width = max(3.0, min(100.0, abs(point["value"]) / max_value * 100))
+            value_text = f'{point["value"]:,.2f}'.rstrip("0").rstrip(".")
+            bars.append(
+                '<div class="chart-row">'
+                f'<div class="chart-label">{html.escape(point["label"])}</div>'
+                '<div class="chart-track"><div class="chart-bar" '
+                f'style="width:{width:.1f}%"></div></div>'
+                f'<div class="chart-value">{value_text}{html.escape(chart.get("unit") or "")}</div>'
+                '</div>'
+            )
+        chart_markup = (
+            '<section class="panel">'
+            f'<div class="panel-title">{html.escape(chart["title"])}</div>'
+            f'{"".join(bars)}'
+            '</section>'
+        )
+    else:
+        chart_markup = (
+            '<section class="panel">'
+            '<div class="panel-title">本頁分析重點</div>'
+            f'<div class="insights">{line_markup}</div>'
+            '</section>'
+        )
     reveal_json = json.dumps([round(x, 3) for x in reveal_seconds])
     return f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <style>
 @page {{ margin: 0; }}
+* {{ box-sizing: border-box; }}
 html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
-  overflow: hidden; background: #05070f; }}
+  overflow: hidden; background: #050914; }}
 .stage {{ position: relative; width: {MAIN_W}px; height: {MAIN_H}px;
-  background: radial-gradient(120% 120% at 50% 18%, #0d1830 0%, #0a1122 42%, #05070f 100%);
+  padding: 58px 86px 54px; overflow: hidden;
+  background: radial-gradient(100% 100% at 50% 0%, #142746 0%, #091426 48%, #050914 100%);
   font-family: "Noto Sans CJK TC", "Noto Sans CJK", "Microsoft JhengHei", sans-serif; }}
 .broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 0; }}
 .dark-mask {{ position: absolute; inset: 0; z-index: 1;
-  background: rgba(3, 6, 15, 0.55); }}
-.page-label {{ position: absolute; top: 54px; left: 50%; transform: translateX(-50%);
-  z-index: 3; color: #8fa6c8; font-size: 26px; letter-spacing: 6px; font-weight: 700; }}
-.center {{ position: absolute; z-index: 3; left: 50%; top: 50%;
-  transform: translate(-50%, -54%); width: 1640px; text-align: center; }}
-.big {{ color: #fbbf24; font-size: 132px; font-weight: 900; line-height: 1.1;
-  margin-bottom: 64px; letter-spacing: 2px;
-  text-shadow: 0 6px 40px rgba(251, 191, 36, .45), 0 0 70px rgba(56, 189, 248, .25);
-  animation: bigIn 1.1s cubic-bezier(.16,1,.3,1) both; }}
-@keyframes bigIn {{ from {{ opacity: 0; transform: translateY(30px) scale(.94); }}
-  to {{ opacity: 1; transform: none; }} }}
-.lines {{ display: flex; flex-direction: column; gap: 40px; align-items: center; }}
-.line {{ font-size: 56px; font-weight: 800; letter-spacing: 1px;
-  color: #5b6675; opacity: .32; transition: color .5s ease, opacity .5s ease,
-  text-shadow .5s ease, transform .5s ease; transform: scale(.98); }}
-.line.active {{ color: #ffffff; opacity: 1; transform: scale(1.04);
-  text-shadow: 0 0 26px rgba(251, 191, 36, .75), 0 0 54px rgba(251, 191, 36, .4); }}
-.line.done {{ color: #3b4656; opacity: .5; transform: scale(.98); }}
+  background: rgba(3, 7, 16, 0.78); }}
+.content {{ position: relative; z-index: 3; height: 100%; display: flex; flex-direction: column; }}
+.topline {{ display: flex; align-items: center; justify-content: space-between;
+  color: #9fb4d1; font-size: 24px; letter-spacing: 3px; font-weight: 700; }}
+.brand {{ color: #fbbf24; }}
+.headline {{ margin-top: 22px; display: flex; align-items: flex-end; gap: 28px; }}
+.big {{ color: #ffffff; font-size: 66px; font-weight: 900; line-height: 1.16;
+  letter-spacing: 1px; max-width: 1420px; overflow-wrap: anywhere;
+  text-shadow: 0 4px 24px rgba(0,0,0,.55); }}
+.headline-mark {{ flex: 0 0 12px; height: 62px; background: #fbbf24; border-radius: 8px; }}
+.metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px; margin-top: 32px; min-height: 190px; }}
+.metric-card {{ min-width: 0; padding: 22px 24px; border: 1px solid rgba(125,160,205,.28);
+  border-radius: 18px; background: rgba(9,22,42,.9); }}
+.metric-label {{ color: #9fb4d1; font-size: 24px; font-weight: 700; }}
+.metric-value {{ margin-top: 12px; color: #fbbf24; font-size: 48px; font-weight: 900;
+  line-height: 1.12; overflow-wrap: anywhere; }}
+.metric-detail {{ margin-top: 10px; color: #d5deea; font-size: 20px; line-height: 1.35; }}
+.lower {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px;
+  flex: 1; min-height: 0; }}
+.panel {{ min-width: 0; padding: 24px 28px; border: 1px solid rgba(125,160,205,.25);
+  border-radius: 18px; background: rgba(8,19,37,.92); overflow: hidden; }}
+.panel-title {{ color: #ffffff; font-size: 30px; font-weight: 800; margin-bottom: 22px; }}
+.chart-row {{ display: grid; grid-template-columns: 170px 1fr 150px; gap: 16px;
+  align-items: center; margin: 22px 0; }}
+.chart-label {{ color: #c9d6e7; font-size: 22px; overflow-wrap: anywhere; }}
+.chart-track {{ height: 22px; border-radius: 20px; background: rgba(148,163,184,.18); overflow: hidden; }}
+.chart-bar {{ height: 100%; border-radius: 20px; background: linear-gradient(90deg,#38bdf8,#fbbf24); }}
+.chart-value {{ color: #fbbf24; font-size: 22px; font-weight: 800; text-align: right; }}
+.insights {{ display: flex; flex-direction: column; gap: 22px; }}
+.insight {{ display: flex; align-items: flex-start; gap: 16px; color: #e8eef7;
+  font-size: 26px; font-weight: 700; line-height: 1.35; }}
+.insight-index {{ flex: 0 0 42px; color: #fbbf24; font-size: 20px; padding-top: 5px; }}
+.insight.active {{ color: #ffffff; text-shadow: 0 0 18px rgba(251,191,36,.3); }}
+.insight.done {{ color: #9aa9bd; }}
+.page-footer {{ margin-top: 20px; display: flex; justify-content: space-between;
+  color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
 </style></head>
 <body>
 <div class="stage">
   {_broll_background_html(broll_path)}
-  <div class="page-label">{html.escape(page_label)}</div>
-  <div class="center">
-    <div class="big">{big}</div>
-    <div class="lines">{line_markup}</div>
+  <div class="content">
+    <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
+    <div class="headline"><div class="headline-mark"></div><div class="big">{big}</div></div>
+    <div class="metrics">{metric_markup}</div>
+    <div class="lower">
+      {chart_markup}
+      <section class="panel">
+        <div class="panel-title">本頁解讀</div>
+        <div class="insights">{line_markup}</div>
+      </section>
+    </div>
+    <div class="page-footer"><span>DATA-DRIVEN DEEP DIVE</span><span>比特汪 × 以太喵</span></div>
   </div>
 </div>
 <script>
 (function () {{
-  const nodes = Array.prototype.slice.call(document.querySelectorAll(".line"));
+  const nodes = Array.prototype.slice.call(document.querySelectorAll(".insight"));
   const times = {reveal_json};
   const start = performance.now();
   function apply(active) {{
@@ -566,6 +680,9 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 }})();
 </script>
 </body></html>"""
+
+
+
 def render_slide_video(idx, slide, dur_sec, reveal_seconds, broll_path, browser, page_label):
     html_doc = _slide_html(slide, reveal_seconds, broll_path, page_label)
     out_mp4 = f"story_p{idx}.mp4"
@@ -712,6 +829,8 @@ def build_pages(story):
             {
                 "big": (slide.get("big") or "").strip(),
                 "lines": slide.get("lines") or [],
+                "metrics": slide.get("metrics") or [],
+                "chart": slide.get("chart"),
                 "dialogue": slide.get("dialogue") or [],
             }
         )
