@@ -565,6 +565,85 @@ def _build_custom_prompt(material, prices):
 """
 
 
+def _split_dialogue_for_extra_slide(slide, min_chars=150):
+    """只拆分既有口播，不新增論點或文字；將一頁拆成前後兩頁。"""
+    utterances = []
+    for role, text in slide.get("dialogue") or []:
+        # 依完整句子切分，保留原字句與主播角色。
+        sentences = [
+            part.strip()
+            for part in re.split(r"(?<=[。！？；])", str(text))
+            if part.strip()
+        ]
+        if not sentences and str(text).strip():
+            sentences = [str(text).strip()]
+        utterances.extend((role, sentence) for sentence in sentences)
+
+    if len(utterances) < 2:
+        return None
+
+    total_chars = sum(len(text) for _, text in utterances)
+    best = None
+    for cut in range(1, len(utterances)):
+        left = sum(len(text) for _, text in utterances[:cut])
+        right = total_chars - left
+        if left < min_chars or right < min_chars:
+            continue
+        score = abs(left - right)
+        if best is None or score < best[0]:
+            best = (score, cut)
+
+    if best is None:
+        return None
+
+    cut = best[1]
+    first = dict(slide)
+    second = dict(slide)
+    first["dialogue"] = utterances[:cut]
+    second["dialogue"] = utterances[cut:]
+    first["lines"] = (slide.get("lines") or [])[:2]
+    second["lines"] = (slide.get("lines") or [])[2:4]
+    first["source_sections"] = list(slide.get("source_sections") or [])
+    second["source_sections"] = []
+    # KPI 與圖表只放在前頁，避免同一組數據被重複呈現。
+    second["metrics"] = []
+    second["chart"] = None
+    base_title = str(slide.get("big") or "核心分析")
+    second["big"] = (base_title[:12] + "・續")[:16]
+    return first, second
+
+
+def _ensure_nine_slides(story, min_chars=150):
+    """模型少產頁時，僅將足夠長的既有口播拆頁；絕不補寫或複製內容。"""
+    slides = list(story.get("slides") or [])
+    original_count = len(slides)
+    while len(slides) < 9:
+        candidates = sorted(
+            range(len(slides)),
+            key=lambda index: sum(len(text) for _, text in slides[index].get("dialogue") or []),
+            reverse=True,
+        )
+        split_done = False
+        for index in candidates:
+            parts = _split_dialogue_for_extra_slide(slides[index], min_chars=min_chars)
+            if parts is None:
+                continue
+            slides[index:index + 1] = [parts[0], parts[1]]
+            split_done = True
+            break
+        if not split_done:
+            raise ValueError(
+                f"模型只產出 {original_count} 頁，現有口播無法在不新增／重複內容下拆成 9 頁；"
+                "請重新生成深度報導。"
+            )
+    if len(slides) > 9:
+        raise ValueError(f"模型產出 {len(slides)} 頁，超過深度報導要求的 9 頁。")
+    if len(slides) != original_count:
+        print(f"[Minimal] 模型原始 {original_count} 頁；已依原口播句界拆分為 9 頁，未新增或複製內容。")
+    story["slides"] = slides
+    return story
+
+
 def build_custom_story(material, prices):
     """把 CHATGPT.txt 自訂深度素材改寫為 9 頁深度分析長談。
 
@@ -604,13 +683,9 @@ def build_custom_story(material, prices):
         if missing_sections:
             raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
         story = _normalize_story(raw, [], prices, require_source=True)
-        # 深度報導模式採取 Fail Closed：頁數或內容量不足就停止製片，
-        # 絕不可改用與 CHATGPT.TXT 無關的通用保底故事。
-        slide_count = len(story["slides"])
-        if slide_count != 9:
-            raise ValueError(
-                f"深度報導應產出 9 頁分析簡報，實際只有 {slide_count} 頁。"
-            )
+        # 若模型少產頁，只能將既有長口播按完整句界拆分；不得補寫或複製內容。
+        # 若原文句子無法安全拆成足夠長度，仍維持 Fail Closed。
+        story = _ensure_nine_slides(story, min_chars=150)
         page_lengths = [
             sum(len(dialogue_text) for _, dialogue_text in slide["dialogue"])
             for slide in story["slides"]
