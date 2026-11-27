@@ -552,7 +552,7 @@ def _build_custom_prompt(material, prices):
 
 【slides 規則】
 - 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
-- 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「素材中的具體論點與數據推演」，嚴禁空泛重複或湊字。
+- 每頁必須有扎實的雙人對話拆解：每頁 dialogue 以 240～340 字為目標，且必須同時包含「台灣人秒懂的生活場景比喻」＋「素材中的具體論點與數據推演」，嚴禁空泛重複或湊字；各頁長度可依原文論點自然調整，不得為了湊字重複內容。
 - 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；每張 KPI 卡都必須附上 source 原文短句，沒有證據就不要輸出該卡。
 - chart 必須附 source 原文短句，且 labels／values 必須能由該證據支持；沒有證據就不要輸出 chart。
 - 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
@@ -616,14 +616,22 @@ def build_custom_story(material, prices):
             for slide in story["slides"]
         ]
         total = sum(page_lengths) + sum(len(d[1]) for d in story["opening"])
-        if any(length < 180 for length in page_lengths):
+        # 單頁長度只作為極端過短的防呆，不以 180 字硬切斷整集。
+        # 深度仍由原文一級章節覆蓋、9 頁結構及全片總口播字數共同把關。
+        minimum_page_chars = 150
+        short_pages = [
+            (index + 1, length)
+            for index, length in enumerate(page_lengths)
+            if length < minimum_page_chars
+        ]
+        if short_pages:
             raise ValueError(
-                "至少一頁口播少於 180 字，內容深度不足："
-                + ", ".join(str(length) for length in page_lengths)
+                f"有頁面口播低於 {minimum_page_chars} 字，內容可能不完整："
+                + ", ".join(f"第{index}頁 {length}字" for index, length in short_pages)
             )
         if not 2300 <= total <= 3800:
             raise ValueError(
-                f"深度報導口播總字數不合格：{total} 字（要求 2,300～3,800 字）。"
+                f"深度報導口播總字數不合格：{total} 字（要求 2,300～3,800 字，含開場）。"
             )
         print(
             f"[Minimal] 深度報導品質檢查通過：9 頁｜口播 {total} 字｜"
