@@ -503,9 +503,10 @@ def _build_custom_prompt(material, prices):
 
 
 def build_custom_story(material, prices):
-    """把 CHATGPT.txt 自訂深度素材交給 AI 改寫為 9 頁極簡長談。
+    """把 CHATGPT.txt 自訂深度素材改寫為 9 頁深度分析長談。
 
-    100% 回傳非空 dict：模型呼叫或解析失敗時退回內建保底結構，絕不回傳 None。
+    模型呼叫、JSON 解析或內容品質檢查失敗時直接中止，
+    不得使用通用保底故事取代使用者提供的深度報導。
     """
     prompt = _build_custom_prompt(material, prices)
     try:
