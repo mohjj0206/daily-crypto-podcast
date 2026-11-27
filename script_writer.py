@@ -399,11 +399,13 @@ def _learning_prompt_line():
     keywords = "、".join(data.get("recent_title_keywords") or []) or "無"
     warnings = "；".join(data.get("previous_warnings") or []) or "無"
     leads = "；".join(data.get("recent_editorial_leads") or []) or "無"
+    conflicts = "；".join(data.get("recent_core_conflicts") or []) or "無"
     hooks = "；".join(data.get("recent_opening_hooks") or []) or "無"
     titles = "；".join(data.get("recent_slide_titles") or []) or "無"
     return (
         f"今日避開這些切入角度：{avoid}。"
         f"近 7 日已經用過的主軸，今天禁止再用相似視角或句型：{leads}。"
+        f"近 7 日核心矛盾，今天必須換一個真正不同的市場問題：{conflicts}。"
         f"近 7 日開場鉤子，禁止沿用同樣句型：{hooks}。"
         f"近 7 日投影片標題，禁止再用相似標題結構：{titles}。"
         f"近 7 日標題已用過的關鍵詞不要再當主標：{keywords}。"
@@ -570,7 +572,8 @@ def choose_show_format():
             used = [str(item) for item in (json.load(handle).get("recent_format_ids") or []) if str(item).strip()]
     except (OSError, ValueError, json.JSONDecodeError):
         used = []
-    blocked = set(used[-3:])
+    # 10 種節目形式，至少隔 5 集才允許回到相同敘事形式。
+    blocked = set(used[-5:])
     for item in formats:
         if item.get("id") not in blocked:
             return item
@@ -1279,7 +1282,8 @@ def generate_script(mdata, dca_data, config):
    避開禁忌詞：{banned_terms}。
 8. 【數字顯示】：所有年份、價格、百分比、小數、比率與數量一律使用阿拉伯數字，例如 0.587、27.53%、2026 年；禁止寫成「零點五八七」等中文數字形式。
 9. 【避免重複】：同一觀點只完整解釋一次；後續提及必須增加新數據、因果或不同角度，禁止換句話重述。避免每一幕都重複相同轉折句型。
-10. 【口頭禪節制】：每位主持人全集最多使用 1 次招牌口頭禪，不得重複；不要為了塞入角色梗犧牲資訊密度。"""
+12. 【口頭禪節制】：每位主持人全集最多使用 1 次招牌口頭禪，不得重複；不要為了塞入角色梗犧牲資訊密度。
+13. 【避免固定節目感】：三幕仍維持完整分析，但每集要依今日事件重新安排先後順序與證據鏈；禁止固定在每幕重複解釋 BTC 均線、恐慌指數或支撐壓力。"""
 
     target_act_words = (
         "約150至200字繁中（快速測試模式，各圖卡保留一句重點對話）"
@@ -1292,8 +1296,9 @@ def generate_script(mdata, dca_data, config):
     brief_prompt = f"""你是頂級加密貨幣財經播客【幣看趨勢】總編輯。
 請針對今日完整市場數據與 4 篇焦點新聞完整正文，進行深度解構與總編輯定調，生成一份深度的《今日總編輯核心論點大綱》。
 
-【今日切入視角】{angle_title}。近 7 日已用視角（今日必須避開）：{recent_angles}。
+【今日切入視角】{angle_title}，這只是分析透鏡，不是必須硬套的題目；若今日新聞或數據出現更強烈、可驗證的異常，優先以真實事件決定主軸。近 7 日已用視角（今日必須避開）：{recent_angles}。
 【今日節目模式】{show_format.get("title")}（{show_format.get("id")}）。{show_format.get("instruction")}
+【近 7 日內容去重規則】{_learning_prompt_line()}
 【可自然帶入的術語】{vocab_line}
 【雙主播口頭禪】{catchphrase_line}
 
@@ -1311,7 +1316,9 @@ def generate_script(mdata, dca_data, config):
 6. 為全部 {slide_count} 頁簡報分別擬定新聞級標題（slide_titles，順序嚴格對應：{slide_slots}），禁止任何每天都能套用的公版標題。
 7. slide_news：3 筆焦點新聞圖卡摘要（含 source_news_number, slide_title, positive, risk）。
 8. slide_week：3 句未來 24 小時情境推演條件（情境A、情境B、防守底線）。
-9. 【極簡圖解文案】所有會出現在投影片上的文字（slide_titles、slide_news 的 positive/risk、slide_week）都必須極簡：每句禁止超過 15 字，且濃縮為「1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭（如 15 分鐘 ➔ 6 秒）」，每頁至少提供 2～3 條有資訊的短句，主內容應充分利用畫面中央約 65～75% 的可用區域；保留必要留白，但不得只放標題或單行文字造成大面積空白。口播逐字稿不受此限，只有投影片文字要短。
+9. 【每日選題差異化】不能因為固定數據欄位存在，就每天都把恐慌指數、均線、新聞、支撐壓力照同一順序講一遍。先判斷今日最值得觀眾花時間的單一核心事件、數據異常或市場背離，再用至少 2 組不同來源的證據交叉驗證；若沒有重大事件，就把一個反常數據做成調查問題。禁止沿用近 7 日核心矛盾、開場句型、投影片標題結構或相同三幕推進方式；不得為了求新而捏造事件或數據。
+10. 【簡報分鏡差異化】簡報必須跟隨今日節目模式的敘事順序，不得把所有集數都做成「情緒快篩→均線→六幣→新聞→多空→24 小時預測」。標題要描述當頁的具體證據或問題，不能只換同義詞。
+11. 【極簡圖解文案】所有會出現在投影片上的文字（slide_titles、slide_news 的 positive/risk、slide_week）都必須極簡：每句禁止超過 15 字，且濃縮為「1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭（如 15 分鐘 ➔ 6 秒）」，每頁至少提供 2～3 條有資訊的短句，主內容應充分利用畫面中央約 65～75% 的可用區域；保留必要留白，但不得只放標題或單行文字造成大面積空白。口播逐字稿不受此限，只有投影片文字要短。
 
 只輸出合法 JSON 物件，格式：
 {{
@@ -1512,6 +1519,7 @@ def generate_script(mdata, dca_data, config):
         "angle_id": angle_id,
         "angle_title": angle_title,
         "editorial_lead": editorial_lead,
+        "core_conflict": editorial_brief.get("core_conflict") or "",
         "slide_titles": slide_titles,
         "visual_slides": visual_plan,
         "slide_count": len(visual_plan),
