@@ -613,11 +613,8 @@ def build_custom_story(material, prices):
                 for slide in normalized["slides"]
             ]
             count = sum(lengths) + sum(len(d[1]) for d in normalized["opening"])
-            if count > TARGET_MAX_CHARS:
-                raise ValueError(
-                    f"深度報導口播總字數超出上限：{count} 字"
-                    f"（要求 {TARGET_MIN_CHARS:,}～{TARGET_MAX_CHARS:,} 字，含開場）。"
-                )
+            # 字數範圍僅作節目長度參考，不作為製片硬性門檻。
+            # 不因略短或略長而拒絕內容；實際品質由章節覆蓋與口播內容決定。
             return normalized, lengths, count
 
         story, page_lengths, total = _validate_story_output(raw)
@@ -641,8 +638,8 @@ def build_custom_story(material, prices):
 - 原文一級章節清單：{json.dumps(required_sections, ensure_ascii=False)}
 
 【本輪補強任務】
-- 請將 opening 與所有 slides.dialogue 的口播合計擴充至 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字，目標約 {int((TARGET_MIN_CHARS + TARGET_MAX_CHARS) / 2)} 字。
-- 目前版本可能過度濃縮原始研究，請逐一檢查原文一級章節，將尚未在口播中充分解釋的核心論點補進最適合的既有頁面。
+- {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字僅為節目長度參考，不是硬性限制；請依素材複雜度與論點完整性自然安排篇幅，避免為達字數灌水。
+- 若內容確實過度濃縮，請逐一檢查原文一級章節，將尚未在口播中充分解釋的核心論點補進最適合的既有頁面；若核心論點已完整，不必為湊字擴寫。
 - 優先補充：技術如何運作、為何形成該結果、數據能證明與不能證明什麼、風險如何傳導、不同立場的反方論點、對一般使用者與投資人的實際影響。
 - 不要只加形容詞或重複結論；每段新增口播都必須提供新的解釋、推論或具體例子。
 - 保留原本 topic_title、topic_summary、yt_title、broll_keywords、頁面順序與 source_sections；必要時可在既有頁面內增加 dialogue 段落。
@@ -672,13 +669,19 @@ def build_custom_story(material, prices):
             )
 
         if total < TARGET_MIN_CHARS:
-            raise ValueError(
-                f"深度報導口播總字數仍不足：{total} 字"
-                f"（要求 {TARGET_MIN_CHARS:,}～{TARGET_MAX_CHARS:,} 字，含開場）。"
+            print(
+                f"[Minimal] 提醒：口播 {total} 字，低於建議參考下限 "
+                f"{TARGET_MIN_CHARS:,} 字；字數不作為製片阻擋條件，繼續製片。"
+            )
+        elif total > TARGET_MAX_CHARS:
+            print(
+                f"[Minimal] 提醒：口播 {total} 字，高於建議參考上限 "
+                f"{TARGET_MAX_CHARS:,} 字；字數不作為製片阻擋條件，繼續製片。"
             )
         print(
             f"[Minimal] 深度報導品質檢查通過：{len(story['slides'])} 頁｜"
-            f"口播 {total} 字｜各頁字數 {page_lengths}"
+            f"口播 {total} 字（建議參考 {TARGET_MIN_CHARS:,}～{TARGET_MAX_CHARS:,} 字，非硬性限制）"
+            f"｜各頁字數 {page_lengths}"
         )
     except Exception as err:
         print(f"[Minimal] CHATGPT.TXT 深度報導製稿失敗，停止本次製片以保留原始素材：{err}")
