@@ -672,39 +672,6 @@ def build_custom_story(material, prices):
             )
 
         if total < TARGET_MIN_CHARS:
-            print(
-                f"[Minimal] 首稿口播 {total} 字，低於目標 {TARGET_MIN_CHARS} 字；"
-                "啟動一次定向補強，不改用保底故事。"
-            )
-            repair_prompt = f"""你是專業財經 Podcast 主筆。以下 JSON 是你剛完成的《CHATGPT.TXT》深度報導稿，但口播字數不足。
-
-【補強任務】
-- 目前口播共 {total} 字；請將 opening 與所有 slides.dialogue 的口播合計擴充至 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字。
-- 目標以 {int((TARGET_MIN_CHARS + TARGET_MAX_CHARS) / 2)} 字左右為佳，避免只勉強貼近下限。
-- 保留原本 topic_title、topic_summary、yt_title、broll_keywords、頁面順序與 source_sections。
-- 頁數完全彈性，不得為湊頁數拆分、複製或重複內容。
-- 只在現有論點中補充因果推演、反方觀點、實際影響、限制條件、生活化例子與投資人應如何判讀。
-- 不得捏造數字、事件、來源或原素材沒有支持的結論。
-- 保持比特汪與以太喵自然交替對話；新增內容必須能直接口播。
-- 不要把 metrics、lines、chart 的文字計入口播字數；字數只計 opening[].text 與 slides[].dialogue[].text。
-- 僅輸出完整合法 JSON，不要 Markdown、說明或程式碼區塊。
-
-【原始素材】
-{material}
-
-【目前 JSON 稿件】
-{json.dumps(raw_data, ensure_ascii=False)}
-"""
-            repaired_raw = script_writer.call_gemini(
-                STORY_SYSTEM_PROMPT + "\n\n" + repair_prompt,
-                max_output_tokens=16384,
-                timeout=300,
-                json_mode=True,
-            )
-            story, page_lengths, total = _validate_story_output(repaired_raw)
-            print(f"[Minimal] 定向補強完成：口播 {total} 字｜各頁字數 {page_lengths}")
-
-        if total < TARGET_MIN_CHARS:
             raise ValueError(
                 f"深度報導口播總字數仍不足：{total} 字"
                 f"（要求 {TARGET_MIN_CHARS:,}～{TARGET_MAX_CHARS:,} 字，含開場）。"
