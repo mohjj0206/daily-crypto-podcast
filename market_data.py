@@ -1825,10 +1825,8 @@ def fetch_btc_mvrv(drawdown_pct=None):
     except (OSError, ValueError, TypeError, KeyError) as error:
         print(f"[MVRV Z-Score] 快取不可用：{error}")
 
-    raise RuntimeError(
-        "無法取得新鮮的 BTC MVRV Z-Score，且沒有 48 小時內有效快取；"
-        "停止製片，禁止用 MVRV Ratio 或價格回撤估算值代替 Z-Score。"
-    )
+    print("[MVRV Z-Score] 即時來源與有效快取皆不可用；本集略過此指標，繼續製片。")
+    return None
 
 
 def fetch_mvrv(drawdown_pct=None):
@@ -2096,12 +2094,15 @@ def fetch_all_market_data(now_tw, is_test):
     )
 
     mvrv = fetch_btc_mvrv()
-    # Z-Score 必須沿用自身的標準差區間，不得再被恐慌指數／均線覆寫判讀。
-    mvrv_zone = mvrv["zone"]
-    mvrv["report"] = (
-        f"MVRV Z-Score {presentation.format_mvrv(mvrv['value'], 'z_score')}，"
-        f"判讀為{mvrv_zone}（{mvrv['source']}）"
-    )
+    if mvrv:
+        # Z-Score 必須沿用自身的標準差區間，不得再被恐慌指數／均線覆寫判讀。
+        mvrv_zone = mvrv["zone"]
+        mvrv["report"] = (
+            f"MVRV Z-Score {presentation.format_mvrv(mvrv['value'], 'z_score')}，"
+            f"判讀為{mvrv_zone}（{mvrv['source']}）"
+        )
+    else:
+        mvrv = {}
     dca_snapshot = load_dca_usd_snapshot(spot_prices["BTC"])
     custom_references = fetch_custom_sources(tw_tz)
 
@@ -2172,7 +2173,7 @@ def fetch_all_market_data(now_tw, is_test):
         "coins_summary": coins_summary,
         "fear_report": fear_report,
         "data_fetched_at": data_fetched_at,
-        "s1": s1 + f"\n{mvrv['report']}",
+        "s1": s1 + (f"\n{mvrv['report']}" if mvrv.get("report") else ""),
         "eth_slide": eth_slide,
         "mvrv": mvrv,
         "dca_snapshot": dca_snapshot,
