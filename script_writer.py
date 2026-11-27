@@ -1215,7 +1215,7 @@ def generate_script(mdata, dca_data, config):
         ("鏈上轉帳活躍度代理", mdata.get("onchain_activity_report")),
         ("恐慌、回撤與成交量交叉判讀", mdata.get("chip_sentiment_report")),
         ("市場恐慌與貪婪指數", mdata.get("fear_report")),
-        ("MVRV", (mdata.get("mvrv") or {}).get("report")),
+        ("MVRV Z-Score", (mdata.get("mvrv") or {}).get("report")),
     ):
         bullet = _metric_bullet(label, value)
         if bullet:
@@ -1284,7 +1284,7 @@ def generate_script(mdata, dca_data, config):
     banned_terms = "、".join(EXCLUDED_PLATFORMS)
     mvrv_line = present_metric((mdata.get("mvrv") or {}).get("report"))
     mvrv_prompt = (
-        f"【MVRV 指標】：{mvrv_line}。必須說出數值與歷史區間判讀，並聲明它不是買賣指令。\n"
+        f"【MVRV Z-Score】：{mvrv_line}。這是以 CoinMetrics 歷史市值與已實現市值、歷史市值標準差計算的 Z 分數；必須完整說出 Z-Score 名稱、實際數值、資料日期與區間判讀，不得稱為 MVRV 比率，也不得用回撤代理值替代。它不是買賣指令。\n"
         if mvrv_line else ""
     )
 
@@ -1293,7 +1293,7 @@ def generate_script(mdata, dca_data, config):
 2. 【嚴禁萬用廢話】：嚴禁出現「謹慎觀望」「注意風險」「投資需謹慎」「請自行評估」「市場瞬息萬變」等任何形式的套話廢話！必須用可驗證的條件、支撐壓力與籌碼結構說話。
 3. 【嚴禁露餡台詞】：逐字稿禁止出現「抓不到資料」「無法取得數據」「API 異常」「資料缺失」「連線失敗」「所以不預測」這類暴露系統缺漏的句子。資料區沒有的指標直接當作不存在，禁止猜測或補值。
 4. 【嚴禁分段與時間問候語】：禁止早安、午安、晚安、大家好等問候；禁止「休息一下」「下一段」「前半段」「後半段」「先到這裡」「接著看」等轉場字眼；禁止提及任何媒體或網站名稱。
-5. 【金額規範】：所有價格、市值、成交量一律使用美元（USD），嚴禁台幣（NT$、TWD）。美元金額一律四捨五入到整數並加千分位（例如 $95,421、-$836），禁止小數美分。百分比、MVRV、RSI 維持原有小數。
+5. 【金額規範】：所有價格、市值、成交量一律使用美元（USD），嚴禁台幣（NT$、TWD）。幣價精度固定為 BTC、ETH、SOL、ZEC 取整數位；XRP、ADA 保留小數點後四位。其他美元金額、市值與成交量四捨五入到整數並加千分位（例如 $95,421、-$836）。百分比、MVRV Z-Score、RSI 維持原有小數。
 6. 【情緒標記與格式】：每句發言以「男：」或「女：」開頭，角色名後可接標籤 [excited]、[serious]、[analytical] 或 [debate]，不可念出標籤。只輸出對話純文字，不要 Markdown，不要包裹 JSON。
 7. 【主播角色語氣】：
    女聲「以太喵」（冷靜精明、略帶傲嬌吐槽，自然穿插「他喵的」「喵頭不對」等貓語梗，熟悉技術與數據，負責精準拆解價格結構、均線乖離與 MVRV，幫比特汪踩煞車）。
