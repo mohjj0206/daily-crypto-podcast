@@ -299,7 +299,11 @@ def fill_slide_bodies_from_narration(slides, full_script):
         if anchor_match:
             current_slide = int(anchor_match.group(1))
             spoken = anchor_pattern.sub("", spoken).strip()
-        if current_slide is None or not spoken:
+        if not spoken:
+            continue
+        this_dialogue_index = dialogue_index
+        dialogue_index += 1
+        if current_slide is None:
             continue
 
         spoken = _EMOTION_TAG.sub("", spoken).strip()
@@ -316,11 +320,10 @@ def fill_slide_bodies_from_narration(slides, full_script):
             if condensed and not any(item["text"] == condensed for item in bucket):
                 bucket.append({
                     "text": condensed,
-                    "dialogue_index": dialogue_index,
+                    "dialogue_index": this_dialogue_index,
                     "fragment_index": fragment_index,
                     "fragment_count": fragment_count,
                 })
-        dialogue_index += 1
 
     for index, slide in enumerate(slides or [], 1):
         candidates = slide_lines.get(index) or []
