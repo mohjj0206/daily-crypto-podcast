@@ -1016,35 +1016,18 @@ def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
     return current_text
 
 def _ensure_slide_anchors(script, slide_count):
-    lines = script.split("\n")
-    found_anchors = set()
-    for line in lines:
-        for match in re.finditer(r"\[SLIDE_(\d+)\]", line):
-            found_anchors.add(int(match.group(1)))
-
-    missing = [i for i in range(1, slide_count + 1) if i not in found_anchors]
-    if not missing:
-        return script
-
-    print(f"警告：逐字稿缺少投影片錨點 {missing}，進行自動依序補齊...")
-    dialogue_indices = [
-        idx for idx, line in enumerate(lines)
-        if line.strip().startswith(("男：", "女："))
+    """只驗證逐字稿明確產生的分鏡錨點；絕不把缺失錨點平均塞進錯誤段落。"""
+    anchors = [
+        int(value)
+        for value in re.findall(r"\[SLIDE_(\d+)\]", str(script or ""))
     ]
-    if not dialogue_indices:
-        return script
-
-    step = max(1, len(dialogue_indices) // slide_count)
-    for m in missing:
-        target_idx = min(dialogue_indices[-1], dialogue_indices[min(len(dialogue_indices) - 1, (m - 1) * step)])
-        line = lines[target_idx]
-        if line.startswith("男："):
-            lines[target_idx] = f"男：[SLIDE_{m}]" + line[3:]
-        elif line.startswith("女："):
-            lines[target_idx] = f"女：[SLIDE_{m}]" + line[3:]
-        else:
-            lines[target_idx] = f"[SLIDE_{m}] {line}"
-    return "\n".join(lines)
+    expected = list(range(1, slide_count + 1))
+    if anchors != expected:
+        raise RuntimeError(
+            "逐字稿分鏡錨點缺失、重複或順序錯誤，拒絕產生與口播不一致的簡報。"
+            f" expected={expected}, actual={anchors}"
+        )
+    return script
 
 
 def _spoken_chars(text):
