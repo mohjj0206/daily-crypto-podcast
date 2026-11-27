@@ -2313,6 +2313,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                         [] if layout == "versus_clash"
                         else [line for line in body.splitlines() if line.strip()]
                     ),
+                    "body": body,
                     "chart_path": chart_path,
                     "chart_type": ctype,
                     "gauge_value": fng_num,
