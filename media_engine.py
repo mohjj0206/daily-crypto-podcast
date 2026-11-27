@@ -174,54 +174,57 @@ def calculate_slide_durations(slide_start_times, speech_duration, video_intro_du
     return durations
 
 
-def compute_slide_reveal_timestamps(results, slide_anchor_positions, slide_count):
-    """依真實 TTS 秒數計算每頁揭示時間，並正確處理插值錨點落在句子中間的情況。
-
-    回傳每頁相對於該頁起始的累積秒數。當缺少明確 [SLIDE_n] 標記而使用
-    小數錨點時，只計入該句實際落在本頁的音訊比例，避免簡報重點延遲出現。
-    """
+def compute_slide_reveal_timestamps(results, slide_anchor_positions, slide_count, visual_slides=None):
+    """以每個簡報短句所屬的 TTS 句索引與句內位置計算揭示時間，不再跨整頁抽樣。"""
     ordered = sorted(results, key=lambda item: item[0])
     durations = {idx: float(dur) for idx, _fn, _line, dur in ordered}
-    reveal_map = {}
-    last_dialogue_index = max(durations) if durations else -1
+    starts = {}
+    cursor = 0.0
+    for idx, _fn, _line, dur in ordered:
+        starts[idx] = cursor
+        cursor += float(dur)
 
+    reveal_map = {}
+    visual_slides = visual_slides or []
     for slide_number in range(1, slide_count + 1):
         anchor = slide_anchor_positions.get(slide_number)
-        if anchor is None or last_dialogue_index < 0:
+        if anchor is None:
             reveal_map[slide_number] = []
             continue
 
-        start_position = max(0.0, float(anchor))
-        later_positions = [
-            float(position)
-            for number, position in slide_anchor_positions.items()
-            if number > slide_number and float(position) > start_position
-        ]
-        end_position = min(later_positions) if later_positions else float(last_dialogue_index + 1)
-        end_position = min(end_position, float(last_dialogue_index + 1))
-        if end_position <= start_position:
-            reveal_map[slide_number] = []
-            continue
+        anchor = max(0.0, float(anchor))
+        anchor_index = int(anchor)
+        anchor_fraction = anchor - anchor_index
+        page_start = starts.get(anchor_index, cursor)
+        if anchor_index in durations:
+            page_start += durations[anchor_index] * anchor_fraction
 
-        first_index = int(start_position)
-        final_index = min(last_dialogue_index, int(math.ceil(end_position) - 1))
-        cumulative = 0.0
+        slide = visual_slides[slide_number - 1] if slide_number <= len(visual_slides) else {}
+        timeline = slide.get("_body_timeline") or []
         stamps = []
-        for dialogue_index in range(first_index, final_index + 1):
-            duration = durations.get(dialogue_index, 0.0)
-            segment_start = start_position - dialogue_index if dialogue_index == first_index else 0.0
-            segment_end = (
-                end_position - dialogue_index
-                if dialogue_index == final_index and end_position < dialogue_index + 1
-                else 1.0
-            )
-            fraction = max(0.0, min(1.0, segment_end) - max(0.0, segment_start))
-            cumulative += duration * fraction
-            if fraction > 0:
-                stamps.append(round(cumulative, 3))
+        for item in timeline:
+            try:
+                dialogue_index = int(item["dialogue_index"])
+                fragment_index = int(item.get("fragment_index", 0))
+                fragment_count = max(1, int(item.get("fragment_count", 1)))
+                duration = durations[dialogue_index]
+                dialogue_start = starts[dialogue_index]
+            except (KeyError, TypeError, ValueError):
+                continue
+            fraction = min(0.95, max(0.0, fragment_index / fragment_count))
+            absolute_time = dialogue_start + duration * fraction
+            stamps.append(max(0.0, absolute_time - page_start))
+
+        # 第一個對應口播的重點在頁面切入時即顯示，避免片頭後出現空白簡報。
+        if stamps:
+            stamps[0] = 0.0
+            stamps = [round(value, 3) for value in stamps]
+            for index in range(1, len(stamps)):
+                stamps[index] = max(stamps[index], stamps[index - 1] + 0.05)
         reveal_map[slide_number] = stamps
 
     return reveal_map
+
 
 # ── Google TTS 語音合成 ──────────────────────────────────────────
 
@@ -809,7 +812,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
     insight_labels = slide_data.get("insight_labels") or {}
     mvrv_pct = int(insights.get("mvrv_pct") or 40)
     insight_markup = (
-        f"<article><small>{html.escape(str(insight_labels.get('mvrv', 'MVRV 溫度')))}</small>"
+        f"<article><small>{html.escape(str(insight_labels.get('mvrv', 'MVRV Z-Score')))}</small>"
         f"<strong>{html.escape(str(insights.get('mvrv', '—')))}</strong>"
         f"<em>{html.escape(str(insights.get('zone', '')))}</em>"
         "<div class=\"mvrv-bar\"><i></i></div></article>"
@@ -1383,7 +1386,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
       apply(activeIndex);
       if (activeIndex < nodes.length - 1) requestAnimationFrame(tick);
     }}
-    apply(-1);
+    apply(times.length ? 0 : -1);
     requestAnimationFrame(tick);
   }})();
   </script>
@@ -2202,7 +2205,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
     )
     # 依真實 TTS 子音檔秒數，算出每頁各重點節點的揭示時間點（音畫對齊 <0.1s）。
     slide_reveal_map = compute_slide_reveal_timestamps(
-        results, slide_anchor_positions, slide_count
+        results, slide_anchor_positions, slide_count, sdata.get("visual_slides")
     )
     dca_snapshot = mdata.get("dca_snapshot") or {}
     dca_return_pct = dca_snapshot.get("roi_pct")
@@ -2334,6 +2337,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                     "compare_risk": compare_risk,
                     "ticker_items": ticker_items,
                     "insights": slide_insights,
+                    "insight_labels": {"mvrv": mvrv_info.get("display_name", "MVRV Z-Score")},
                     "broll_path": broll_path,
                     "reveal_timestamps": slide_reveal_map.get(idx),
                 }
