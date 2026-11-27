@@ -275,11 +275,19 @@ def plan_daily_slides(mdata, show_dca, show_format, dca_body=""):
     return slides
 
 def fill_slide_bodies_from_narration(slides, full_script):
-    """依 [SLIDE_n] 錨點擷取該頁實際口播句，讓圖卡文字與主播正在說的內容一致。"""
+    """每張投影片只使用自己 [SLIDE_n] 錨點之後的實際口播，禁止無聲 fallback。"""
     slide_lines = {}
     current_slide = None
     anchor_pattern = re.compile(r"\[SLIDE_(\d+)\]")
     dialogue_pattern = re.compile(r"^(男|女)[：:]\s*(.*)$")
+    slide_count = len(slides or [])
+    anchors = [int(value) for value in anchor_pattern.findall(str(full_script or ""))]
+    expected = list(range(1, slide_count + 1))
+    if anchors != expected:
+        raise RuntimeError(
+            "投影片與口播錨點不一致，停止輸出錯配簡報。"
+            f" expected={expected}, actual={anchors}"
+        )
 
     for raw_line in str(full_script or "").splitlines():
         match = dialogue_pattern.match(raw_line.strip())
@@ -304,17 +312,18 @@ def fill_slide_bodies_from_narration(slides, full_script):
             condensed = condense_slide_line(fragment)
             if condensed and condensed not in bucket:
                 bucket.append(condensed)
-            if len(bucket) >= 3:
-                break
 
     for index, slide in enumerate(slides or [], 1):
         candidates = slide_lines.get(index) or []
-        if candidates:
-            slide["body"] = "\n".join(candidates[:3])
-            slide["body_source"] = "narration_anchor"
-        else:
-            slide["body"] = limit_slide_body(slide.get("body"))
-            slide["body_source"] = "editorial_fallback"
+        if not candidates:
+            raise RuntimeError(
+                f"第 {index} 張投影片的 [SLIDE_{index}] 沒有對應口播內容，停止輸出。"
+            )
+        # 標題也取自該頁口播，避免 AI 另寫標題造成「標題講 A、主播講 B」。
+        slide["title"] = candidates[0]
+        slide["body"] = "\n".join((candidates[1:4] or candidates[:1]))
+        slide["body_source"] = "narration_anchor_strict"
+        slide["title_source"] = "narration_anchor_strict"
     return slides
 
 
