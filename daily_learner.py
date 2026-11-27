@@ -352,10 +352,11 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         print("[daily_learner] TEST_MODE，不寫入 history_db。")
         return None
     upload_text = str(upload_id or "")
-    if not upload_text or upload_text.startswith("UPLOAD") or upload_text.startswith("TEST"):
-        if upload_text != "PREVIEW_NO_UPLOAD":
-            print("[daily_learner] 主片未上傳成功，不寫入 history_db。")
-            return None
+    if upload_text != "PREVIEW_NO_UPLOAD" and (
+        not upload_text or upload_text.startswith("UPLOAD") or upload_text.startswith("TEST")
+    ):
+        print("[daily_learner] 主片未上傳成功，不寫入 history_db。")
+        return None
     today = _today()
     os.makedirs(HISTORY_DIR, exist_ok=True)
     path = os.path.join(HISTORY_DIR, f"{today.isoformat()}.json")
