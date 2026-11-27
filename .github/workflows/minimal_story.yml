@@ -41,7 +41,7 @@ jobs:
       - name: Build minimal story
         env:
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
-          ENABLE_YOUTUBE_UPLOAD: ${{ vars.ENABLE_YOUTUBE_UPLOAD || inputs.enable_youtube_upload || 'false' }}
+          ENABLE_YOUTUBE_UPLOAD: ${{ inputs.enable_youtube_upload }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
@@ -65,7 +65,7 @@ jobs:
           fi
 
       - name: Publish preview to GitHub Releases
-        if: ${{ success() || failure() }}
+        if: ${{ success() }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
