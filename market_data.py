@@ -1800,6 +1800,80 @@ def fetch_btc_mvrv(drawdown_pct=None):
     except Exception as error:
         print(f"[MVRV Z-Score] CoinMetrics 即時計算失敗：{error}")
 
+    # 備援來源：MacroMicro 公開的 Bitcoin MVRV Z-Score 序列頁（不需 API Key）。
+    # 只讀取「Latest Stats」區塊中明確標示的最新日期與數值，不使用圖表刻度或其他指標。
+    macromicro_url = "https://en.macromicro.me/series/8365/bitcoin-mvrv-zscore"
+    try:
+        raw = fetch_bytes(
+            macromicro_url,
+            timeout=25,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            cache_bust_param=None,
+        )
+        page_html = raw.decode("utf-8", errors="replace")
+        # 優先定位 Latest Stats，避免把圖表上的歷史極值或刻度誤認為最新值。
+        latest_match = re.search(
+            r"(?is)Latest\\s+Stats(.*?)(?:Specs|Related\\s+Charts|<footer|$)",
+            page_html,
+        )
+        if not latest_match:
+            raise ValueError("MacroMicro page has no readable Latest Stats section.")
+        latest_text = html.unescape(
+            re.sub(r"(?is)<[^>]+>", " ", latest_match.group(1))
+        )
+        latest_text = re.sub(r"\\s+", " ", latest_text).strip()
+        date_match = re.search(r"\\b(20\\d{2}-\\d{2}-\\d{2})\\b", latest_text)
+        if not date_match:
+            raise ValueError("MacroMicro Latest Stats has no observation date.")
+        date_text = date_match.group(1)
+        date_value = datetime.strptime(date_text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        after_date = latest_text[date_match.end():]
+        number_match = re.search(
+            r"(?<![A-Za-z0-9])(-?\\d+(?:,\\d{3})*(?:\\.\\d+)?)(?![A-Za-z0-9])",
+            after_date,
+        )
+        if not number_match:
+            raise ValueError("MacroMicro Latest Stats has no numeric Z-Score.")
+        macro_value = float(number_match.group(1).replace(",", ""))
+        age = datetime.now(timezone.utc) - date_value
+        if age < timedelta(minutes=-5) or age > timedelta(days=3):
+            raise ValueError(f"MacroMicro MVRV Z-Score is stale: {date_text}")
+        if not math.isfinite(macro_value) or macro_value < -10 or macro_value > 30:
+            raise ValueError(f"MacroMicro returned an implausible Z-Score: {macro_value}")
+        macro_zone = presentation.classify_mvrv_zscore(macro_value)
+        macro_result = {
+            "value": round(macro_value, 2),
+            "mvrv_type": "z_score",
+            "display_name": "MVRV Z-Score",
+            "zone": macro_zone,
+            "source": "MacroMicro public series (8365)",
+            "is_estimate": False,
+            "as_of": date_value.isoformat(),
+            "bar_pct": max(0, min(100, int((macro_value + 1) / 8.0 * 100))),
+            "report": (
+                f"MVRV Z-Score {presentation.format_mvrv(macro_value, 'z_score')}，"
+                f"判讀為{macro_zone}（MacroMicro，截至 {date_text}）"
+            ),
+        }
+        os.makedirs("cache", exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as cache_file:
+            json.dump(macro_result, cache_file, ensure_ascii=False, indent=2)
+        print(
+            f"[MVRV Z-Score] MacroMicro 公開序列備援成功："
+            f"{macro_result['value']:.2f}｜{date_text}"
+        )
+        return macro_result
+    except Exception as error:
+        print(f"[MVRV Z-Score] MacroMicro 公開序列備援不可用：{error}")
+
     # 僅允許沿用 48 小時內、且明確標記為 Z-Score 的快取；舊 MVRV Ratio 不可冒充。
     try:
         if os.path.exists(cache_path):
@@ -1812,7 +1886,8 @@ def fetch_btc_mvrv(drawdown_pct=None):
                 and cached.get("value") is not None
                 and timedelta(0) <= cache_age <= timedelta(hours=48)
             ):
-                cached["source"] = "CoinMetrics (48h cache)"
+                cached_source = str(cached.get("source") or "MVRV Z-Score provider")
+                cached["source"] = f"{cached_source} (48h cache)"
                 cached["display_name"] = "MVRV Z-Score"
                 cached["is_estimate"] = False
                 cached["zone"] = presentation.classify_mvrv_zscore(cached["value"])
