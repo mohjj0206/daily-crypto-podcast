@@ -316,14 +316,33 @@ def call_gemini(prompt_txt, max_output_tokens=8192, timeout=240, json_mode=False
                 last_err = e
                 break
 
-    # Gemini 全線失敗（503/429/連線異常），自動切換 OpenRouter 免費模型第二備援
-    fallback = _call_openrouter_fallback(prompt_txt, max_output_tokens=max_output_tokens, timeout=timeout)
-    if fallback is not None:
-        return fallback
+    # Gemini 全線失敗（503/429/連線異常），自動切換 OpenRouter 免費模型第二備援。
+    # 必須明確驗證回傳內容，避免空值或無效結果被誤判為成功，
+    # 也避免 OpenRouter 已成功時仍落入下方 raise last_err。
+    try:
+        fallback = _call_openrouter_fallback(
+            prompt_txt,
+            max_output_tokens=max_output_tokens,
+            timeout=timeout,
+        )
+    except Exception as fallback_err:
+        print(f"[AI 備援失敗] OpenRouter 無法完成請求：{fallback_err}")
+        if last_err:
+            raise RuntimeError(
+                f"Gemini 模型全部失敗，OpenRouter 備援也失敗。"
+                f"Gemini 最後錯誤：{last_err}；OpenRouter 錯誤：{fallback_err}"
+            ) from fallback_err
+        raise
+
+    if isinstance(fallback, str) and fallback.strip():
+        print("[AI 備援] 已取得有效文字，回傳 OpenRouter 結果。")
+        return fallback.strip()
 
     if last_err:
-        raise last_err
-    raise RuntimeError("No Gemini models available.")
+        raise RuntimeError(
+            f"Gemini 模型全部失敗，OpenRouter 未回傳有效內容。最後 Gemini 錯誤：{last_err}"
+        ) from last_err
+    raise RuntimeError("No Gemini models available; OpenRouter returned no usable content.")
 
 
 # ── DCA 績效指導語 ──────────────────────────────────────────
