@@ -297,7 +297,7 @@ def _len_lines(slide):
     return [str(x).strip() for x in (slide.get("lines") or []) if str(x).strip()]
 
 
-def _normalize_metrics(raw_metrics):
+def _normalize_metrics(raw_metrics, require_source=False):
     """整理 KPI 卡片，只保留素材明確提供的數據。"""
     metrics = []
     for item in raw_metrics or []:
@@ -306,14 +306,18 @@ def _normalize_metrics(raw_metrics):
         label = _clean_text(item.get("label"))
         value = _clean_text(item.get("value"))
         detail = _clean_text(item.get("detail"))
-        if label and value:
-            metrics.append({"label": label[:18], "value": value[:24], "detail": detail[:42]})
+        source = _clean_text(item.get("source"))
+        if label and value and (source or not require_source):
+            metrics.append({
+                "label": label[:18], "value": value[:24],
+                "detail": detail[:42], "source": source[:90],
+            })
         if len(metrics) >= 4:
             break
     return metrics
 
 
-def _normalize_chart(raw_chart):
+def _normalize_chart(raw_chart, require_source=False):
     """整理比較圖表；只接受明確數值，避免缺值或文字被誤畫成數據。"""
     if not isinstance(raw_chart, dict):
         return None
@@ -330,16 +334,18 @@ def _normalize_chart(raw_chart):
         points.append({"label": _clean_text(label)[:14], "value": number})
         if len(points) >= 6:
             break
-    if len(points) < 2:
+    source = _clean_text(raw_chart.get("source"))
+    if len(points) < 2 or (require_source and not source):
         return None
     return {
         "title": _clean_text(raw_chart.get("title") or "數據比較")[:30],
         "unit": _clean_text(raw_chart.get("unit") or "")[:12],
+        "source": source[:120],
         "points": points,
     }
 
 
-def _normalize_story(raw, news_items, prices):
+def _normalize_story(raw, news_items, prices, require_source=False):
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("story JSON 不是物件")
@@ -376,8 +382,8 @@ def _normalize_story(raw, news_items, prices):
             {
                 "big": _clean_text(slide.get("big"))[:16],
                 "lines": lines,
-                "metrics": _normalize_metrics(slide.get("metrics")),
-                "chart": _normalize_chart(slide.get("chart")),
+                "metrics": _normalize_metrics(slide.get("metrics"), require_source),
+                "chart": _normalize_chart(slide.get("chart"), require_source),
                 "source_sections": [
                     _clean_text(section) for section in (slide.get("source_sections") or [])
                     if str(section).strip()
@@ -501,8 +507,8 @@ def _build_custom_prompt(material, prices):
     {{
       "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
       "lines": ["分析重點1", "分析重點2", "分析重點3"],
-      "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義"}}],
-      "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2]}},
+      "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義", "source": "原文中支持此數值的短句"}}],
+      "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2], "source": "原文中支持整組比較的短句"}},
       "source_sections": ["必須逐字引用上方清單中的原文一級章節標題"],
       "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
     }}
@@ -512,7 +518,8 @@ def _build_custom_prompt(material, prices):
 【slides 規則】
 - 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
 - 每頁必須有扎實的雙人對話拆解：每頁 dialogue 合計約 300～380 字口播，且必須同時包含「台灣人秒懂的生活場景比喻」＋「素材中的具體論點與數據推演」，嚴禁空泛重複或湊字。
-- 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；沒有數值依據時可少於 2 個，嚴禁捏造。
+- 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；每張 KPI 卡都必須附上 source 原文短句，沒有證據就不要輸出該卡。
+- chart 必須附 source 原文短句，且 labels／values 必須能由該證據支持；沒有證據就不要輸出 chart。
 - 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
 - lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
 - dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
@@ -547,7 +554,7 @@ def build_custom_story(material, prices):
         missing_sections = [section for section in required_sections if section not in covered_sections]
         if missing_sections:
             raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
-        story = _normalize_story(raw, [], prices)
+        story = _normalize_story(raw, [], prices, require_source=True)
         # 深度報導模式採取 Fail Closed：頁數或內容量不足就停止製片，
         # 絕不可改用與 CHATGPT.TXT 無關的通用保底故事。
         slide_count = len(story["slides"])
@@ -607,6 +614,7 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label):
         f'<div class="metric-label">{html.escape(item["label"])}</div>'
         f'<div class="metric-value">{html.escape(item["value"])}</div>'
         f'<div class="metric-detail">{html.escape(item["detail"])}</div>'
+        f'<div class="metric-source">{html.escape(item.get("source") or "")}</div>'
         '</div>'
         for item in metrics[:4]
     )
@@ -630,6 +638,7 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label):
             '<section class="panel">'
             f'<div class="panel-title">{html.escape(chart["title"])}</div>'
             f'{"".join(bars)}'
+            f'<div class="chart-source">{html.escape(chart.get("source") or "")}</div>'
             '</section>'
         )
     else:
@@ -672,6 +681,8 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .metric-value {{ margin-top: 12px; color: #fbbf24; font-size: 48px; font-weight: 900;
   line-height: 1.12; overflow-wrap: anywhere; }}
 .metric-detail {{ margin-top: 10px; color: #d5deea; font-size: 20px; line-height: 1.35; }}
+.metric-source {{ margin-top: 7px; color: #8296b2; font-size: 15px; line-height: 1.25; }}
+.chart-source {{ margin-top: 10px; color: #8296b2; font-size: 16px; line-height: 1.3; }}
 .lower {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px;
   flex: 1; min-height: 0; }}
 .panel {{ min-width: 0; padding: 24px 28px; border: 1px solid rgba(125,160,205,.25);
