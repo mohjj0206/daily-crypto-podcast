@@ -501,7 +501,7 @@ def format_coin_price(symbol, value):
     return format_usd_price(number)
 
 
-def format_mvrv(value, mvrv_type="ratio"):
+def format_mvrv(value, mvrv_type="z_score"):
     """MVRV 無單位鏈上指標，固定兩位小數。"""
     return f"{float(value):.2f}"
 
