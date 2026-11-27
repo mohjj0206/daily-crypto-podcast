@@ -2216,6 +2216,15 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 f"第 {slide_number} 張簡報的文字節點與口播時間軸不匹配："
                 f"nodes={len(timeline)}, timestamps={len(reveal_times)}；停止輸出錯配影片。"
             )
+    spoken_by_index = {idx: line for idx, _fn, line, _dur in results}
+    for slide_number, slide in enumerate(sdata.get("visual_slides") or [], 1):
+        for node, reveal_at in zip(slide.get("_body_timeline") or [], slide_reveal_map[slide_number]):
+            source_line = spoken_by_index.get(node.get("dialogue_index"), "")
+            print(
+                f"[Slide Sync] S{slide_number} +{reveal_at:.2f}s｜"
+                f"畫面：{node.get('text', '')}｜"
+                f"對應口播：{source_line[:100]}"
+            )
     print(f"[Slide Sync] {slide_count} 張簡報已完成文字節點／TTS 時間一對一驗證。")
     dca_snapshot = mdata.get("dca_snapshot") or {}
     dca_return_pct = dca_snapshot.get("roi_pct")
