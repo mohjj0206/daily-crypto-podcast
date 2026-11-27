@@ -1741,7 +1741,7 @@ def fetch_btc_mvrv(drawdown_pct=None):
             raise ValueError("CoinMetrics returned no historical BTC asset-metric rows.")
 
         valid_rows = []
-        market_caps = []
+        market_cap_rows = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -1752,8 +1752,8 @@ def fetch_btc_mvrv(drawdown_pct=None):
                 continue
             if not math.isfinite(market_cap) or market_cap <= 0:
                 continue
-            # 分母使用整段可用歷史的市值序列；不因早期 realized cap 缺值而縮短標準差樣本。
-            market_caps.append(market_cap)
+            # 先保留完整市值序列，稍後截到最新有效 realized-cap 日期，避免分母使用未來資料。
+            market_cap_rows.append((observed, market_cap))
             try:
                 realized_cap = float(row.get("CapRealUSD"))
             except (TypeError, ValueError, OverflowError):
@@ -1768,6 +1768,10 @@ def fetch_btc_mvrv(drawdown_pct=None):
             )
         valid_rows.sort(key=lambda item: item[0])
         observed, current_market_cap, current_realized_cap = valid_rows[-1]
+        market_caps = [
+            market_cap for market_date, market_cap in market_cap_rows
+            if market_date <= observed
+        ]
         age = datetime.now(timezone.utc) - observed
         if age < timedelta(minutes=-5) or age > timedelta(days=3):
             raise ValueError(f"CoinMetrics MVRV source is stale: {observed.isoformat()}")
