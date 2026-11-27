@@ -622,8 +622,55 @@ def build_custom_story(material, prices):
 
         story, page_lengths, total = _validate_story_output(raw)
 
-        # 首次生成若低於目標下限，要求模型依原稿補足分析深度一次。
-        # 不增加頁數硬限制、不拆句湊頁，也不允許重複段落或新增素材以外的事實。
+        # 首稿不足時採多輪定向補強，避免單次補稿仍不足便直接中止。
+        # 每輪以上一輪稿件為基礎，並重新檢查原文一級章節覆蓋與口播總字數。
+        repair_attempts = 2
+        for repair_index in range(1, repair_attempts + 1):
+            if total >= TARGET_MIN_CHARS:
+                break
+            missing_chars = TARGET_MIN_CHARS - total
+            print(
+                f"[Minimal] 第 {repair_index}/{repair_attempts} 次補強："
+                f"目前口播 {total} 字，距離下限還差 {missing_chars} 字。"
+            )
+            repair_prompt = f"""你是專業財經 Podcast 主筆。以下是《CHATGPT.TXT》深度報導稿，目前口播長度不足。
+
+【素材與稿件狀況】
+- 原始研究素材共 {len(material)} 個字元，包含多個一級章節與大量技術、數據、風險及投資觀點。
+- 目前口播共 {total} 字；至少還需增加 {missing_chars} 字，才能達到最低要求。
+- 原文一級章節清單：{json.dumps(required_sections, ensure_ascii=False)}
+
+【本輪補強任務】
+- 請將 opening 與所有 slides.dialogue 的口播合計擴充至 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字，目標約 {int((TARGET_MIN_CHARS + TARGET_MAX_CHARS) / 2)} 字。
+- 目前版本可能過度濃縮原始研究，請逐一檢查原文一級章節，將尚未在口播中充分解釋的核心論點補進最適合的既有頁面。
+- 優先補充：技術如何運作、為何形成該結果、數據能證明與不能證明什麼、風險如何傳導、不同立場的反方論點、對一般使用者與投資人的實際影響。
+- 不要只加形容詞或重複結論；每段新增口播都必須提供新的解釋、推論或具體例子。
+- 保留原本 topic_title、topic_summary、yt_title、broll_keywords、頁面順序與 source_sections；必要時可在既有頁面內增加 dialogue 段落。
+- 頁數完全彈性，不得為湊頁數拆分、複製或重複內容。
+- 不得捏造數字、事件、來源或原素材沒有支持的結論；可用明確標示的假設例子解釋機制，但不可把假設說成真實數據。
+- 保持比特汪與以太喵自然交替對話；新增內容必須能直接口播。
+- 不要把 metrics、lines、chart 的文字計入口播字數；字數只計 opening[].text 與 slides[].dialogue[].text。
+- 僅輸出完整合法 JSON，不要 Markdown、說明或程式碼區塊。
+
+【原始素材】
+{material}
+
+【目前完整 JSON 稿件】
+{json.dumps(raw_data, ensure_ascii=False)}
+"""
+            repaired_raw = script_writer.call_gemini(
+                STORY_SYSTEM_PROMPT + "\\n\\n" + repair_prompt,
+                max_output_tokens=16384,
+                timeout=300,
+                json_mode=True,
+            )
+            raw_data = json.loads(repaired_raw)
+            story, page_lengths, total = _validate_story_output(repaired_raw)
+            print(
+                f"[Minimal] 第 {repair_index} 次補強後："
+                f"口播 {total} 字｜各頁字數 {page_lengths}"
+            )
+
         if total < TARGET_MIN_CHARS:
             print(
                 f"[Minimal] 首稿口播 {total} 字，低於目標 {TARGET_MIN_CHARS} 字；"
