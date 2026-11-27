@@ -1360,6 +1360,10 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
     const nodes = Array.prototype.slice.call(document.querySelectorAll(".reveal-node"));
     if (!nodes.length) return;
     const times = {reveal_ts_json};
+    if (!times.length) {{
+      nodes.forEach(node => node.classList.remove("is-hidden", "is-active", "is-dimmed"));
+      return;
+    }}
     const start = performance.now();
     function apply(activeIndex) {{
       for (let i = 0; i < nodes.length; i++) {{
