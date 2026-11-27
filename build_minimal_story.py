@@ -518,7 +518,7 @@ def _build_custom_prompt(material, prices):
     section_checklist = "\n".join(f"- {section}" for section in required_sections)
     return f"""今日日期：{TODAY_STR}
 
-【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔 9 頁、約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的《投資家富士》風格雙人生活化比喻深度長談。
+【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的《投資家富士》風格雙人生活化比喻深度長談；頁數依素材論點自然安排，不預設固定頁數。
 
 {opening}
 
@@ -551,7 +551,7 @@ def _build_custom_prompt(material, prices):
 }}
 
 【slides 規則】
-- 共 9 頁，全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
+- 建議依素材內容安排約 6～10 頁，但不是硬性頁數；可少於或多於此範圍。以完整論點、合理段落節奏與口播總長為優先，禁止為湊頁數拆散或重複內容。全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
 - 每頁必須有扎實的雙人對話拆解：每頁 dialogue 以 240～340 字為目標，且必須同時包含「台灣人秒懂的生活場景比喻」＋「素材中的具體論點與數據推演」，嚴禁空泛重複或湊字；各頁長度可依原文論點自然調整，不得為了湊字重複內容。
 - 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；每張 KPI 卡都必須附上 source 原文短句，沒有證據就不要輸出該卡。
 - chart 必須附 source 原文短句，且 labels／values 必須能由該證據支持；沒有證據就不要輸出 chart。
