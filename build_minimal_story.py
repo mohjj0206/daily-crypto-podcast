@@ -579,6 +579,7 @@ def build_custom_story(material, prices):
             timeout=300,
             json_mode=True,
         )
+        raw_data = json.loads(raw)
         required_sections = _extract_source_sections(material)
 
         def _validate_story_output(output_text):
