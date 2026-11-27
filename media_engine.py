@@ -297,7 +297,7 @@ def synth_audio_segment(item, file_prefix):
         payload_tts = json.dumps({
             "input": {"ssml": _ssml_document(spoken_text)},
             "voice": {"languageCode": "cmn-TW", "name": voice_name},
-            "audioConfig": {"audioEncoding": "MP3", "pitch": pitch, "speakingRate": 1.2},
+            "audioConfig": {"audioEncoding": "MP3", "pitch": pitch, "speakingRate": 1.25},
         }).encode("utf-8")
         req = urllib.request.Request(
             tts_url,
