@@ -750,12 +750,12 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
             f'<p class="impact-sub reveal-node">{highlight_key_numbers(script_writer.clean_slide_text(sub), highlight_state)}</p>'
             for sub in sub_lines
         )
-        reveal_count = len(sub_lines)
+        reveal_count = 1 + len(sub_lines)
         content_markup = (
             '<section class="content impact-quote-layout">'
             '<div class="impact-quote-box">'
             '<span class="impact-tag">CORE INSIGHT // 核心洞察</span>'
-            f'<blockquote class="impact-quote-text">{quote_markup}</blockquote>'
+            f'<blockquote class="impact-quote-text reveal-node">{quote_markup}</blockquote>'
             '<div class="impact-divider"></div>'
             f'{sub_markup}'
             '</div></section>'
@@ -1178,7 +1178,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   to {{ clip-path: inset(0 0 0 0); }}
 }}
 .metric-rail {{
-  position: absolute; left: 290px; right: 290px; bottom: 155px; z-index: 6;
+  position: absolute; left: 290px; right: 290px; bottom: 225px; z-index: 6;
   overflow: visible;
 }}
 .disclaimer-line {{
@@ -1236,7 +1236,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
     box-shadow 0.35s ease, border-color 0.35s ease,
     background 0.35s ease, filter 0.35s ease, color 0.35s ease;
 }}
-.reveal-node.is-hidden {{ opacity: 0.78 !important; visibility: visible !important; transform: translateY(0) scale(1); }}
+.reveal-node.is-hidden {{ opacity: 0.05 !important; visibility: visible !important; transform: translateY(0) scale(1); }}
 .reveal-node.is-active {{
   opacity: 1 !important; visibility: visible !important; transform: translateY(0) scale(1.02);
   border-color: rgba(251, 191, 36, .9) !important;
@@ -1259,7 +1259,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .reveal-node.is-active li,
 .reveal-node.is-active strong {{ color: #FBBF24 !important; }}
 .reveal-node.is-dimmed {{
-  opacity: 0.78 !important; visibility: visible !important; transform: translateY(0) scale(1);
+  opacity: 0.28 !important; visibility: visible !important; transform: translateY(0) scale(1);
   border-color: rgba(148, 163, 184, .32) !important;
   box-shadow: none !important; filter: saturate(0.85);
 }}
@@ -2592,7 +2592,7 @@ def render_short_video(sdata, mdata, config):
 1. 正式模式總長約230字，適合1.2倍速配音約45至50秒；測試模式總長約45字，控制在15秒內。
 2. 第一位主持人在開頭3秒內用反直覺問題或數據落差當鉤子。
 3. 中間只講資料中的核心新聞、BTC/ETH數據與一個理性風險折價，不可編造資料。
-4. 結尾明確引導觀眾點擊頻道觀看完整15分鐘解析。
+4. 結尾明確引導觀眾點擊頻道觀看完整市場解析，不得預設或宣稱固定片長。
 5. 以「男：」與「女：」交替對話，至少各說一次；只輸出逐字稿，不要標題、註解或Markdown。"""
 
     if script_writer.reuse_script_enabled():
@@ -2705,7 +2705,7 @@ def render_short_video(sdata, mdata, config):
     short_highlights = [
         highlight_key_numbers(headline_for_short[:34], short_highlight_state),
         highlight_key_numbers(script_writer.clean_slide_text(sdata["slide_news"][0])[:42], short_highlight_state),
-        "完整15分鐘市場解析，點擊頻道觀看",
+        "完整市場解析，點擊頻道觀看",
     ]
     highlights_markup = "".join(
         f'<li style="--delay:{index * 0.6:.1f}s">{highlight}</li>'
@@ -2896,7 +2896,8 @@ window.fitShortLayout = () => {{
                     page.evaluate("() => document.fonts.ready.then(() => true)")
                     if not page.evaluate("() => window.fitShortLayout()"):
                         raise ValueError("Short-video HTML exceeds its safe area.")
-                    page.wait_for_timeout(round(render_duration * 1000))
+                    # Playwright 錄影會有啟動／收尾緩衝，多錄 0.5 秒供 FFmpeg 精準裁切。
+                    page.wait_for_timeout(round((render_duration + 0.5) * 1000))
                 finally:
                     context.close()
                 recording_path = video.path()
@@ -2905,7 +2906,9 @@ window.fitShortLayout = () => {{
                         "ffmpeg", "-y", "-i", recording_path,
                         "-vf", (
                             f"fps={VIDEO_FPS},scale={SHORT_VIDEO_WIDTH}:{SHORT_VIDEO_HEIGHT}:"
-                            "flags=lanczos,format=yuv420p"
+                            "flags=lanczos,setpts=PTS-STARTPTS,"
+                            f"tpad=stop_mode=clone:stop_duration={render_duration:.6f},"
+                            f"trim=duration={render_duration:.6f},format=yuv420p"
                         ),
                         "-t", f"{render_duration:.6f}", "-an", "-r", str(VIDEO_FPS),
                         "-c:v", "libx264", "-preset", "medium", "-crf", VIDEO_CRF,
