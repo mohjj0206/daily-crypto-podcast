@@ -52,6 +52,7 @@ def _read_history(today):
             "title": data.get("title") or "",
             "core_point": data.get("core_point") or "",
             "editorial_lead": data.get("editorial_lead") or "",
+            "core_conflict": data.get("core_conflict") or "",
             "slide_titles": [str(item) for item in (data.get("slide_titles") or []) if str(item).strip()],
             "opening_hook": data.get("opening_hook") or "",
             "format_id": data.get("format_id") or "",
@@ -118,6 +119,7 @@ def prepare_learning_insights():
     previous = rows[-1]["warnings"] if rows else []
     recent_leads = []
     recent_hooks = []
+    recent_core_conflicts = []
     recent_slide_titles = []
     for row in recent:
         lead = row.get("editorial_lead") or ""
@@ -126,6 +128,9 @@ def prepare_learning_insights():
         hook = row.get("opening_hook") or ""
         if hook and hook not in recent_hooks:
             recent_hooks.append(hook)
+        conflict = row.get("core_conflict") or ""
+        if conflict and conflict not in recent_core_conflicts:
+            recent_core_conflicts.append(conflict)
         for slide_title in row.get("slide_titles") or []:
             if slide_title not in recent_slide_titles:
                 recent_slide_titles.append(slide_title)
@@ -144,6 +149,7 @@ def prepare_learning_insights():
             [row["title"] for row in recent] + recent_slide_titles + recent_leads
         ),
         "recent_editorial_leads": recent_leads,
+        "recent_core_conflicts": recent_core_conflicts,
         "recent_slide_titles": recent_slide_titles[-60:],
         "recent_opening_hooks": recent_hooks,
         "recent_catchphrases": recent_catchphrases,
@@ -252,8 +258,8 @@ def _split_numbers(lines):
     return hits
 
 
-def audit_episode(script, subtitle_path, is_test):
-    """只檢查口播與字幕。公開帳本頁與 dca_portfolio.json 的台幣對照不納入。"""
+def audit_episode(script, subtitle_path, is_test, sdata=None):
+    """檢查口播、字幕與本集內容是否過度沿用近期主軸。"""
     warnings = []
     text = script or ""
     ledger_name = os.path.basename(str(subtitle_path or ""))
@@ -285,6 +291,17 @@ def audit_episode(script, subtitle_path, is_test):
         splits = _split_numbers(subtitle_lines)
         if splits:
             warnings.append("字幕切斷數字：" + splits[0])
+    if isinstance(sdata, dict):
+        today = _today()
+        recent = [row for row in _read_history(today) if _today_delta(today, row["date"]) < 7]
+        lead = str(sdata.get("editorial_lead") or "")
+        for row in recent:
+            previous_lead = str(row.get("editorial_lead") or "")
+            similarity = _title_similarity(lead, previous_lead)
+            if lead and previous_lead and similarity >= 0.72:
+                warnings.append(f"內容主軸與 {row['date']} 相似度 {similarity:.2f}，應更換切入問題")
+                break
+
     length = _plain_length(text)
     minimum = 80 if is_test else 5200
     if length < minimum:
@@ -330,14 +347,15 @@ def _snapshot(mdata):
 
 
 def archive_episode(is_test, upload_id, mdata, sdata, audit):
-    """只有正式模式且主片上傳成功才寫 history_db，並刪除超過 90 天的日檔。"""
+    """正式產片即保存選題歷史；預覽不需上傳 YouTube，也能供下一集避重。"""
     if is_test:
         print("[daily_learner] TEST_MODE，不寫入 history_db。")
         return None
     upload_text = str(upload_id or "")
     if not upload_text or upload_text.startswith("UPLOAD") or upload_text.startswith("TEST"):
-        print("[daily_learner] 主片未上傳成功，不寫入 history_db。")
-        return None
+        if upload_text != "PREVIEW_NO_UPLOAD":
+            print("[daily_learner] 主片未上傳成功，不寫入 history_db。")
+            return None
     today = _today()
     os.makedirs(HISTORY_DIR, exist_ok=True)
     path = os.path.join(HISTORY_DIR, f"{today.isoformat()}.json")
@@ -354,6 +372,7 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         "yt_title": sdata.get("yt_title") or "",
         "core_point": sdata.get("editorial_lead") or sdata.get("angle_title") or sdata.get("ai_title") or "",
         "editorial_lead": sdata.get("editorial_lead") or "",
+        "core_conflict": sdata.get("core_conflict") or "",
         "slide_titles": [str(item) for item in (sdata.get("slide_titles") or []) if str(item).strip()],
         "opening_hook": sdata.get("opening_hook") or "",
         "format_id": sdata.get("format_id") or "",
@@ -361,6 +380,7 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         "catchphrases": kept_phrases,
         "market_snapshot": _snapshot(mdata),
         "quality_audit": audit,
+        "publication_status": "published" if upload_text != "PREVIEW_NO_UPLOAD" else "preview",
     }
     yt_title = sdata.get("yt_title") or ""
     if yt_title:
