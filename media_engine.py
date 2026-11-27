@@ -2251,17 +2251,10 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             ),
         })
     mvrv_info = mdata.get("mvrv") or {}
-    market_zone = presentation.refine_market_zone(
-        mvrv_info.get("zone"),
-        mvrv_info.get("value"),
-        mvrv_info.get("is_estimate"),
-        fng_num,
-        mdata.get("cur_p"),
-        mdata.get("ma200d"),
-    )
+    market_zone = mvrv_info.get("zone") or "未取得有效 MVRV Z-Score"
     slide_insights = {
         "mvrv": presentation.format_metric(mvrv_info["value"], "mvrv") if mvrv_info.get("value") is not None else "—",
-        "mvrv_name": mvrv_info.get("display_name", "MVRV 比率"),
+        "mvrv_name": mvrv_info.get("display_name", "MVRV Z-Score"),
         "zone": market_zone,
         "mvrv_pct": mvrv_info.get("bar_pct", 40),
         "support": presentation.format_metric(mdata["btc_metrics"]["support"], "price"),
