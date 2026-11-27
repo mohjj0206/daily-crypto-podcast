@@ -1821,7 +1821,7 @@ def fetch_btc_mvrv(drawdown_pct=None):
         page_html = raw.decode("utf-8", errors="replace")
         # 優先定位 Latest Stats，避免把圖表上的歷史極值或刻度誤認為最新值。
         latest_match = re.search(
-            r"(?is)Latest\\s+Stats(.*?)(?:Specs|Related\\s+Charts|<footer|$)",
+            r"(?is)Latest\s+Stats(.*?)(?:Specs|Related\s+Charts|<footer|$)",
             page_html,
         )
         if not latest_match:
@@ -1829,15 +1829,15 @@ def fetch_btc_mvrv(drawdown_pct=None):
         latest_text = html.unescape(
             re.sub(r"(?is)<[^>]+>", " ", latest_match.group(1))
         )
-        latest_text = re.sub(r"\\s+", " ", latest_text).strip()
-        date_match = re.search(r"\\b(20\\d{2}-\\d{2}-\\d{2})\\b", latest_text)
+        latest_text = re.sub(r"\s+", " ", latest_text).strip()
+        date_match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", latest_text)
         if not date_match:
             raise ValueError("MacroMicro Latest Stats has no observation date.")
         date_text = date_match.group(1)
         date_value = datetime.strptime(date_text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         after_date = latest_text[date_match.end():]
         number_match = re.search(
-            r"(?<![A-Za-z0-9])(-?\\d+(?:,\\d{3})*(?:\\.\\d+)?)(?![A-Za-z0-9])",
+            r"(?<![A-Za-z0-9])(-?\d+(?:,\d{3})*(?:\.\d+)?)(?![A-Za-z0-9])",
             after_date,
         )
         if not number_match:
