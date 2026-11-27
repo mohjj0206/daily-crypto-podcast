@@ -922,7 +922,7 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 48px; right: 48px; top: 110px; bottom: 250px;
+  position: absolute; left: 48px; right: 48px; top: 110px; bottom: 350px;
   z-index: 3;
   padding: 24px 36px; border: 2px solid rgba(251,191,36,.72);
   border-radius: 18px; background: rgba(11,17,32,.9);
