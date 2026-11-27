@@ -524,27 +524,22 @@ def wrap_by_width(draw, text, font, max_width):
 def highlight_key_numbers(text, state=None):
     escaped_text = html.escape(str(text))
     highlight_state = state if state is not None else {"remaining": 3}
+    # 以完整語意片語為標示單位，避免只把「200」或「70」染黃，
+    # 卻讓「週均線」或「RSI」留在黃色區塊外面。
     important_number_pattern = re.compile(
-        r"(?P<money>[-+]?(?:NT\$|US\$|USD\$|\$)\s?[-+]?\d+(?:,\d{3})*(?:\.\d+)?)"
-        r"|(?P<metric_label>(?:恐慌(?:與貪婪)?指數|市場情緒指數|RSI)\s*[:：]?\s*)"
-        r"(?P<metric_value>[+-]?\d+(?:\.\d+)?(?:\s*/\s*100)?%?)"
-        r"|(?P<percent>[-+]?\d+(?:,\d{3})*(?:\.\d+)?\s?%)"
+        r"(?P<money>[-+]?(?:NT\$|US\$|USD\$|\$)\s?[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?:\s?(?:美元|USD))?)"
+        r"|(?P<metric_group>(?:恐慌(?:與貪婪)?指數|市場情緒指數|RSI|MVRV(?:\s*Z-Score)?|Z-Score|SOPR|NUPL)\s*[:：]?\s*[+-]?\d+(?:\.\d+)?(?:\s*/\s*100)?%?)"
+        r"|(?P<technical_group>[+-]?\d+(?:,\d{3})*(?:\.\d+)?\s*(?:週|日|月|年)?(?:均線|線|高點|低點|支撐|壓力))"
+        r"|(?P<percent>(?:(?:上漲|下跌|漲幅|跌幅|回撤|報酬率|市占率|增幅|降幅)\s*)?[-+]?\d+(?:,\d{3})*(?:\.\d+)?\s?%)"
+        r"|(?P<unit_group>[-+]?\d+(?:,\d{3})*(?:\.\d+)?\s*(?:萬美元|億美元|美元|萬枚|億枚|枚|顆|倍|筆|家|人|次|年|月|週|日))"
     )
 
     def highlight(match):
         if highlight_state.get("remaining", 0) <= 0:
             return match.group(0)
-        if match.group("money"):
-            result = f'<span class="hl">{match.group("money")}</span>'
-        elif match.group("metric_label"):
-            result = (
-                f'{match.group("metric_label")}<span class="hl">'
-                f'{match.group("metric_value")}</span>'
-            )
-        else:
-            result = f'<span class="hl">{match.group("percent")}</span>'
+        # 將完整匹配片語一次包進同一個黃色標籤，不拆開名稱、數值與單位。
         highlight_state["remaining"] -= 1
-        return result
+        return f'<span class="hl">{match.group(0)}</span>'
 
     return important_number_pattern.sub(highlight, escaped_text)
 
