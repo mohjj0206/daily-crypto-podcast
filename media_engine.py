@@ -2012,7 +2012,13 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 sub_segments.append(segment)
 
         sub_segments = [re.sub(r'\s+', ' ', segment).strip() for segment in sub_segments if segment.strip()]
-        total_chars = sum(len(segment) for segment in sub_segments)
+        # 依實際送入 TTS 的發音文字估算字幕片段權重，避免 0.587 等數字
+        # 在字幕中只佔 5 個字元、口播卻需要較長時間而造成逐句偏移。
+        segment_weights = [
+            max(1, len(presentation.pronounce_for_tts(segment)))
+            for segment in sub_segments
+        ]
+        total_chars = sum(segment_weights)
         if total_chars == 0:
             cur_t += dur
             speech_elapsed += dur
@@ -2027,7 +2033,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
             if index == len(sub_segments) - 1:
                 sub_end = cur_t + dur
             else:
-                sub_end = segment_cur + dur * (len(segment) / total_chars)
+                sub_end = segment_cur + dur * (segment_weights[index] / total_chars)
 
             hl = re.sub(kw_pat, r'{\\b1\\c&H0024BFFF&}\1{\\b0\\c&H00FFFFFF&}', sub_txt)
             evs.append(f"Dialogue: 0,{fmt_ass_t(segment_cur)},{fmt_ass_t(sub_end)},Default,,315,315,0,,{hl}")
@@ -2590,7 +2596,7 @@ def render_short_video(sdata, mdata, config):
 {short_news}
 
 規格：
-1. 正式模式總長約230字，適合1.2倍速配音約45至50秒；測試模式總長約45字，控制在15秒內。
+1. 正式模式總長約230字，適合1.25倍速配音約45至50秒；測試模式總長約45字，控制在15秒內。
 2. 第一位主持人在開頭3秒內用反直覺問題或數據落差當鉤子。
 3. 中間只講資料中的核心新聞、BTC/ETH數據與一個理性風險折價，不可編造資料。
 4. 結尾明確引導觀眾點擊頻道觀看完整市場解析，不得預設或宣稱固定片長。
