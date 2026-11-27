@@ -76,7 +76,7 @@ def main():
         )
     finally:
         tech_chart_dir.cleanup()
-    audit = daily_learner.audit_episode(sdata.get("full_script", ""), "subs.ass", is_test)
+    audit = daily_learner.audit_episode(sdata.get("full_script", ""), "subs.ass", is_test, sdata)
 
     # ── 5. 上傳 YouTube、發布留言與播放清單歸類 ───────────────
     yt_title = sdata.get("yt_title") or main_render["video_title"]
@@ -160,7 +160,7 @@ def main():
         shutil.copyfile(main_render["thumb_path"], "daily_thumb.jpg")
 
     daily_learner.archive_episode(
-        is_test=is_test or not enable_yt,
+        is_test=is_test,
         upload_id=main_video_id,
         mdata=mdata,
         sdata=sdata,
