@@ -1046,6 +1046,50 @@ def _ensure_slide_anchors(script, slide_count):
     return script
 
 
+def _ensure_act_slide_anchors(act_text, expected_numbers, act_prompt, act_num, act_name, is_test):
+    """每幕先驗證分鏡，再做字數補強；缺錨點時重生整幕，絕不由補強稿偽造分鏡。"""
+    if is_test:
+        return act_text
+
+    expected = list(expected_numbers)
+    current = str(act_text or "").strip()
+    actual = [
+        int(value)
+        for value in re.findall(r"\[SLIDE_(\d+)\]", current)
+    ]
+    if actual == expected:
+        return current
+
+    missing = [number for number in expected if number not in actual]
+    print(
+        f"第 {act_num} 幕「{act_name}」原始稿分鏡不完整："
+        f"expected={expected}, actual={actual}；重新生成整幕，不以追加字數方式掩蓋。"
+    )
+    retry_prompt = f"""{act_prompt}
+
+【重要：上一次生成的分鏡驗收未通過】
+本幕必須且只能依序出現以下分鏡錨點：{ "、".join(f"[SLIDE_{n}]" for n in expected) }。
+上次缺少或錯誤的錨點：{ "、".join(f"[SLIDE_{n}]" for n in missing) or "錨點重複或順序錯誤" }。
+請重新完整撰寫本幕，不要只補幾句；每個錨點都必須放在對應主題段落第一句發言開頭，且每個恰好出現一次。
+不得輸出其他幕的錨點，不得省略任何一張投影片。只輸出完整雙人逐字稿。
+"""
+    retry_text = str(
+        call_gemini(retry_prompt, max_output_tokens=16384, timeout=300)
+    ).strip()
+    retry_anchors = [
+        int(value)
+        for value in re.findall(r"\[SLIDE_(\d+)\]", retry_text)
+    ]
+    if retry_anchors != expected:
+        raise RuntimeError(
+            f"第 {act_num} 幕「{act_name}」重新生成後分鏡仍不完整，停止製作。"
+            f" expected={expected}, actual={retry_anchors}。"
+            "為避免口播與簡報錯位，不會自動補塞錨點。"
+        )
+    print(f"第 {act_num} 幕重新生成成功，分鏡錨點完整：{retry_anchors}")
+    return retry_text
+
+
 def _spoken_chars(text):
     return len(re.sub(r"\s+", "", text or ""))
 
@@ -1410,6 +1454,7 @@ def generate_script(mdata, dca_data, config):
 {full_report}
 """
     act1_text = call_gemini(act1_prompt, max_output_tokens=16384, timeout=300)
+    act1_text = _ensure_act_slide_anchors(act1_text, range(1, s1 + 1), act1_prompt, 1, "全局矛盾與盤面真相", is_test)
     act1_text = _expand_act_if_short(act1_text, 1, "全局矛盾與盤面真相", editorial_brief.get("core_conflict", ""), is_test)
     print(f"第一幕生成完畢，字數：{_spoken_chars(act1_text)} 字。")
 
@@ -1447,6 +1492,7 @@ def generate_script(mdata, dca_data, config):
 {full_report}
 """
     act2_text = call_gemini(act2_prompt, max_output_tokens=16384, timeout=300)
+    act2_text = _ensure_act_slide_anchors(act2_text, range(s1 + 1, s2 + 1), act2_prompt, 2, "多空硬核交鋒與籌碼拆解", is_test)
     act2_text = _expand_act_if_short(act2_text, 2, "多空硬核交鋒與籌碼拆解", editorial_brief.get("smart_money_intent", ""), is_test)
     print(f"第二幕生成完畢，字數：{_spoken_chars(act2_text)} 字。")
 
@@ -1486,6 +1532,7 @@ def generate_script(mdata, dca_data, config):
 {full_report}
 """
     act3_text = call_gemini(act3_prompt, max_output_tokens=16384, timeout=300)
+    act3_text = _ensure_act_slide_anchors(act3_text, range(s2 + 1, slide_count + 1), act3_prompt, 3, "實戰推演與未來 24 小時驗證劇本", is_test)
     act3_text = _expand_act_if_short(act3_text, 3, "實戰推演與未來 24 小時驗證劇本", editorial_brief.get("act3_outline", ""), is_test)
     print(f"第三幕生成完畢，字數：{_spoken_chars(act3_text)} 字。")
 
