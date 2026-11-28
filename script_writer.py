@@ -11,6 +11,8 @@ from opencc import OpenCC
 
 from presentation import (
     EXCLUDED_PLATFORMS,
+    assign_broll_query,
+    assign_daily_layout,
     build_tutorial_cards,
     fill_story_slide_bodies,
     fill_slide_bodies_from_narration,
@@ -893,6 +895,7 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
     slide_week = _pad_slide_week(payload.get("slide_week"), mdata)
     raw_titles = payload.get("slide_titles") if isinstance(payload.get("slide_titles"), list) else []
     slide_titles = [str(item).strip() for item in raw_titles if str(item).strip()]
+    slide_plan = payload.get("slide_plan") if isinstance(payload.get("slide_plan"), list) else []
 
     return {
         "title": title,
@@ -904,6 +907,7 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
         "opening_hook": opening_hook,
         "narrative_flow": narrative_flow,
         "slide_titles": slide_titles,
+        "slide_plan": slide_plan,
         "slide_news": slide_news,
         "slide_week": slide_week,
     }
@@ -1142,16 +1146,17 @@ def generate_script(mdata, dca_data, config):
     show_format = choose_show_format()
     visual_style = visual_style_for_format(show_format.get("id"))
     print(f"[節目視覺模板] {show_format.get('title')}｜format={show_format.get('id')}｜style={visual_style}")
-    visual_plan = plan_daily_slides(mdata, show_dca, show_format, dca_slide_body)
-    slide_count = len(visual_plan)
-    thermo_count = sum(1 for slide in visual_plan if slide["role"] == "thermometer")
-
-    # 動態主題地圖：不切三幕、不預設每個主題的篇幅或敘事職責。
-    slide_anchors = "；".join(
-        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan, 1)
+    visual_candidates = plan_daily_slides(mdata, show_dca, show_format, dca_slide_body)
+    candidate_count = len(visual_candidates)
+    dca_candidate_slot = next(
+        (index for index, slide in enumerate(visual_candidates, 1) if slide.get("role") == "dca"),
+        None,
     )
+
+    # 候選卡只是素材池；實際張數、主題取捨與順序由本集總編輯重新決定。
     slide_slots = "；".join(
-        f"{index}.{slide['title']}" for index, slide in enumerate(visual_plan, 1)
+        f"{index}.{slide.get('role')}｜{slide['title']}｜圖表={slide.get('chart') or 'none'}"
+        for index, slide in enumerate(visual_candidates, 1)
     )
 
     if show_dca:
@@ -1220,7 +1225,7 @@ def generate_script(mdata, dca_data, config):
 1. 找出今日最值得觀眾花時間的核心事件、數據異常或市場背離；若沒有重大事件，選擇最值得追查的一個問題，不得捏造。
 2. 判斷需要哪些證據才能解釋核心問題，優先採用至少 2 組不同來源交叉驗證。
 3. 決定敘事應從哪個問題或事件開始、如何推進、在哪裡收束；不必包含傳統開場、行情快篩、多空辯論、預測或投資心法。
-4. 為全部 {slide_count} 頁簡報分別擬定新聞級標題（slide_titles，順序嚴格對應：{slide_slots}），標題必須具體且有證據。
+4. 從以下 {candidate_count} 個候選視覺素材中，依本集敘事需要挑選 6 到 {candidate_count} 張並重新排序；不要為了湊張數選不相關素材。每張必須回傳 source_slot（候選編號）與 title（具體標題），source_slot 不可重複。候選素材：{slide_slots}。
 5. narrative_flow 用自然語言描述本集實際敘事順序、主題間因果關係、哪些主題應深入、哪些只需帶過；不得用第一幕、第二幕、第三幕或任何固定段落數。
 6. slide_news：最多 3 筆真正適合做新聞圖卡的新聞摘要；沒有足夠新聞就回傳較少筆，不要硬湊。
 7. slide_week：只有當今日資料足以支持未來 24 小時條件推演時才提供，最多 3 條；不適用時回傳空陣列。
@@ -1243,13 +1248,42 @@ def generate_script(mdata, dca_data, config):
 }}"""
 
     brief_raw = call_gemini(brief_prompt, max_output_tokens=8192, timeout=120, json_mode=True)
-    editorial_brief = _parse_editorial_brief(brief_raw, mdata, slide_count)
-    script_slide_titles = align_slide_titles(
-        editorial_brief.get("slide_titles"),
-        [slide["title"] for slide in visual_plan],
-    )
-    for slide, title in zip(visual_plan, script_slide_titles):
-        slide["title"] = title
+    editorial_brief = _parse_editorial_brief(brief_raw, mdata, candidate_count)
+
+    selected_plan = []
+    used_slots = set()
+    for item in editorial_brief.get("slide_plan") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            source_slot = int(item.get("source_slot"))
+        except (TypeError, ValueError):
+            continue
+        if source_slot < 1 or source_slot > candidate_count or source_slot in used_slots:
+            continue
+        slide = dict(visual_candidates[source_slot - 1])
+        title = clean_slide_title(str(item.get("title") or slide.get("title") or ""))
+        if title:
+            slide["title"] = title
+        selected_plan.append(slide)
+        used_slots.add(source_slot)
+
+    # 舊版或格式不完整的編輯 JSON 不會造成空簡報；回退到候選素材原順序。
+    if len(selected_plan) < 6:
+        selected_plan = [dict(slide) for slide in visual_candidates]
+        print("總編輯 slide_plan 不完整，回退候選素材；仍保留動態逐字稿敘事。")
+
+    # 定投帳本是週期性固定資訊，只在該集有啟用時保留；不讓模型誤刪。
+    if dca_candidate_slot and dca_candidate_slot not in used_slots:
+        selected_plan.append(dict(visual_candidates[dca_candidate_slot - 1]))
+        print("已將本集必要的 DCA 模擬帳本圖卡加入動態簡報。")
+
+    visual_plan = selected_plan
+    slide_count = len(visual_plan)
+    for index, slide in enumerate(visual_plan):
+        slide["layout"] = assign_daily_layout(slide, index)
+        slide["broll_query"] = assign_broll_query(slide)
+    editorial_brief["slide_titles"] = [slide["title"] for slide in visual_plan]
     slide_anchors = "；".join(
         f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan, 1)
     )
