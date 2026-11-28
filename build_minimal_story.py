@@ -773,7 +773,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   object-fit: cover; z-index: 2; opacity: 0;
   animation: storyBrollInterlude var(--broll-cycle, 18s) linear infinite; }}
 .dark-mask {{ display: none; }}
-.content {{ position: relative; z-index: 3; width: 100%; height: 100%; display: flex; flex-direction: column;
+ .content {{ position: relative; z-index: 3; width: 100%; height: calc(100% - 150px); display: flex; flex-direction: column;
   animation: storySlideInterlude var(--broll-cycle, 18s) linear infinite; }}
 @keyframes storyBrollInterlude {{
   0%, 68%, 94%, 100% {{ opacity: 0; }}
@@ -824,7 +824,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
 </style></head>
 <body>
-<div class="stage" style="--broll-cycle:{max(12.0, float(sum(reveal_seconds) if reveal_seconds else 18.0)):.3f}s;">
+<div class="stage" style="--broll-cycle:{min(18.0, max(8.0, float(sum(reveal_seconds) if reveal_seconds else 18.0))):.3f}s;">
   {_broll_background_html(broll_path)}
   <div class="content">
     <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
