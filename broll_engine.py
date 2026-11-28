@@ -387,7 +387,8 @@ def fetch_pixabay_broll_reel(
             except (TypeError, ValueError):
                 source_duration = clip_seconds
             segment_duration = min(clip_seconds, remaining, source_duration)
-            if segment_duration < 1.5:
+            # 只採用至少 3 秒的完整片段；尾端不足 3 秒改由原生動態背景補齊。
+            if segment_duration < 3.0:
                 continue
             segment_path = os.path.join(work, f"segment_{index:02d}.mp4")
             command = [
