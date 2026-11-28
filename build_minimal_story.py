@@ -128,9 +128,10 @@ _WRONG_DOG_RE = re.compile(r"位元[汪犬]")
 
 
 def _clean_text(text):
-    """共用 presentation.sanitize_text 後，再保險封殺位元汪／位元犬錯字。"""
+    """共用文字清理：統一主播名稱，並移除不應出現在節目中的外部品牌字眼。"""
     cleaned = presentation.sanitize_text(str(text or ""))
-    return _WRONG_DOG_RE.sub("比特汪", cleaned)
+    cleaned = _WRONG_DOG_RE.sub("比特汪", cleaned)
+    return cleaned.replace("投資家富士", "").strip()
 
 
 # ── 抓取開場用 BTC／ETH 現價（CoinGecko 簡單行情） ──────────
@@ -518,7 +519,7 @@ def _build_custom_prompt(material, prices):
     section_checklist = "\n".join(f"- {section}" for section in required_sections)
     return f"""今日日期：{TODAY_STR}
 
-【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的《投資家富士》風格雙人生活化比喻深度長談；頁數依素材論點自然安排，不預設固定頁數。
+【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字、具備本節目原創特色的雙人生活化比喻深度長談；頁數依素材論點自然安排，不預設固定頁數。不得提及、引用或模仿任何外部創作者、頻道或品牌名稱。
 
 {opening}
 
