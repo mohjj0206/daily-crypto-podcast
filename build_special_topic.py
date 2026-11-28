@@ -1320,22 +1320,95 @@ def run_coin_special():
 
     make_topic_chart(coin_code, market)
     slides = create_slides(coin_code, market, trigger, articles, conditions)
-    slide_duration = max(0.1, (dialogue_end - intro_duration) / len(slides))
+    # 依逐字稿中的 [SLIDE_n] 錨點安排每張資料卡的真實口播區間。
+    slide_count = len(slides)
+    valid_anchors = all(index in SPECIAL_SLIDE_START_TIMES for index in range(1, slide_count + 1))
+    if valid_anchors:
+        slide_starts = [float(SPECIAL_SLIDE_START_TIMES[index]) for index in range(1, slide_count + 1)]
+        valid_anchors = (
+            all(slide_starts[i] < slide_starts[i + 1] for i in range(len(slide_starts) - 1))
+            and slide_starts[0] >= intro_duration - 0.05
+            and slide_starts[-1] < dialogue_end
+        )
+    if not valid_anchors:
+        print("[Slide Sync] 專題錨點不完整或順序異常，改用依口播總時長分配的備援時間。")
+        speech_span = max(0.1, dialogue_end - intro_duration)
+        slide_starts = [
+            intro_duration + speech_span * index / slide_count
+            for index in range(slide_count)
+        ]
+    else:
+        print("[Slide Sync] 專題資料卡使用逐字稿錨點，依實際口播起點切換。")
+
+    broll_engine.reset_episode_rotation()
+    broll_manifest = []
     with open("topic_list.txt", "w", encoding="utf-8") as video_list:
         if has_intro:
             video_list.write("file 'intro.mp4'\n")
-        for index in range(1, len(slides) + 1):
-            duration = slide_duration + (OUTRO_PAUSE if index == len(slides) else 0)
-            subprocess.run(
-                [
-                    "ffmpeg", "-y", "-loop", "1", "-framerate", "24",
-                    "-t", f"{duration:.2f}", "-i", f"topic_slide{index}.png",
-                    "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast",
-                    "-pix_fmt", "yuv420p", "-r", "24", f"topic_p{index}.mp4",
-                ],
-                check=True,
+        for index, (slide_title, slide_body, _chart_path) in enumerate(slides, 1):
+            start_time = slide_starts[index - 1]
+            end_time = slide_starts[index] if index < slide_count else dialogue_end
+            duration = max(0.1, end_time - start_time)
+            if index == slide_count:
+                duration += OUTRO_PAUSE
+
+            query = presentation.assign_broll_query({
+                "title": slide_title,
+                "body": slide_body,
+                "layout": "chart_spotlight" if _chart_path else "impact_quote",
+            }) or f"{metadata['english']} cryptocurrency finance blockchain"
+            broll_path = None
+            try:
+                broll_path = broll_engine.fetch_pixabay_broll(
+                    query, orientation=broll_engine.HORIZONTAL
+                )
+            except Exception as error:
+                print(f"[Pixabay] 第 {index} 張專題背景影片取得失敗，改用動態底圖：{error}")
+            if not broll_path:
+                print(f"[Pixabay] 第 {index} 張專題未取得新素材，改用動態底圖，不重複舊影片。")
+
+            if broll_path:
+                background_input = ["-stream_loop", "-1", "-i", broll_path]
+                background_filter = (
+                    f"[0:v]scale=1280:720:force_original_aspect_ratio=increase,"
+                    f"crop=1280:720,fps=24,trim=duration={duration:.4f},"
+                    "setpts=PTS-STARTPTS[bg];"
+                )
+                broll_manifest.append({"slide": index, "asset": os.path.basename(broll_path), "source": "Pixabay"})
+            else:
+                background_input = [
+                    "-f", "lavfi", "-i",
+                    f"color=c=#070b14:s=1280x720:r=24:d={duration:.4f}",
+                ]
+                background_filter = (
+                    "[0:v]drawgrid=width=64:height=64:thickness=1:color=0x26364d@0.34,"
+                    f"scale=1280:720,fps=24,trim=duration={duration:.4f},"
+                    "setpts=PTS-STARTPTS[bg];"
+                )
+                broll_manifest.append({"slide": index, "asset": None, "source": "native_motion_fallback"})
+
+            fade_out_start = max(0.0, duration - 0.45)
+            overlay_filter = (
+                f"[1:v]format=rgba,fade=t=in:st=0:d=0.28:alpha=1,"
+                f"fade=t=out:st={fade_out_start:.4f}:d=0.35:alpha=1[card];"
+                "[bg][card]overlay=0:0:shortest=1:format=auto[v]"
+            )
+            command = [
+                "ffmpeg", "-y", *background_input,
+                "-loop", "1", "-framerate", "24", "-i", f"topic_slide{index}.png",
+                "-filter_complex", background_filter + overlay_filter,
+                "-map", "[v]", "-an", "-t", f"{duration:.4f}",
+                "-r", "24", "-c:v", "libx264", "-preset", "ultrafast",
+                "-crf", "26", "-pix_fmt", "yuv420p", f"topic_p{index}.mp4",
+            ]
+            subprocess.run(command, check=True)
+            print(
+                f"[Slide Sync] 專題 S{index}｜{start_time:.2f}s–{end_time:.2f}s｜"
+                f"背景={'Pixabay' if broll_path else '動態備援'}｜資料卡播報後淡出"
             )
             video_list.write(f"file 'topic_p{index}.mp4'\n")
+        with open("topic_broll_manifest.json", "w", encoding="utf-8") as manifest_file:
+            json.dump(broll_manifest, manifest_file, ensure_ascii=False, indent=2)
         video_list.write("file 'outro.mp4'\n")
     subprocess.run(
         [
