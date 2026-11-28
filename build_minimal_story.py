@@ -830,14 +830,19 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   will-change: opacity;
 }}
 @keyframes storyDataOverlayLifetime {{
-  0%, 2% {{ opacity: 0; }}
-  5%, 94% {{ opacity: 1; }}
+  0% {{ opacity: 0; }}
+  1.5%, 98% {{ opacity: 1; }}
   100% {{ opacity: 0; }}
 }}
 .stage.has-broll .content {{
   background: rgba(5, 12, 25, .34);
   backdrop-filter: blur(3px);
 }}
+/* 逐條重點只在對應口播期間顯示，講完後退場。 */
+.insight {{ transition: opacity .32s ease, transform .32s ease; }}
+.insight.active {{ opacity: 1 !important; visibility: visible !important; }}
+.insight.done,
+.insight:not(.active):not(.done) {{ opacity: 0 !important; visibility: hidden !important; }}
 </style></head>
 <body>
 <div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;--slide-duration:{max(0.1, float(slide_duration)):.3f}s;">
