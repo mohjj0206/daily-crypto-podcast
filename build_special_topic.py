@@ -631,7 +631,7 @@ def make_dialogues(part1, part2):
         if anchor:
             slide_number = int(anchor.group(1))
             if 1 <= slide_number <= 12:
-                SPECIAL_SLIDE_ANCHOR_INDEXES[slide_number] = len(dialogues)
+                SPECIAL_SLIDE_ANCHOR_INDEXES.setdefault(slide_number, len(dialogues))
             continue
         match = re.match(r"^(女|男)[：:]\s*(.+)$", line.strip())
         if match:
