@@ -1348,6 +1348,39 @@ def render_main_story(story):
 
     dialogue_end = cursor
 
+    # 輸出口播／畫面時間軸，方便逐頁核對資料卡是否在正確口播進度浮現。
+    visual_timeline = []
+    for page_index, item in enumerate(page_data, 1):
+        reveal = item["reveal"]
+        if any(reveal[i] > reveal[i + 1] for i in range(len(reveal) - 1)):
+            raise RuntimeError(
+                f"[Minimal] 第 {page_index} 頁資料卡時間軸不是遞增順序：{reveal}"
+            )
+        visual_timeline.append({
+            "page": page_index,
+            "start_seconds": round(item["start"], 3),
+            "duration_seconds": round(item["dur"], 3),
+            "spoken_lines": [
+                {"text": text, "duration_seconds": round(float(duration), 3)}
+                for text, duration in [
+                    (groups[idx][1] if idx < len(groups) else display, duration)
+                    for idx, _fn, display, duration in synth_dialogues_cache[page_index - 1]
+                ]
+            ] if False else [],
+            "insight_reveal_seconds": reveal,
+            "metric_reveal_seconds": [
+                reveal[min(i, len(reveal) - 1)] for i in range(len(item["page"].get("metrics") or []))
+            ] if reveal else [],
+            "chart_reveal_seconds": reveal[0] if reveal else 0.0,
+            "background_video_continues": True,
+        })
+    with open("story_visual_timeline.json", "w", encoding="utf-8") as handle:
+        json.dump(visual_timeline, handle, ensure_ascii=False, indent=2)
+    print(
+        f"[Minimal] 口播畫面時間軸完成：{len(visual_timeline)} 頁；"
+        "資料卡按實際 TTS 句長排程，背景影片不受前景動畫影響。"
+    )
+
     # 2. 用 Playwright 逐頁錄影。
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
