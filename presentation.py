@@ -440,8 +440,11 @@ def fill_slide_bodies_from_narration(slides, full_script):
             ]
             body_candidates = [remaining_candidates[position] for position in sample_indexes]
         if slide.get("layout") == "versus_clash" and len(body_candidates) < 2:
-            raise RuntimeError(
-                f"第 {index} 張 VS 簡報缺少兩個可由口播支持的對照論點，停止輸出，避免補入未播報內容。"
+            # 證據不足時降級為單論點版型；不捏造第二個立場，也不因此中止整集。
+            slide["layout"] = "impact_quote"
+            print(
+                f"[Slide Layout] 第 {index} 張缺少兩個可驗證對照論點，"
+                "自動降級為單論點版型，保留已由口播支持的內容。"
             )
         if not body_candidates:
             body_candidates = candidates[:1]
