@@ -344,7 +344,7 @@ def fill_slide_bodies_from_narration(slides, full_script):
     # 接受「男：[serious]」、「男 [serious]：」及獨立一行的 [SLIDE_n]。
     # 不改動錨點順序，也不替缺失錨點補值；只修正模型輸出格式差異造成的漏解析。
     dialogue_pattern = re.compile(
-        r"^(男|女)\\s*(?:\\[[^\\]]+\\]\\s*)*[：:]\\s*(.*)$"
+        r"^(男|女)\s*(?:\[[^\]]+\]\s*)*[：:]\s*(.*)$"
     )
     slide_count = len(slides or [])
     anchors = [int(value) for value in anchor_pattern.findall(str(full_script or ""))]
