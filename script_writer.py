@@ -997,10 +997,10 @@ def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
             addition = str(
                 call_gemini(expand_prompt, max_output_tokens=8192, timeout=300)
             ).strip()
-            addition = re.sub(r"^\`\`\`(?:text)?\\s*|\\s*\`\`\`$", "", addition, flags=re.I)
+            addition = re.sub(r"^\`\`\`(?:text)?\s*|\s*\`\`\`$", "", addition, flags=re.I)
             addition_chars = _spoken_chars(addition)
-            has_speaker = bool(re.search(r"(?:^|\\n)\\s*(?:男|女)：", addition))
-            has_new_anchor = bool(re.search(r"\\[SLIDE_\\d+\\]", addition))
+            has_speaker = bool(re.search(r"(?:^|\n)\s*(?:男|女)：", addition))
+            has_new_anchor = bool(re.search(r"\[SLIDE_\d+\]", addition))
             if not addition or not has_speaker or has_new_anchor:
                 print(
                     f"第 {act_num} 幕第 {attempt} 輪補強格式無效"
@@ -1008,7 +1008,7 @@ def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
                 )
                 continue
 
-            current_text = current_text + "\\n" + addition
+            current_text = current_text + "\n" + addition
             chars = _spoken_chars(current_text)
             print(
                 f"第 {act_num} 幕追加補強 {addition_chars} 字，"
