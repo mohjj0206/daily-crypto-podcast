@@ -953,7 +953,9 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
     """生成 65–88 字高點擊率動態標題，依當日核心事件與反直覺衝突。"""
     cur_p = mdata.get("cur_p", 0)
     btc_pct = mdata.get("btc_pct", 0)
-    fng = mdata.get("fng_num", 50)
+    fng = mdata.get("fng_num")
+    fng_available = isinstance(fng, (int, float)) and not isinstance(fng, bool)
+    fng_prompt_value = str(int(fng)) if fng_available else "本次未取得（不可推測或沿用舊值）"
     core_conflict = editorial_brief.get("core_conflict", "")
     opening_hook = editorial_brief.get("opening_hook", "")
 
@@ -971,7 +973,7 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
 
 當日數據：
 - BTC 現價：{format_usd(cur_p)}，24H 漲跌：{btc_pct:+.2f}%
-- 恐慌貪婪指數：{fng}
+- 恐慌貪婪指數：{fng_prompt_value}
 - 核心矛盾：{core_conflict}
 - 開場鉤子：{opening_hook}
 
@@ -987,9 +989,13 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
 
     # 備援：依數據動態組裝
     direction = "狂飆" if btc_pct > 3 else ("暴跌" if btc_pct < -3 else "震盪")
-    fear_label = "極度恐懼" if fng < 25 else ("貪婪" if fng > 75 else "中性")
-    conflict_short = core_conflict[:20] if core_conflict else "多空分歧加劇"
-    title = f" BTC {direction} {fng}恐慌？{conflict_short}｜幣看趨勢"
+    conflict_short = core_conflict[:24] if core_conflict else "多空分歧加劇"
+    if fng_available:
+        fear_label = "極度恐懼" if fng < 25 else ("貪婪" if fng > 75 else "中性")
+        fear_clause = f"恐慌貪婪指數 {int(fng)}（{fear_label}）"
+    else:
+        fear_clause = "市場情緒指標暫缺"
+    title = f"BTC {direction}！{fear_clause}，{conflict_short}｜幣看趨勢"
     title = title.strip()
     if len(title) > 88:
         title = title[:85] + "｜幣看趨勢"
