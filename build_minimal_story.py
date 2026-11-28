@@ -1636,6 +1636,7 @@ def main():
     youtube_uploader.upload_short_video(
         youtube, short_path="story_short.mp4", main_video_id=video_id,
         cur_p=0, fng_num=0, today_str=TODAY_STR,
+        short_title=f"{story['topic_title']} #Shorts",
     )
 
 
