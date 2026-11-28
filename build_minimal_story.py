@@ -841,11 +841,11 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   background: radial-gradient(100% 100% at 50% 0%, #142746 0%, #091426 48%, #050914 100%);
   font-family: "Noto Sans CJK TC", "Noto Sans CJK", "Microsoft JhengHei", sans-serif; }}
 .broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; z-index: 2; opacity: 0;
-  animation: storyBrollInterlude var(--broll-cycle, 18s) linear infinite; }}
+  object-fit: cover; z-index: 2; opacity: 1;
+  animation: none; }}
 .dark-mask {{ display: none; }}
  .content {{ position: relative; z-index: 3; width: 100%; height: calc(100% - 150px); display: flex; flex-direction: column; }}
-.stage.has-broll .content {{ animation: storySlideInterlude var(--broll-cycle, 18s) linear infinite; }}
+.stage.has-broll .content {{ animation: none !important; }}
 @keyframes storyBrollInterlude {{
   0%, 68%, 94%, 100% {{ opacity: 0; }}
   72%, 90% {{ opacity: 1; }}
@@ -1479,8 +1479,12 @@ def render_main_story(story):
             for i, item in enumerate(page_data):
                 label = "開場" if i == 0 else f"{i:02d}"
                 try:
-                    requested_broll = broll_engine.fetch_pixabay_broll(
-                        story.get("broll_keywords"), broll_engine.HORIZONTAL
+                    requested_broll = broll_engine.fetch_pixabay_broll_reel(
+                        story.get("broll_keywords"),
+                        item["dur"],
+                        orientation=broll_engine.HORIZONTAL,
+                        clip_seconds=4.0,
+                        max_clips=4,
                     )
                 except Exception as error:
                     print(f"[Minimal] 第 {i + 1} 段 Pixabay 素材搜尋失敗，改用原生動態背景：{error}")
@@ -1545,7 +1549,7 @@ def render_main_story(story):
                     "asset": os.path.basename(broll_path) if broll_path else None,
                     "source": "Pixabay" if broll_path else "native_motion_fallback",
                     "reused": reused,
-                    "playback_seconds": 4.2 if broll_path else 0,
+                    "playback_seconds": round(float(item["dur"]), 2) if broll_path else 0,
                     "loop": False,
                 })
 
@@ -1673,11 +1677,11 @@ html,body{{margin:0;width:{SW}px;height:{SH}px;overflow:hidden;background:#05070
 font-family:"Noto Sans CJK TC","Microsoft JhengHei",sans-serif;}}
 .stage{{position:relative;width:100%;height:100%;
 background:radial-gradient(120% 90% at 50% 20%,#0d1830 0%,#0a1122 45%,#05070f 100%);}}
-.broll{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;opacity:0;
-animation:storyShortBroll var(--broll-cycle,18s) linear infinite;}}
+ .broll{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;opacity:1;
+animation:none;}}
 .dark-mask{{display:none;}}
 .center{{position:absolute;left:4%;top:46%;transform:translateY(-50%);width:92%;text-align:center;z-index:3;}}
-.stage.has-broll .center{{animation:storyShortSlide var(--broll-cycle,18s) linear infinite;}}
+.stage.has-broll .center{{animation:none !important;}}
 @keyframes storyShortBroll{{0%,68%,94%,100%{{opacity:0;}}72%,90%{{opacity:1;}}}}
 @keyframes storyShortSlide{{0%,68%,94%,100%{{opacity:1;}}72%,90%{{opacity:0;}}}}
 /* Shorts 採影片持續播放，資訊卡只作為前景疊圖。 */
@@ -1733,8 +1737,12 @@ def render_short_story(story, main_result):
                     continue
                 # 每頁 Shorts 優先使用新直式實景素材；外部素材失敗時改用原生動態底圖。
                 try:
-                    short_broll_path = broll_engine.fetch_pixabay_broll(
-                        story.get("broll_keywords"), broll_engine.VERTICAL
+                    short_broll_path = broll_engine.fetch_pixabay_broll_reel(
+                        story.get("broll_keywords"),
+                        clip_duration,
+                        orientation=broll_engine.VERTICAL,
+                        clip_seconds=4.0,
+                        max_clips=4,
                     )
                 except Exception as error:
                     print(f"[Minimal Shorts] 第 {i + 1} 段 Pixabay 搜尋失敗，改用動態背景：{error}")
