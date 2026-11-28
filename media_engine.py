@@ -1334,8 +1334,8 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   will-change: opacity;
 }}
 @keyframes dataOverlayLifetime {{
-  0%, 2% {{ opacity: 0; }}
-  5%, 94% {{ opacity: 1; }}
+  0% {{ opacity: 0; }}
+  1.5%, 98% {{ opacity: 1; }}
   100% {{ opacity: 0; }}
 }}
 /* 保留影片可見範圍，資訊卡以半透明面板疊在影片上，不再互相輪播。 */
@@ -1346,6 +1346,13 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .slide-stage.has-broll .ticker {{
   background: rgba(7, 13, 26, .72);
   backdrop-filter: blur(12px);
+}}
+/* 每一項資料只在對應口播段落高亮，播報完即退場，不把舊數據堆滿畫面。 */
+.reveal-node.is-hidden,
+.reveal-node.is-dimmed {{
+  opacity: 0 !important;
+  visibility: hidden !important;
+  box-shadow: none !important;
 }}
 
 </style>
