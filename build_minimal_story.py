@@ -729,7 +729,7 @@ def build_custom_story(material, prices):
                     + json.dumps(section_audit, ensure_ascii=False)
                 )
             if missing_sections:
-                raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
+                print("[Minimal] 需要補強的篇章：" + "；".join(missing_sections))
 
             normalized = _normalize_story(output_text, [], prices, require_source=True)
             lengths = [
@@ -739,27 +739,28 @@ def build_custom_story(material, prices):
             count = sum(lengths) + sum(len(d[1]) for d in normalized["opening"])
             # 字數範圍僅作節目長度參考，不作為製片硬性門檻。
             # 不因略短或略長而拒絕內容；實際品質由章節覆蓋與口播內容決定。
-            return normalized, lengths, count
+            return normalized, lengths, count, missing_sections
 
-        story, page_lengths, total = _validate_story_output(raw)
+        story, page_lengths, total, missing_sections = _validate_story_output(raw)
 
-        # 首稿不足時採多輪定向補強，避免單次補稿仍不足便直接中止。
-        # 每輪以上一輪稿件為基礎，並重新檢查原文一級章節覆蓋與口播總字數。
+        # 若篇章覆蓋不足或口播確實過短，先做定向補強；不因頁數或字數本身卡住。
         repair_attempts = 2
         for repair_index in range(1, repair_attempts + 1):
-            if total >= target_min_chars:
+            if total >= target_min_chars and not missing_sections:
                 break
-            missing_chars = target_min_chars - total
+            missing_chars = max(0, target_min_chars - total)
             print(
-                f"[Minimal] 第 {repair_index}/{repair_attempts} 次補強："
-                f"目前口播 {total} 字，距離下限還差 {missing_chars} 字。"
+                f"[Minimal] 第 {repair_index}/{repair_attempts} 次內容補強："
+                f"口播 {total} 字、篇章待補 {len(missing_sections)} 個、"
+                f"字數參考差額 {missing_chars} 字。"
             )
-            repair_prompt = f"""你是專業財經 Podcast 主筆。以下是《CHATGPT.TXT》深度報導稿，目前口播長度不足。
+            repair_prompt = f"""你是《幣看深潛》的資深財經 Podcast 主筆。以下深度研究稿的口播需要補強，請優先修復內容遺漏，不要只增加字數。
 
 【素材與稿件狀況】
-- 原始研究素材共 {len(material)} 個字元，包含多個一級章節與大量技術、數據、風險及投資觀點。
-- 目前口播共 {total} 字；至少還需增加 {missing_chars} 字，才能達到最低要求。
-- 原文一級章節清單：{json.dumps(required_sections, ensure_ascii=False)}
+- 原始研究素材共 {len(material)} 個字元。
+- 目前口播共 {total} 字；參考範圍為 {target_min_chars}～{target_max_chars} 字，尚差 {missing_chars} 字（若已達參考下限，這個差額為零）。
+- 原文主要篇章：{json.dumps(required_sections, ensure_ascii=False)}
+- 程式檢查認為尚未充分呈現的篇章：{json.dumps(missing_sections, ensure_ascii=False)}
 
 【本輪補強任務】
 - 本集依原稿篇幅設定的口播參考範圍為 {target_min_chars}～{target_max_chars} 字；這不是硬性上限。若核心論證尚未完整，即使超過上限也不可刪掉必要內容；若核心論點已完整，不必為湊字擴寫。
@@ -786,12 +787,17 @@ def build_custom_story(material, prices):
                 json_mode=True,
             )
             raw_data = json.loads(repaired_raw)
-            story, page_lengths, total = _validate_story_output(repaired_raw)
+            story, page_lengths, total, missing_sections = _validate_story_output(repaired_raw)
             print(
                 f"[Minimal] 第 {repair_index} 次補強後："
                 f"口播 {total} 字｜各頁字數 {page_lengths}"
             )
 
+        if missing_sections:
+            raise ValueError(
+                "經過定向補強後，以下篇章仍未在口播中獲得足夠呈現："
+                + "；".join(missing_sections)
+            )
         if total < target_min_chars:
             print(
                 f"[Minimal] 提醒：口播 {total} 字，低於本稿參考下限 "
