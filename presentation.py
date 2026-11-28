@@ -104,9 +104,6 @@ def assign_broll_query(slide):
     body = str(slide.get("body") or "")
     source = f"{title} {body}".lower()
 
-    if layout == "chart_spotlight":
-        return ""
-
     # 先依當頁播報的具體事件／名詞選圖，避免每頁都只搜泛用 bitcoin/finance。
     topic_rules = [
         (("sec", "證券交易委員會", "監管", "監管機構", "訴訟", "起訴"), "securities regulator, government building"),
