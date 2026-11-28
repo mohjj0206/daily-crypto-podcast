@@ -1242,7 +1242,7 @@ def generate_script(mdata, dca_data, config):
   "bear_case": "有證據才提出空方論點，否則留空",
   "opening_hook": "若適合才提供開場鉤子，不適合可留空",
   "narrative_flow": "本集動態敘事流程與篇幅分配",
-  "slide_titles": ["標題1", "標題{slide_count}"],
+  "slide_plan": [{"source_slot": 1, "title": "具體標題"}],
   "slide_news": [],
   "slide_week": []
 }}"""
@@ -1271,6 +1271,7 @@ def generate_script(mdata, dca_data, config):
     # 舊版或格式不完整的編輯 JSON 不會造成空簡報；回退到候選素材原順序。
     if len(selected_plan) < 6:
         selected_plan = [dict(slide) for slide in visual_candidates]
+        used_slots = set(range(1, candidate_count + 1))
         print("總編輯 slide_plan 不完整，回退候選素材；仍保留動態逐字稿敘事。")
 
     # 定投帳本是週期性固定資訊，只在該集有啟用時保留；不讓模型誤刪。
