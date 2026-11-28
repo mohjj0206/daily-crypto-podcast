@@ -1985,6 +1985,7 @@ def main():
         youtube, short_path="story_short.mp4", main_video_id=video_id,
         cur_p=0, fng_num=0, today_str=TODAY_STR,
         short_title=f"{story['topic_title']} #Shorts",
+        description_suffix=_broll_attribution_text(),
     )
     # 只有主片與 Shorts 都成功上傳後才重置自訂素材；測試、預覽或任一上傳失敗都保留原稿。
     if used_chatgpt and chatgpt_path:
