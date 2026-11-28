@@ -110,15 +110,20 @@ def main():
             is_test=is_test,
         )
 
-        youtube_uploader.upload_short_video(
-            youtube,
-            short_path=short_video_path,
-            main_video_id=main_video_id,
-            cur_p=mdata["cur_p"],
-            fng_num=mdata["fng_num"],
-            today_str=today_str,
-            short_title=short_title,
-        )
+        try:
+            youtube_uploader.upload_short_video(
+                youtube,
+                short_path=short_video_path,
+                main_video_id=main_video_id,
+                cur_p=mdata["cur_p"],
+                fng_num=mdata["fng_num"],
+                today_str=today_str,
+                short_title=short_title,
+            )
+        except Exception as error:
+            # 主片已成功上傳後，Shorts API 失敗不應讓整個工作流程回報全數失敗；
+            # 本機 daily_short.mp4 與發佈清單仍會保留，供後續補發。
+            print(f"警告：主片已上傳，但 Shorts 上傳失敗；保留短片檔供補發：{error}")
     else:
         print("[5/5] ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留成片供 GitHub Releases 預覽。")
         main_video_id = "PREVIEW_NO_UPLOAD"
