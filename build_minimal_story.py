@@ -747,7 +747,7 @@ def build_custom_story(material, prices):
         required_sections = _extract_source_sections(material)
 
         def _validate_story_output(output_text):
-            output_data = json.loads(output_text)
+            output_data = _parse_story_json(output_text)
             raw_slides = output_data.get("slides") or []
             missing_sections = []
             section_audit = {}
