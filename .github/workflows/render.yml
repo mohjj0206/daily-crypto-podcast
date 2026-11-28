@@ -47,7 +47,7 @@ jobs:
         env:
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
           # 正式渲染預設自動上傳；手動可明確關閉。測試模式由 Python 端強制跳過上傳。
-          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_youtube_upload || 'true' }}
+          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && (inputs.enable_youtube_upload && 'true' || 'false') || 'true' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
