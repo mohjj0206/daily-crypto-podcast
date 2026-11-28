@@ -905,23 +905,40 @@ def fetch_bybit_account_ratio():
 
 
 def fetch_trader_position_metrics():
-    all_accounts = fetch_okx_ratio(
-        "long-short-account-ratio",
-        {"ccy": "BTC", "period": "1D"},
-        "全體帳戶多空人數比",
+    # 持倉代理屬於加值分析；任一交易所端點失效，不應中止整集製片。
+    def safe_ratio(label, fetcher):
+        try:
+            return fetcher()
+        except Exception as error:
+            print(f"{label} unavailable; omitting this sub-metric: {error}")
+            return None
+
+    all_accounts = safe_ratio(
+        "OKX 全體帳戶多空比",
+        lambda: fetch_okx_ratio(
+            "long-short-account-ratio",
+            {"ccy": "BTC", "period": "1D"},
+            "全體帳戶多空人數比",
+        ),
     )
-    top_accounts = fetch_okx_ratio(
-        "long-short-account-ratio-contract-top-trader",
-        {"instId": "BTC-USDT-SWAP", "period": "1D"},
-        "前列交易者帳戶多空比",
+    top_accounts = safe_ratio(
+        "OKX 前列交易者帳戶多空比",
+        lambda: fetch_okx_ratio(
+            "long-short-account-ratio-contract-top-trader",
+            {"instId": "BTC-USDT-SWAP", "period": "1D"},
+            "前列交易者帳戶多空比",
+        ),
     )
-    top_positions = fetch_okx_ratio(
-        "long-short-position-ratio-contract-top-trader",
-        {"instId": "BTC-USDT-SWAP", "period": "1D"},
-        "前列交易者持倉多空比",
+    top_positions = safe_ratio(
+        "OKX 前列交易者持倉多空比",
+        lambda: fetch_okx_ratio(
+            "long-short-position-ratio-contract-top-trader",
+            {"instId": "BTC-USDT-SWAP", "period": "1D"},
+            "前列交易者持倉多空比",
+        ),
     )
     if all_accounts is None:
-        all_accounts = fetch_bybit_account_ratio()
+        all_accounts = safe_ratio("Bybit 全體帳戶多空比", fetch_bybit_account_ratio)
     return {
         "all_accounts": all_accounts,
         "top_accounts": top_accounts,
