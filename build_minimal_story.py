@@ -770,10 +770,11 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   background: radial-gradient(100% 100% at 50% 0%, #142746 0%, #091426 48%, #050914 100%);
   font-family: "Noto Sans CJK TC", "Noto Sans CJK", "Microsoft JhengHei", sans-serif; }}
 .broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; z-index: 0; }}
-.dark-mask {{ position: absolute; inset: 0; z-index: 1;
-  background: rgba(3, 7, 16, 0.46); }}
-.content {{ position: relative; z-index: 3; height: 100%; display: flex; flex-direction: column; }}
+  object-fit: cover; z-index: 2; right: 86px; left: auto; top: 180px;
+  bottom: 100px; width: 30%; height: auto; border: 2px solid rgba(56,189,248,.72);
+  border-radius: 18px; box-shadow: 0 0 34px rgba(56,189,248,.22); }}
+.dark-mask {{ display: none; }}
+.content {{ position: relative; z-index: 3; width: 64%; height: 100%; display: flex; flex-direction: column; }}
 .topline {{ display: flex; align-items: center; justify-content: space-between;
   color: #9fb4d1; font-size: 24px; letter-spacing: 3px; font-weight: 700; }}
 .brand {{ color: #fbbf24; }}
@@ -1266,17 +1267,10 @@ def render_main_story(story):
                 if requested_broll:
                     broll_path = requested_broll
                     last_broll_path = requested_broll
-                elif last_broll_path:
-                    broll_path = last_broll_path
-                    reused = True
-                    print(
-                        f"[Minimal] 第 {i + 1} 頁 Pixabay 查詢未命中，"
-                        f"沿用上一支已驗證素材：{os.path.basename(broll_path)}"
-                    )
                 else:
                     raise RuntimeError(
-                        "Pixabay 第一支實景影片下載失敗，停止製片；"
-                        "不允許以暗底或空白畫面冒充 Pixabay 素材。"
+                        f"Pixabay 第 {i + 1} 段未取得新的唯一素材；"
+                        "為避免同一集重複使用相同影片，停止製片。"
                     )
                 if broll_path not in validated_broll:
                     probe = subprocess.check_output(
@@ -1464,10 +1458,14 @@ def render_short_story(story, main_result):
                 clip_duration = clip_durations[i]
                 if clip_duration <= 0:
                     continue
-                # 每頁 Shorts 也輪替套用直式 Pixabay 實景動態底片。
+                # 每頁 Shorts 也必須取得本集尚未使用過的唯一直式素材。
                 short_broll_path = broll_engine.fetch_pixabay_broll(
                     story.get("broll_keywords"), broll_engine.VERTICAL
                 )
+                if not short_broll_path:
+                    raise RuntimeError(
+                        f"Pixabay Shorts 第 {i + 1} 段未取得新的唯一素材，停止輸出以避免重複畫面。"
+                    )
                 doc = _short_html(item["page"], item["reveal"], short_broll_path)
                 out = f"story_short_p{i}.mp4"
                 rec_sec = clip_duration + 0.4
