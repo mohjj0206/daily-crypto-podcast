@@ -949,84 +949,6 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
     }
 
 
-def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
-    """正式影片每幕至少 1,800 字；不足時以追加對話補足，絕不要求模型重寫整幕。"""
-    if is_test:
-        return act_text
-
-    minimum_chars = 1800
-    maximum_chars = 2200
-    current_text = str(act_text or "").strip()
-    chars = _spoken_chars(current_text)
-    if chars >= minimum_chars:
-        return current_text
-
-    for attempt in range(1, 3):
-        missing = minimum_chars - chars
-        # 留出緩衝，避免模型只補剛好缺少的字數，經清理後又低於門檻。
-        target_addition = min(max(missing + 180, 280), 500)
-        print(
-            f"第 {act_num} 幕（{act_name}）目前 {chars} 字，"
-            f"低於最低要求 {minimum_chars} 字，進行第 {attempt} 輪追加補強..."
-        )
-        expand_prompt = f"""你是【幣看趨勢】財經播客的資深編輯。以下是一幕已完成但字數不足的雙人播客逐字稿。
-幕次：第 {act_num} 幕「{act_name}」
-目前字數：{chars} 字；最低要求：{minimum_chars} 字；至少還缺 {missing} 字。
-請只寫一段可直接接在原稿最後面的「新增對話」，目標新增 {target_addition} 至 {target_addition + 120} 個繁體中文字。
-
-【原稿已經講過的內容，禁止重複】：
-{current_text}
-
-【本幕補充方向】：
-{context_hint}
-
-要求：
-1. 只輸出新增的對話，不要重貼、改寫或摘要原稿。
-2. 以「男：」或「女：」開頭，每句都是完整可口播台詞，兩位主播自然交鋒。
-3. 深入補充原稿尚未充分說明的因果、數據解讀、歷史對照、反方質疑或可驗證條件；不得換句話重複。
-4. 不得捏造數據、新聞、來源或價格；只使用原稿及本幕綱要已有的資訊。
-5. 不要新增任何 [SLIDE_x] 投影片錨點；原稿中的錨點必須原封不動保留。
-6. 不要 Markdown、標題、字數說明、編輯註解或 JSON，只輸出新增對話。
-7. 補充內容必須自然承接原稿最後一段，不能打招呼、不能重新開場，也不能用空泛風險套話灌水。
-"""
-        try:
-            addition = str(
-                call_gemini(expand_prompt, max_output_tokens=8192, timeout=300)
-            ).strip()
-            addition = re.sub(r"^\`\`\`(?:text)?\s*|\s*\`\`\`$", "", addition, flags=re.I)
-            addition_chars = _spoken_chars(addition)
-            has_speaker = bool(re.search(r"(?:^|\n)\s*(?:男|女)：", addition))
-            has_new_anchor = bool(re.search(r"\[SLIDE_\d+\]", addition))
-            if not addition or not has_speaker or has_new_anchor:
-                print(
-                    f"第 {act_num} 幕第 {attempt} 輪補強格式無效"
-                    f"（新增 {addition_chars} 字、主播標記={has_speaker}、新增錨點={has_new_anchor}），略過。"
-                )
-                continue
-
-            current_text = current_text + "\n" + addition
-            chars = _spoken_chars(current_text)
-            print(
-                f"第 {act_num} 幕追加補強 {addition_chars} 字，"
-                f"累計 {chars} 字。"
-            )
-            if chars >= minimum_chars:
-                if chars > maximum_chars:
-                    print(
-                        f"第 {act_num} 幕補強後 {chars} 字，略超過建議上限 "
-                        f"{maximum_chars}，但已達最低完整長度。"
-                    )
-                return current_text
-        except Exception as e:
-            print(f"第 {act_num} 幕第 {attempt} 輪補強失敗：{e}")
-
-    if chars < minimum_chars:
-        raise RuntimeError(
-            f"第 {act_num} 幕「{act_name}」只有 {chars} 字，"
-            f"低於最低要求 {minimum_chars} 字；停止後續影片製作，避免發布不完整內容。"
-        )
-    return current_text
-
 def _ensure_slide_anchors(script, slide_count):
     """只驗證逐字稿明確產生的分鏡錨點；絕不把缺失錨點平均塞進錯誤段落。"""
     anchors = [
@@ -1040,50 +962,6 @@ def _ensure_slide_anchors(script, slide_count):
             f" expected={expected}, actual={anchors}"
         )
     return script
-
-
-def _ensure_act_slide_anchors(act_text, expected_numbers, act_prompt, act_num, act_name, is_test):
-    """每幕先驗證分鏡，再做字數補強；缺錨點時重生整幕，絕不由補強稿偽造分鏡。"""
-    if is_test:
-        return act_text
-
-    expected = list(expected_numbers)
-    current = str(act_text or "").strip()
-    actual = [
-        int(value)
-        for value in re.findall(r"\[SLIDE_(\d+)\]", current)
-    ]
-    if actual == expected:
-        return current
-
-    missing = [number for number in expected if number not in actual]
-    print(
-        f"第 {act_num} 幕「{act_name}」原始稿分鏡不完整："
-        f"expected={expected}, actual={actual}；重新生成整幕，不以追加字數方式掩蓋。"
-    )
-    retry_prompt = f"""{act_prompt}
-
-【重要：上一次生成的分鏡驗收未通過】
-本幕必須且只能依序出現以下分鏡錨點：{ "、".join(f"[SLIDE_{n}]" for n in expected) }。
-上次缺少或錯誤的錨點：{ "、".join(f"[SLIDE_{n}]" for n in missing) or "錨點重複或順序錯誤" }。
-請重新完整撰寫本幕，不要只補幾句；每個錨點都必須放在對應主題段落第一句發言開頭，且每個恰好出現一次。
-不得輸出其他幕的錨點，不得省略任何一張投影片。只輸出完整雙人逐字稿。
-"""
-    retry_text = str(
-        call_gemini(retry_prompt, max_output_tokens=16384, timeout=300)
-    ).strip()
-    retry_anchors = [
-        int(value)
-        for value in re.findall(r"\[SLIDE_(\d+)\]", retry_text)
-    ]
-    if retry_anchors != expected:
-        raise RuntimeError(
-            f"第 {act_num} 幕「{act_name}」重新生成後分鏡仍不完整，停止製作。"
-            f" expected={expected}, actual={retry_anchors}。"
-            "為避免口播與簡報錯位，不會自動補塞錨點。"
-        )
-    print(f"第 {act_num} 幕重新生成成功，分鏡錨點完整：{retry_anchors}")
-    return retry_text
 
 
 def _spoken_chars(text):
@@ -1745,7 +1623,7 @@ def generate_tutorial_script(lesson, reference_note, config):
     concepts = "；".join(lesson.get("core_concepts") or [])
     myths = "；".join(lesson.get("common_misconceptions") or [])
     length_rule = (
-        "測試模式：五段各兩句以內，總長約 200 字。"
+        "測試模式：依題目選擇 3 到 8 段，每段簡短呈現，總長約 200 字。"
         if is_test else
         "正式版口播合計 5,800 到 6,500 字，段落數由題目複雜度決定。Shorts 口播 45 到 55 秒，約 180 到 230 字。"
     )
@@ -1762,7 +1640,7 @@ def generate_tutorial_script(lesson, reference_note, config):
 請先依題目知識範圍與複雜度自行決定 3 到 8 個段落，段落標題、順序、深度與篇幅皆由內容決定；不得套用固定五段順序，也不得要求每段相同句數。另外獨立輸出 18 到 30 張圖卡，每張 2 到 4 句口播，張數依知識點數量決定。
 每一張圖卡必須自帶完整欄位，禁止拿口播半句當標題：card_title 是 8 到 16 字的完整知識標題；hero_stat 是本頁核心數據或 4 到 10 字金句，例如「170 萬顆遠古沉睡幣」「UTXO 帳本機制」；bullet_points 是 2 到 3 條、每條 4 到 15 字的極簡短詞（1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭，如 15 分鐘 ➔ 6 秒），禁止超過 15 字。三個欄位都要是完整語意，不能停在「也就是說」這類半截句。
 開頭可依題目特性選擇問題、案例或反直覺事實，不強制使用鉤子。免責聲明「本集是公開資訊整理，不構成投資建議」自然放在適當位置。
-【知識密度】禁止空泛重複。每一段都要同時有四種內容：具體技術機制，例如 UTXO 的輸入與輸出、公私鑰如何簽名；真實歷史里程碑與年代，例如 2009 年創世區塊、2010 年一萬枚比特幣買披薩、2011 年首度突破 1 美元、歷次減半後的籌碼換手；深度對比，把遺失私鑰的遠古化石幣和現代機構的高成本活躍籌碼分開，說明它們怎麼改變真實流通供給；雙人交鋒，比特汪追問實戰痛點，以太喵用硬核數據回答，並自然用上本次口頭禪。
+【知識密度】禁止空泛重複。依各段主題選擇最適合的技術機制、歷史證據、數據比較或雙人交鋒，不要求每段都塞入相同種類的素材；資料不足的面向不可以硬湊。
 鐵律：繁體中文。角色只有比特汪與以太喵，男主播唯一名稱就是「比特汪」，嚴禁寫成「位元汪」「位元犬」或把 Bitcoin 譯成「位元」；台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤只供配音，不要出現在 card_title、hero_stat、bullet_points。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：
 {{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"cards":[{{"card_title":"完整標題","hero_stat":"核心金句","bullet_points":["完整要點一","完整要點二"],"lines":[{{"role":"男","text":"不含半截句的口播"}}]}}],"short_script":"男：...\\n女：..."}}
@@ -1775,7 +1653,7 @@ sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要引�
     except (ValueError, json.JSONDecodeError) as error:
         print(f"教學稿需要補一次合法 JSON：{error}")
         raw = call_gemini(
-            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須恰好 5 段，cards 必須 25 到 30 張。",
+            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須 3 到 8 段，cards 必須 18 到 30 張。",
             max_output_tokens=65536,
             timeout=300,
             json_mode=True,
