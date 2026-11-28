@@ -840,71 +840,31 @@ def _reference_news(mdata):
 
 
 def _pad_slide_news(news, mdata):
+    """只保留有來源的新聞卡；不為了湊固定張數虛構新聞。"""
     cleaned = []
     if isinstance(news, list):
         for item in news:
             if isinstance(item, dict) and (item.get("slide_title") or item.get("positive")):
                 cleaned.append(item)
             if len(cleaned) == 3:
-                return cleaned
-    references = _reference_news(mdata)
-    used = {
-        int(item.get("source_news_number"))
-        for item in cleaned
-        if isinstance(item.get("source_news_number"), int) and not isinstance(item.get("source_news_number"), bool)
-    }
-    cursor = 0
-    while len(cleaned) < 3:
-        if cursor < len(references):
-            title, summary = references[cursor]
-            number = cursor + 1
-            cursor += 1
-        else:
-            title, summary = "價格與均線", "今天仍可對照已取得的價格、均線與漲跌幅。"
-            number = len(cleaned) + 1
-        while number in used:
-            number += 1
-        used.add(number)
+                break
+        return cleaned
+
+    for index, (title, summary) in enumerate(_reference_news(mdata)[:3], 1):
         cleaned.append({
-            "source_news_number": number,
+            "source_news_number": index,
             "slide_title": title,
             "positive": summary,
-            "risk": "單則消息不能當成買賣指令，仍要看價格有沒有被成交量確認。",
+            "risk": "",
         })
-    if len(cleaned) < 3:
-        print(f"slide_news 只有 {len(news) if isinstance(news, list) else 0} 筆，已補齊到 {len(cleaned)} 筆。")
-    elif not isinstance(news, list) or len(news) < 3:
-        print("slide_news 不足 3 筆，已用當日新聞標題與摘要補齊。")
-    return cleaned[:3]
+    return cleaned
 
 
 def _pad_slide_week(week, mdata):
-    cleaned = []
-    if isinstance(week, list):
-        for item in week:
-            text = str(item).strip()
-            if text:
-                cleaned.append(text)
-            if len(cleaned) == 3:
-                return cleaned
-    metrics = (mdata or {}).get("btc_metrics") if isinstance(mdata, dict) else {}
-    metrics = metrics or {}
-    rsi = (mdata or {}).get("btc_rsi") if isinstance(mdata, dict) else ""
-    support = metrics.get("support")
-    resistance = metrics.get("resistance")
-    defaults = [
-        f"支撐觀察｜留意 BTC 是否守住 {format_usd(support)}。" if support else "支撐觀察｜留意 BTC 是否守住近期區間下緣。",
-        f"壓力觀察｜留意 BTC 是否站穩 {format_usd(resistance)}。" if resistance else "壓力觀察｜留意 BTC 是否站上近期區間上緣。",
-        f"RSI 觀察｜14 日 RSI 目前 {rsi}，只當動能參考，不是買賣指令。" if rsi else "RSI 觀察｜留意 14 日 RSI 靠近超買或超賣時，只當動能參考。",
-    ]
-    for line in defaults:
-        if len(cleaned) >= 3:
-            break
-        if line not in cleaned:
-            cleaned.append(line)
-    if not isinstance(week, list) or len([item for item in week if str(item).strip()]) < 3:
-        print("slide_week 不足 3 條，已用支撐、壓力與 RSI 補齊。")
-    return cleaned[:3]
+    """只保留編輯判斷認為有證據支持的情境；不固定補滿三條預測。"""
+    if not isinstance(week, list):
+        return []
+    return [str(item).strip() for item in week if str(item).strip()][:3]
 
 
 def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
