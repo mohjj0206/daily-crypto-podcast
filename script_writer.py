@@ -1296,7 +1296,7 @@ def generate_script(mdata, dca_data, config):
 
     # ── 步驟 B：依動態主題地圖一次生成完整逐字稿 ───────────────────────
     print(f"[腳本步驟 B] 依本集主題地圖生成完整口播（{slide_count} 個同步錨點；{target_length}）...")
-    act_prompt = f"""你是財經播客【幣看深潛】主編。請依本集專屬主題地圖，寫出完整、自然、有深度的雙人財經播客逐字稿。
+    script_prompt = f"""你是財經播客【幣看深潛】主編。請依本集專屬主題地圖，寫出完整、自然、有深度的雙人財經播客逐字稿。
 篇幅要求：{target_length}。
 
 【本集核心主軸】{editorial_brief.get('editorial_lead')}
@@ -1322,7 +1322,7 @@ def generate_script(mdata, dca_data, config):
 
 只輸出完整雙人逐字稿，不要說明、不要標題、不要 Markdown。"""
 
-    full_script = str(call_gemini(act_prompt, max_output_tokens=32768, timeout=360)).strip()
+    full_script = str(call_gemini(script_prompt, max_output_tokens=16384, timeout=360)).strip()
     expected_anchors = list(range(1, slide_count + 1))
     actual_anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", full_script)]
     if actual_anchors != expected_anchors:
@@ -1330,13 +1330,13 @@ def generate_script(mdata, dca_data, config):
             f"完整逐字稿錨點驗收未通過：expected={expected_anchors}, actual={actual_anchors}；"
             "重新生成完整稿一次，不自動補塞錨點。"
         )
-        retry_prompt = f"""{act_prompt}
+        retry_prompt = f"""{script_prompt}
 
 【上次生成未通過分鏡驗收】
 必須且只能依序出現以下錨點：{ "、".join(f"[SLIDE_{n}]" for n in expected_anchors) }。
 上次實際錨點：{actual_anchors}。
 請重新生成完整逐字稿，逐頁對應每一個錨點，不可省略、重複或改序。不要把稿件拆成固定幕數。"""
-        full_script = str(call_gemini(retry_prompt, max_output_tokens=32768, timeout=360)).strip()
+        full_script = str(call_gemini(retry_prompt, max_output_tokens=16384, timeout=360)).strip()
         actual_anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", full_script)]
     if actual_anchors != expected_anchors:
         raise RuntimeError(
@@ -1526,7 +1526,7 @@ def _structured_tutorial_cards(payload, sections, lesson):
             "layout": ("impact", "compare", "steps", "chart")[len(cards) % 4],
             "title": title,
             "headline": hero,
-            "myth": strip_bracket_tags(str(item.get("myth") or "不要把示意區間當成買點")),
+            "myth": strip_bracket_tags(str(item.get("myth") or "先分清概念與實際數據")),
             "truth": hero,
             "steps": bullets[:3],
             "lines": lines,
@@ -1574,7 +1574,7 @@ def _normalize_tutorial(payload, lesson):
     if len(short_lines) < 2:
         short_script = (
             "男：這集把原理講完了，完整版在頻道。\n"
-            "女：公開帳本只是模擬定期定額，不是真實成交。"
+            "女：真正重要的是把這集的核心概念用在判讀資訊，而不是照單全收。"
         )
         short_lines = _dialogue_lines(short_script)
     return {
@@ -1644,7 +1644,7 @@ def generate_tutorial_script(lesson, reference_note, config):
 鐵律：繁體中文。角色只有比特汪與以太喵，男主播唯一名稱就是「比特汪」，嚴禁寫成「位元汪」「位元犬」或把 Bitcoin 譯成「位元」；台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤只供配音，不要出現在 card_title、hero_stat、bullet_points。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：
 {{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"cards":[{{"card_title":"完整標題","hero_stat":"核心金句","bullet_points":["完整要點一","完整要點二"],"lines":[{{"role":"男","text":"不含半截句的口播"}}]}}],"short_script":"男：...\\n女：..."}}
-sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
+sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要自然總結本集核心問題並引導觀眾觀看完整教學；只有課題本身涉及定期定額時，才可提及模擬帳本。"""
     raw = call_gemini(
         prompt, max_output_tokens=65536, timeout=300, json_mode=True, models=PRODUCTION_MODELS,
     )
@@ -1672,7 +1672,7 @@ sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要引�
         try:
             expanded = call_gemini(
                 "以下教學 JSON 偏短。請依動態段落加深 narration 與 18 到 30 張 cards："
-                "補上 UTXO 或指標機制、有年代的歷史事件、遠古籌碼與現代活躍籌碼的對比，以及雙人追問。"
+                "補上與本集課題直接相關的技術機制、可靠歷史證據、數據對比與雙人追問；不要加入與課題無關的固定素材。"
                 "card_title、hero_stat、bullet_points 必須是完整短語，不能是口播半句，也不能含括號標籤。"
                 "維持原有 3 到 8 段動態結構、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
                 + raw[:12000],
