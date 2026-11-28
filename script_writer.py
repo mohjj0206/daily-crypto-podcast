@@ -1229,9 +1229,9 @@ def generate_script(mdata, dca_data, config):
 
 請完成：
 1. 找出今日最值得觀眾花時間的核心事件、數據異常或市場背離；若沒有重大事件，選擇最值得追查的一個問題，不得捏造。
-2. 判斷需要哪些證據才能解釋核心問題，優先採用至少 2 組不同來源交叉驗證。
+2. 判斷需要哪些證據才能解釋核心問題，優先採用至少 2 組不同來源交叉驗證；若可用來源不足，明確縮小結論範圍，不可補造證據。
 3. 決定敘事應從哪個問題或事件開始、如何推進、在哪裡收束；不必包含傳統開場、行情快篩、多空辯論、預測或投資心法。
-4. 從以下 {candidate_count} 個候選視覺素材中，依本集敘事需要挑選 6 到 {candidate_count} 張並重新排序；不要為了湊張數選不相關素材。每張必須回傳 source_slot（候選編號）與 title（具體標題），source_slot 不可重複。候選素材：{slide_slots}。若本集啟用 DCA，必須保留候選編號 {dca_candidate_slot} 的模擬帳本圖卡。
+4. 從以下 {candidate_count} 個候選視覺素材中，依本集敘事需要挑選 1 到 {candidate_count} 張並重新排序；不要為了湊張數選不相關素材。每張必須回傳 source_slot（候選編號）與 title（具體標題），source_slot 不可重複。候選素材：{slide_slots}。若本集啟用 DCA，必須保留候選編號 {dca_candidate_slot} 的模擬帳本圖卡。
 5. narrative_flow 用自然語言描述本集實際敘事順序、主題間因果關係、哪些主題應深入、哪些只需帶過；不得用第一幕、第二幕、第三幕或任何固定段落數。
 6. slide_news：最多 3 筆真正適合做新聞圖卡的新聞摘要；沒有足夠新聞就回傳較少筆，不要硬湊。
 7. slide_week：只有當今日資料足以支持未來 24 小時條件推演時才提供，最多 3 條；不適用時回傳空陣列。
@@ -1274,11 +1274,11 @@ def generate_script(mdata, dca_data, config):
         selected_plan.append(slide)
         used_slots.add(source_slot)
 
-    # 舊版或格式不完整的編輯 JSON 不會造成空簡報；回退到候選素材原順序。
-    if len(selected_plan) < 6:
+    # 舊版或格式不完整的編輯 JSON 不會造成空簡報；只有完全沒有有效選項時才回退。
+    if not selected_plan:
         selected_plan = [dict(slide) for slide in visual_candidates]
         used_slots = set(range(1, candidate_count + 1))
-        print("總編輯 slide_plan 不完整，回退候選素材；仍保留動態逐字稿敘事。")
+        print("總編輯 slide_plan 無有效選項，回退候選素材；不強制最低張數。")
 
     # 定投帳本是週期性固定資訊，只在該集有啟用時保留；不讓模型誤刪。
     if dca_candidate_slot and dca_candidate_slot not in used_slots:
@@ -1368,7 +1368,7 @@ def generate_script(mdata, dca_data, config):
         total_chars = _spoken_chars(full_script)
         print(f"完整逐字稿重新擴寫後：{total_chars} 字。")
         if total_chars < 3200:
-            raise RuntimeError(f"完整逐字稿只有 {total_chars} 字，低於 3,200 字最低門檻，停止製作。")
+            print(f"警告：完整逐字稿只有 {total_chars} 字，低於建議下限；保留已通過錨點驗證的內容繼續製作。")
 
     full_script = silence_gap_leaks(normalize_long_term_terms(full_script))
     _ensure_slide_anchors(full_script, slide_count)
@@ -1605,7 +1605,7 @@ def _load_tutorial_cache():
             cached = json.load(handle)
     except (OSError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 3 <= len(cached.get("sections") or []) <= 8:
+    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 1 <= len(cached.get("sections") or []) <= 8:
         return None
     print("[REUSE_SCRIPT] 使用 cache_last_tutorial_script.json，教學稿不呼叫 Gemini。")
     return cached
