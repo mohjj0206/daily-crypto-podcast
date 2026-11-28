@@ -1571,7 +1571,8 @@ def write_metadata(story, main_result):
 
 # ── 主流程 ───────────────────────────────────────────────
 def main():
-    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    # 正式故事影片完成後預設上傳；測試模式永遠只產生預覽。
+    enable_yt = (not IS_TEST) and os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() == "true"
     print(f"=== 極簡故事圖解線啟動 [{TODAY_STR}]（測試模式:{IS_TEST}）===")
     prices = fetch_opening_prices()
 
