@@ -927,9 +927,7 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
     bull_case = silence_gap_leaks(sanitize_text(payload.get("bull_case") or "")).strip()
     bear_case = silence_gap_leaks(sanitize_text(payload.get("bear_case") or "")).strip()
     opening_hook = silence_gap_leaks(sanitize_text(payload.get("opening_hook") or "")).strip()
-    act1_outline = str(payload.get("act1_outline") or "").strip()
-    act2_outline = str(payload.get("act2_outline") or "").strip()
-    act3_outline = str(payload.get("act3_outline") or "").strip()
+    narrative_flow = str(payload.get("narrative_flow") or "").strip()
 
     slide_news = _pad_slide_news(payload.get("slide_news"), mdata)
     slide_week = _pad_slide_week(payload.get("slide_week"), mdata)
@@ -944,9 +942,7 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
         "bull_case": bull_case,
         "bear_case": bear_case,
         "opening_hook": opening_hook,
-        "act1_outline": act1_outline,
-        "act2_outline": act2_outline,
-        "act3_outline": act3_outline,
+        "narrative_flow": narrative_flow,
         "slide_titles": slide_titles,
         "slide_news": slide_news,
         "slide_week": slide_week,
@@ -1309,17 +1305,12 @@ def generate_script(mdata, dca_data, config):
     slide_count = len(visual_plan)
     thermo_count = sum(1 for slide in visual_plan if slide["role"] == "thermometer")
 
-    # 三幕投影片分界
-    s1 = 5 if slide_count >= 14 else max(1, slide_count // 3)
-    s2 = 10 if slide_count >= 14 else max(s1 + 1, 2 * slide_count // 3)
-    p1_anchors = "；".join(
-        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan[:s1], 1)
+    # 動態主題地圖：不切三幕、不預設每個主題的篇幅或敘事職責。
+    slide_anchors = "；".join(
+        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan, 1)
     )
-    p2_anchors = "；".join(
-        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan[s1:s2], s1 + 1)
-    )
-    p3_anchors = "；".join(
-        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan[s2:], s2 + 1)
+    slide_slots = "；".join(
+        f"{index}.{slide['title']}" for index, slide in enumerate(visual_plan, 1)
     )
 
     if show_dca:
@@ -1340,9 +1331,6 @@ def generate_script(mdata, dca_data, config):
 
     angle_title, vocab_line, recent_angles, angle_id = load_show_angle()
     catchphrase_line, catchphrases = sample_host_catchphrases()
-    slide_slots = "；".join(
-        f"{index}.{slide['title']}" for index, slide in enumerate(visual_plan, 1)
-    )
     banned_terms = "、".join(EXCLUDED_PLATFORMS)
     mvrv_line = present_metric((mdata.get("mvrv") or {}).get("report"))
     mvrv_prompt = (
@@ -1363,23 +1351,23 @@ def generate_script(mdata, dca_data, config):
    兩人唇槍舌劍、自然吐槽，口播禁止使用 HODL 縮寫，一律自然說「長期持有」或「長期持有者」。
    避開禁忌詞：{banned_terms}。
 8. 【數字顯示】：所有年份、價格、百分比、小數、比率與數量一律使用阿拉伯數字，例如 0.587、27.53%、2026 年；禁止寫成「零點五八七」等中文數字形式。
-9. 【避免重複】：同一觀點只完整解釋一次；後續提及必須增加新數據、因果或不同角度，禁止換句話重述。避免每一幕都重複相同轉折句型。
+9. 【避免重複】：同一觀點只完整解釋一次；後續提及必須增加新數據、因果或不同角度，禁止換句話重述。避免重複相同轉折句型。
 10. 【口頭禪節制】：每位主持人全集最多使用 1 次招牌口頭禪，不得重複；不要為了塞入角色梗犧牲資訊密度。
-11. 【避免固定節目感】：三幕仍維持完整分析，但每集要依今日事件重新安排先後順序與證據鏈；禁止固定在每幕重複解釋 BTC 均線、恐慌指數或支撐壓力。
-12. 【簡報與口播逐頁同步（最高優先級）】：每個 [SLIDE_n] 都代表一張獨立簡報，標記後的整段口播直到下一個標記，只能講解該頁指定標題與同一主題的證據。必須先明確講出該頁標題所指的事件／指標／新聞，再依序說明事件細節、關鍵數據、因果與影響；不可把其他新聞、其他幣種或無關指標塞進同一頁。新聞人物、機構、事件日期、數字與後續影響必須放在對應新聞標題的頁面，不可只在口播提到、卻讓畫面顯示另一個主題。若該頁資料不足，寧可只呈現有證據的內容，不可用通用敘述填滿。下一個 [SLIDE_n] 出現時，必須立即切換到下一頁主題，不得跨頁延續前一個事件。"""
+11. 【避免固定節目感】：不得預設每集都要有開場破題、行情快篩、多空辯論、鏈上分析、情境推演或定投結尾。由今日最重要的事件與證據決定內容、順序、比重和收束方式；沒有必要的主題可以完全不講。
+12. 【簡報與口播逐頁同步（最高優先級）】：每個 [SLIDE_n] 都代表一張獨立簡報，標記後的整段口播直到下一個標記，只能講解該頁指定標題與同一主題的證據。必須先明確講出該頁標題所指的事件／指標／新聞，再依序說明事件細節、關鍵數據、因果與影響；不可把其他新聞、其他幣種或無關指標塞進同一頁。新聞人物、機構、事件日期、數字與後續影響必須放在對應新聞標題的頁面，不可只在口播提到、卻讓畫面顯示另一個主題。若該頁資料不足，寧可只呈現有證據的內容，不可用通用敘述填滿。下一個 [SLIDE_n] 出現時，必須立即切換到下一頁主題。"""
 
-    target_act_words = (
-        "約150至200字繁中（快速測試模式，各圖卡保留一句重點對話）"
-        if is_test
-        else "嚴格要求 1,800 至 2,200 字繁中深度長文（兩位主播逐字深入攻防對話，嚴格杜絕簡化與偷工減料）"
+    target_length = (
+        "測試模式約 200 字，保留全部投影片錨點，每頁至少一句有效對話"
+        if is_test else
+        "全篇約 5,500 至 6,500 字，依主題重要性自由分配篇幅；不可平均分配各頁，也不可為達字數重複灌水"
     )
 
-    # ── 步驟 A：總編輯深度定調 (Editorial Brief) ───────────────────────────
-    print("[腳本步驟 A] 總編輯深度定調 — 解構市場矛盾、背後資金意圖與三幕大綱...")
-    brief_prompt = f"""你是頂級加密貨幣財經播客【幣看趨勢】總編輯。
-請針對今日完整市場數據與 4 篇焦點新聞完整正文，進行深度解構與總編輯定調，生成一份深度的《今日總編輯核心論點大綱》。
+    # ── 步驟 A：總編輯建立本集專屬主題地圖 ───────────────────────────
+    print("[腳本步驟 A] 總編輯建立本集專屬主題地圖，依事件決定敘事順序與比重...")
+    brief_prompt = f"""你是頂級加密貨幣財經播客【幣看深潛】總編輯。
+請針對今日完整市場數據與焦點新聞正文，建立本集專屬的編輯判斷與主題地圖。每集都必須重新判斷，不可套用固定節目流程。
 
-【今日切入視角】{angle_title}，這只是分析透鏡，不是必須硬套的題目；若今日新聞或數據出現更強烈、可驗證的異常，優先以真實事件決定主軸。近 7 日已用視角（今日必須避開）：{recent_angles}。
+【今日切入視角】{angle_title}，只是分析透鏡，不是必須硬套的題目；若今日新聞或數據出現更強烈、可驗證的異常，優先以真實事件決定主軸。近 7 日已用視角（今日必須避免重複）：{recent_angles}。
 【今日節目模式】{show_format.get("title")}（{show_format.get("id")}）。{show_format.get("instruction")}
 【近 7 日內容去重規則】{_learning_prompt_line()}
 【可自然帶入的術語】{vocab_line}
@@ -1387,154 +1375,128 @@ def generate_script(mdata, dca_data, config):
 
 {full_report}
 
-請產出一份深度定調 JSON，要求：
-1. 找出今日市場最反常的矛盾或背離（例如價格漲但量能萎縮、散戶恐慌但巨鯨未拋、股幣背離等）。
-2. 拆解背後聰明錢、機構資金或主力籌碼的真實意圖。
-3. 歸納多方最強硬的論點，以及空方最具殺傷力的論點。
-4. 為整集節目擬定黃金前 15 秒開場懸念鉤子（含具體矛盾數字）。
-5. 規劃三幕式深度大綱：
-   - 第一幕大綱：全局矛盾破題與核心新聞正文深度細節拆解。
-   - 第二幕大綱：多空硬核攻防交鋒、均線/MVRV/籌碼拆穿表面雜訊。
-   - 第三幕大綱：情境A與情境B實戰推演、未來24小時觀察與紀律定投。
-6. 為全部 {slide_count} 頁簡報分別擬定新聞級標題（slide_titles，順序嚴格對應：{slide_slots}），禁止任何每天都能套用的公版標題。
-7. slide_news：3 筆焦點新聞圖卡摘要（含 source_news_number, slide_title, positive, risk）。
-8. slide_week：3 句未來 24 小時情境推演條件（情境A、情境B、防守底線）。
-9. 【每日選題差異化】不能因為固定數據欄位存在，就每天都把恐慌指數、均線、新聞、支撐壓力照同一順序講一遍。先判斷今日最值得觀眾花時間的單一核心事件、數據異常或市場背離，再用至少 2 組不同來源的證據交叉驗證；若沒有重大事件，就把一個反常數據做成調查問題。禁止沿用近 7 日核心矛盾、開場句型、投影片標題結構或相同三幕推進方式；不得為了求新而捏造事件或數據。
-10. 【簡報分鏡差異化】簡報必須跟隨今日節目模式的敘事順序，不得把所有集數都做成「情緒快篩→均線→六幣→新聞→多空→24 小時預測」。標題要描述當頁的具體證據或問題，不能只換同義詞。
-11. 【極簡圖解文案】所有會出現在投影片上的文字（slide_titles、slide_news 的 positive/risk、slide_week）都必須極簡：每句禁止超過 15 字，且濃縮為「1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭（如 15 分鐘 ➔ 6 秒）」，每頁至少提供 2～3 條有資訊的短句，主內容應充分利用畫面中央約 65～75% 的可用區域；保留必要留白，但不得只放標題或單行文字造成大面積空白。口播逐字稿不受此限，只有投影片文字要短。
+請完成：
+1. 找出今日最值得觀眾花時間的核心事件、數據異常或市場背離；若沒有重大事件，選擇最值得追查的一個問題，不得捏造。
+2. 判斷需要哪些證據才能解釋核心問題，優先採用至少 2 組不同來源交叉驗證。
+3. 決定敘事應從哪個問題或事件開始、如何推進、在哪裡收束；不必包含傳統開場、行情快篩、多空辯論、預測或投資心法。
+4. 為全部 {slide_count} 頁簡報分別擬定新聞級標題（slide_titles，順序嚴格對應：{slide_slots}），標題必須具體且有證據。
+5. narrative_flow 用自然語言描述本集實際敘事順序、主題間因果關係、哪些主題應深入、哪些只需帶過；不得用第一幕、第二幕、第三幕或任何固定段落數。
+6. slide_news：最多 3 筆真正適合做新聞圖卡的新聞摘要；沒有足夠新聞就回傳較少筆，不要硬湊。
+7. slide_week：只有當今日資料足以支持未來 24 小時條件推演時才提供，最多 3 條；不適用時回傳空陣列。
+8. 每日選題必須差異化，不可因固定數據欄位存在就每天照同一順序講恐慌指數、均線、六幣、新聞、多空和預測。
+9. 投影片文案極簡，每句不超過 15 字，主內容充分利用畫面中央可用區域，不得只放標題或單行文字造成大面積空白。
 
-只輸出合法 JSON 物件，格式：
+只輸出合法 JSON：
 {{
   "title": "32字內新聞級標題",
   "editorial_lead": "一句話核心主軸",
-  "core_conflict": "市場最反常矛盾背離",
-  "smart_money_intent": "資金真實意圖",
-  "bull_case": "多方最強硬論點",
-  "bear_case": "空方最強硬論點",
-  "opening_hook": "黃金前15秒懸念鉤子",
-  "act1_outline": "第一幕綱要",
-  "act2_outline": "第二幕綱要",
-  "act3_outline": "第三幕綱要",
+  "core_conflict": "最重要的矛盾或調查問題",
+  "smart_money_intent": "有證據才提出資金意圖，否則留空",
+  "bull_case": "有證據才提出多方論點，否則留空",
+  "bear_case": "有證據才提出空方論點，否則留空",
+  "opening_hook": "若適合才提供開場鉤子，不適合可留空",
+  "narrative_flow": "本集動態敘事流程與篇幅分配",
   "slide_titles": ["標題1", "標題{slide_count}"],
-  "slide_news": [{{"source_news_number": 1, "slide_title": "標題", "positive": "利多", "risk": "風險"}}],
-  "slide_week": ["情境A", "情境B", "防守線"]
+  "slide_news": [],
+  "slide_week": []
 }}"""
 
     brief_raw = call_gemini(brief_prompt, max_output_tokens=8192, timeout=120, json_mode=True)
     editorial_brief = _parse_editorial_brief(brief_raw, mdata, slide_count)
     print(f"[總編輯定調完成] 標題：{editorial_brief['title']} ｜ 核心主軸：{editorial_brief['editorial_lead']}")
     print(f"[核心矛盾] {editorial_brief['core_conflict']}")
+    print(f"[動態敘事地圖] {editorial_brief.get('narrative_flow') or '依投影片主題順序自由展開'}")
 
-    # ── 步驟 B：三幕式分段深度擴寫 (確保 5,500～6,500 字) ───────────────────
-    # 第一幕：全局矛盾與盤面真相
-    print(f"[腳本步驟 B-1] 正在生成【第一幕：全局矛盾與盤面真相】（目標長度：{target_act_words}）...")
-    act1_prompt = f"""你是財經播客【幣看趨勢】主編。現在請為整集節目生成【第一幕：全局矛盾與盤面真相】的深度口播逐字稿。
-長度配額：{target_act_words}。
+    # ── 步驟 B：依動態主題地圖一次生成完整逐字稿 ───────────────────────
+    print(f"[腳本步驟 B] 依本集主題地圖生成完整口播（{slide_count} 個同步錨點；{target_length}）...")
+    act_prompt = f"""你是財經播客【幣看深潛】主編。請依本集專屬主題地圖，寫出完整、自然、有深度的雙人財經播客逐字稿。
+篇幅要求：{target_length}。
 
-【今日切入視角】{angle_title}
-【今日核心主軸】{editorial_brief.get('editorial_lead')}
-【總編輯核心矛盾】{editorial_brief.get('core_conflict')}
-【第一幕總編輯綱要】{editorial_brief.get('act1_outline')}
-【黃金前15秒破題鉤子】{editorial_brief.get('opening_hook')}
+【本集核心主軸】{editorial_brief.get('editorial_lead')}
+【核心矛盾／調查問題】{editorial_brief.get('core_conflict')}
+【編輯敘事地圖】{editorial_brief.get('narrative_flow')}
+【開場鉤子】{editorial_brief.get('opening_hook')}
 【雙主播口頭禪】{catchphrase_line}
 【可自然帶入術語】{vocab_line}
 {mvrv_prompt}
-【第一幕任務與內容指南】：
-1. 【黃金前 15 秒震撼破題】：第一句必須直接拋出當日最震撼的數據衝突或懸疑問句（參考上方鉤子），用上具體矛盾數字。前兩句禁止早安、自我介紹、節目報幕。免責宣告（「本節目僅供市場數據整理，不構成投資建議」）在鉤子說完後第 20~30 秒自然帶過，不可刪除。
-2. 【深度深挖新聞正文】：深入引用焦點新聞正文（新聞 1-4）中的具體細節、人物引述、機構數據與深層背景脈絡，嚴禁浮於表面，嚴禁講空話。
-3. 【市場溫度計速掃】：用約 3 分鐘做完情緒溫度計與主流幣價格快篩，安靜的幣種一句話帶過。
 {dca_prompt_section}
-4. 【隱藏投影片錨點】：本幕必須依序放入前半段 {s1} 個投影片錨點。每個對應段落的第一句發言開頭（角色名與情緒標籤之後）必須立刻放入對應標記，每個標記恰好出現一次，嚴格依序，不可念出標記：
-   {p1_anchors}
-5. 第一幕結尾銜接後續盤面多空博弈，不說再見、不使用分段結尾。
+
+【本集必須對應的投影片主題，依序逐頁處理】：
+{slide_anchors}
+
+每個錨點必須且只能出現一次，嚴格依序。錨點要放在該頁第一句發言開頭（角色名與情緒標籤之後），例如「男：[analytical][SLIDE_1]...」。每個錨點後的口播只談該頁主題，直到下一個錨點才切換。每頁依資料重要性分配篇幅，不可平均分配；同一頁若證據豐富可深入拆解，若證據有限就精簡，不可用空話填滿。不可新增沒有對應投影片的新聞或指標段落。
+
+【敘事自由度】不得將內容切成固定三幕或任何固定段落數。不得為了符合既定節目流程而硬塞行情快篩、多空辯論、鏈上分析、未來 24 小時預測、定投心法或固定收尾。某項內容只有在今日證據與主題確實需要時才可出現。可依本集題材採用調查報導、事件追蹤、數據拆解、歷史比較、機制教學、觀點辯論、風險情境或其他最合適的敘事方式；也可以混合使用。開場與結尾形式由內容決定。
 
 {common_rules}
 
 【數據與新聞資料庫】：
 {full_report}
-"""
-    act1_text = call_gemini(act1_prompt, max_output_tokens=16384, timeout=300)
-    act1_text = _ensure_act_slide_anchors(act1_text, range(1, s1 + 1), act1_prompt, 1, "全局矛盾與盤面真相", is_test)
-    act1_text = _expand_act_if_short(act1_text, 1, "全局矛盾與盤面真相", editorial_brief.get("core_conflict", ""), is_test)
-    print(f"第一幕生成完畢，字數：{_spoken_chars(act1_text)} 字。")
 
-    act1_tail = act1_text.strip()[-500:] if len(act1_text.strip()) > 500 else act1_text.strip()
+只輸出完整雙人逐字稿，不要說明、不要標題、不要 Markdown。"""
 
-    # 第二幕：多空硬核交鋒與籌碼拆解
-    print(f"[腳本步驟 B-2] 正在生成【第二幕：多空硬核交鋒與籌碼拆解】（目標長度：{target_act_words}）...")
-    act2_prompt = f"""你是財經播客【幣看趨勢】主編。現在請延續第一幕的對話，生成【第二幕：多空硬核交鋒與籌碼拆解】的深度口播逐字稿。
-長度配額：{target_act_words}。
+    full_script = str(call_gemini(act_prompt, max_output_tokens=32768, timeout=360)).strip()
+    expected_anchors = list(range(1, slide_count + 1))
+    actual_anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", full_script)]
+    if actual_anchors != expected_anchors:
+        print(
+            f"完整逐字稿錨點驗收未通過：expected={expected_anchors}, actual={actual_anchors}；"
+            "重新生成完整稿一次，不自動補塞錨點。"
+        )
+        retry_prompt = f"""{act_prompt}
 
-【今日切入視角】{angle_title}
-【今日核心主軸】{editorial_brief.get('editorial_lead')}
-【總編輯第二幕綱要】{editorial_brief.get('act2_outline')}
-【背後資金意圖】{editorial_brief.get('smart_money_intent')}
-【多方最強硬點】{editorial_brief.get('bull_case')}
-【空方最強硬點】{editorial_brief.get('bear_case')}
-【口頭禪限制】不要刻意加入固定口頭禪；第一幕若已使用任何口頭禪，第二幕不得重複。
-【可自然帶入術語】{vocab_line}
-{mvrv_prompt}
-【承接第一幕結尾】：
-上一幕結尾對話為：
-「{act1_tail}」
-請直接順著這段對話自然展開，絕不重複第一幕已報過的報價或溫度計；若需回顧概念，必須新增一項不同證據或因果推論，絕不打招呼或說轉場廢話！
+【上次生成未通過分鏡驗收】
+必須且只能依序出現以下錨點：{ "、".join(f"[SLIDE_{n}]" for n in expected_anchors) }。
+上次實際錨點：{actual_anchors}。
+請重新生成完整逐字稿，逐頁對應每一個錨點，不可省略、重複或改序。不要把稿件拆成固定幕數。"""
+        full_script = str(call_gemini(retry_prompt, max_output_tokens=32768, timeout=360)).strip()
+        actual_anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", full_script)]
+    if actual_anchors != expected_anchors:
+        raise RuntimeError(
+            "完整逐字稿分鏡錨點缺失、重複或順序錯誤，停止製作以避免口播與簡報錯位。"
+            f" expected={expected_anchors}, actual={actual_anchors}"
+        )
 
-【第二幕任務與內容指南】：
-1. 【多空硬核交鋒與針鋒相對】：以太喵與比特汪針對核心矛盾展開真實攻防硬核辯論！以太喵用客觀數據給比特汪踩煞車，比特汪從宏觀與定投邏輯反擊。
-2. 【深度指標拆解】：依實際提供的資料引用 100日/200日均線、100週/200週均線、MVRV Z-Score（僅在有效數據存在時）、交易所持倉多空比與資金費率、穩定幣市值增減與鏈上轉帳活躍度；缺少的指標直接略過，不得補值或提及缺漏。
-3. 【拆穿表面雜訊】：分辨「假突破與真吸籌」、「縮量陰跌與恐慌換手」，點破市場表象之下的主力底牌。
-4. 【隱藏投影片錨點】：本幕必須依序放入中間段 {s2 - s1} 個投影片錨點。每個對應段落的第一句發言開頭立刻放入對應標記，每個標記恰好出現一次，嚴格依序：
-   {p2_anchors}
+    total_chars = _spoken_chars(full_script)
+    if not is_test and total_chars < 4800:
+        print(f"完整逐字稿目前 {total_chars} 字，低於 4800，嘗試依原主題地圖追加深度內容...")
+        for attempt in range(1, 3):
+            missing = 4800 - total_chars
+            supplement_prompt = f"""以下是已完成的雙人播客逐字稿，目前約 {total_chars} 字，至少需要 4,800 字。
+請只輸出可追加在全文最後面的新對話，補充約 {min(max(missing + 150, 350), 900)} 字。
+只可深化已出現的主題，補充新的證據解讀、因果、歷史比較或投資人常見誤判；不得引入新主題、不得新增 [SLIDE_n] 錨點、不得重複既有觀點。
+每句以男：或女：開頭，繁體中文，遵守以下金額與角色規範：{common_rules}
+原稿最後 1,200 字：
+{full_script[-1200:]}"""
+            try:
+                addition = str(call_gemini(supplement_prompt, max_output_tokens=8192, timeout=180)).strip()
+                if not addition or re.search(r"\[SLIDE_\d+\]", addition):
+                    continue
+                if not re.search(r"(?:^|\n)\s*(?:男|女)：", addition):
+                    continue
+                full_script += "\n" + addition
+                total_chars = _spoken_chars(full_script)
+                print(f"完整逐字稿追加第 {attempt} 次補強，累計 {total_chars} 字。")
+                if total_chars >= 4800:
+                    break
+            except Exception as error:
+                print(f"完整逐字稿補強第 {attempt} 次失敗：{error}")
+        if total_chars < 3200:
+            raise RuntimeError(f"完整逐字稿只有 {total_chars} 字，低於 3,200 字最低門檻，停止製作。")
 
-{common_rules}
+    full_script = silence_gap_leaks(normalize_long_term_terms(full_script))
+    _ensure_slide_anchors(full_script, slide_count)
 
-【數據與新聞資料庫】：
-{full_report}
-"""
-    act2_text = call_gemini(act2_prompt, max_output_tokens=16384, timeout=300)
-    act2_text = _ensure_act_slide_anchors(act2_text, range(s1 + 1, s2 + 1), act2_prompt, 2, "多空硬核交鋒與籌碼拆解", is_test)
-    act2_text = _expand_act_if_short(act2_text, 2, "多空硬核交鋒與籌碼拆解", editorial_brief.get("smart_money_intent", ""), is_test)
-    print(f"第二幕生成完畢，字數：{_spoken_chars(act2_text)} 字。")
-
-    act2_tail = act2_text.strip()[-500:] if len(act2_text.strip()) > 500 else act2_text.strip()
-
-    # 第三幕：實戰推演與未來 24 小時驗證劇本
-    print(f"[腳本步驟 B-3] 正在生成【第三幕：實戰推演與未來 24 小時驗證劇本】（目標長度：{target_act_words}）...")
-    conditions_guide = editorial_brief.get("slide_week") or []
-    act3_prompt = f"""你是財經播客【幣看趨勢】主編。現在請延續第二幕的對話，生成【第三幕：實戰推演與未來 24 小時驗證劇本】的深度口播逐字稿，為本集節目完美收尾。
-長度配額：{target_act_words}。
-
-【今日切入視角】{angle_title}
-【今日核心主軸】{editorial_brief.get('editorial_lead')}
-【總編輯第三幕綱要】{editorial_brief.get('act3_outline')}
-【未來24小時情境條件】
-1. {conditions_guide[0] if len(conditions_guide) > 0 else '情境A'}
-2. {conditions_guide[1] if len(conditions_guide) > 1 else '情境B'}
-3. {conditions_guide[2] if len(conditions_guide) > 2 else '關鍵防守線'}
-【口頭禪限制】不要刻意加入固定口頭禪；前兩幕若已使用任何口頭禪，第三幕不得重複。
-【可自然帶入術語】{vocab_line}
-
-【承接第二幕結尾】：
-上一幕結尾對話為：
-「{act2_tail}」
-請直接順著這段對話自然推進，不重複已討論過的均線與指標定義；只補充新的情境條件、驗證訊號與風險界線！
-
-【第三幕任務與內容指南】：
-1. 【未來 24 小時實戰推演】：給出清晰嚴密的條件推演：「如果發生情境 A ➔ 代表什麼、後續如何確認；如果跌破關鍵支撐 B ➔ 代表什麼、防守線在哪裡」。
-2. 【投資心法與紀律定投】：比特汪總結抗波動心理學，強調不猜最低點、不盲目追高殺低的紀律定投與倉位管理，客觀說明超賣不保證立刻反彈。
-3. 【主播幽默收尾】：兩位主播自然道別，使用本集獨有的具體觀察收束；不要刻意加入或重複口頭禪，絕不講空話。
-4. 【隱藏投影片錨點】：本幕必須依序放入後續 {slide_count - s2} 個投影片錨點。每個對應段落的第一句發言開頭立刻放入對應標記，每個標記恰好出現一次，嚴格依序：
-   {p3_anchors}
-
-{common_rules}
-
-【數據與新聞資料庫】：
-{full_report}
-"""
-    act3_text = call_gemini(act3_prompt, max_output_tokens=16384, timeout=300)
-    act3_text = _ensure_act_slide_anchors(act3_text, range(s2 + 1, slide_count + 1), act3_prompt, 3, "實戰推演與未來 24 小時驗證劇本", is_test)
-    act3_text = _expand_act_if_short(act3_text, 3, "實戰推演與未來 24 小時驗證劇本", editorial_brief.get("act3_outline", ""), is_test)
-    print(f"第三幕生成完畢，字數：{_spoken_chars(act3_text)} 字。")
+    # 舊欄位保留給既有快取與外部流程相容；僅按字元位置切分，不代表節目段落或固定結構。
+    split_anchor = max(1, (slide_count + 1) // 2)
+    split_match = re.search(rf"\[SLIDE_{split_anchor}\]", full_script)
+    split_at = split_match.start() if split_match else len(full_script) // 2
+    part1_raw = full_script[:split_at].strip()
+    part2_raw = full_script[split_at:].strip()
+    part3_raw = ""
+    print(f"=== 動態主題逐字稿完成！總字數：{_spoken_chars(full_script)} 繁中字 ===")
+    if not is_test:
+        _log_length_gate(_spoken_chars(full_script), "每日動態主題逐字稿")
 
     # ── 後處理與整合 ──────────────────────────────────────────────────────
     act1_raw = silence_gap_leaks(normalize_long_term_terms(act1_text))
@@ -1585,12 +1547,12 @@ def generate_script(mdata, dca_data, config):
         slide["title"] = title
     fill_story_slide_bodies(visual_plan, editorial_lead, slide_news_details, slide_24h_conditions)
     fill_slide_bodies_from_narration(visual_plan, full_script)
-    opening_hook = editorial_brief.get("opening_hook") or _opening_hook(act1_raw)
+    opening_hook = editorial_brief.get("opening_hook") or _opening_hook(full_script)
 
     result = {
-        "part1_raw": act1_raw,
-        "part2_raw": f"{act2_raw}\n{act3_raw}",
-        "part3_raw": act3_raw,
+        "part1_raw": part1_raw,
+        "part2_raw": part2_raw,
+        "part3_raw": part3_raw,
         "full_script": full_script,
         "ai_title": ai_title,
         "video_title": video_title,
