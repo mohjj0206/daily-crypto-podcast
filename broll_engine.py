@@ -52,6 +52,7 @@ _MAX_RETRIES = 2
 
 # 同集輪換狀態：記錄每個版型已用過的清單，避免重複。
 _episode_used = {HORIZONTAL: [], VERTICAL: []}
+_episode_used_ids = set()
 
 # 英文保底關鍵字輪替序位（每呼叫一次取下一個，讓每頁底片畫面有變化）。
 _keyword_rotation = {"index": 0}
@@ -76,6 +77,7 @@ def reset_episode_rotation():
     """每次開新的一集前呼叫，清除同集輪換紀錄。"""
     _episode_used[HORIZONTAL] = []
     _episode_used[VERTICAL] = []
+    _episode_used_ids.clear()
     _keyword_rotation["index"] = 0
     _query_rotation["index"] = 0
     for stats in _episode_stats.values():
@@ -232,15 +234,10 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
             if _LAST_QUERY_ERROR:
                 last_reason = _LAST_QUERY_ERROR
             continue
-        # 先挑同集還沒用過的，再退回允許重複。
-        ordered_hits = sorted(
-            hits,
-            key=lambda hit: (hit.get("id") in used),
-        )
-        for hit in ordered_hits:
+        # 嚴格禁止同一支 Pixabay 影片在同一集重複使用（橫式／直式共用 ID 集合）。
+        for hit in hits:
             video_id = hit.get("id")
-            # 同集已用過的影片，只要還有未用過的候選就跳過，避免連續重複。
-            if video_id in used and len(ordered_hits) > 1:
+            if video_id is None or video_id in _episode_used_ids:
                 continue
             video_url = _pick_video_url(hit)
             if not video_url:
@@ -255,6 +252,7 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
                     continue
                 local = dest
             used.append(video_id)
+            _episode_used_ids.add(video_id)
             _episode_stats[orient]["success"] += 1
             print(
                 f"[Pixabay B-Roll] 成功套用實景動態影片：{query} -> "
@@ -263,5 +261,5 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
             return local
 
     _episode_stats[orient]["failed"] += 1
-    print(f"[Pixabay B-Roll] 查詢失敗 ({last_reason})，退回預設暗底")
+    print(f"[Pixabay B-Roll] 查詢失敗 ({last_reason})，不重複使用舊素材，回傳無素材")
     return None
