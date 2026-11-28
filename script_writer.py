@@ -1309,28 +1309,23 @@ def generate_script(mdata, dca_data, config):
 
     total_chars = _spoken_chars(full_script)
     if not is_test and total_chars < 4800:
-        print(f"完整逐字稿目前 {total_chars} 字，低於 4800，嘗試依原主題地圖追加深度內容...")
-        for attempt in range(1, 3):
-            missing = 4800 - total_chars
-            supplement_prompt = f"""以下是已完成的雙人播客逐字稿，目前約 {total_chars} 字，至少需要 4,800 字。
-請只輸出可追加在全文最後面的新對話，補充約 {min(max(missing + 150, 350), 900)} 字。
-只可深化已出現的主題，補充新的證據解讀、因果、歷史比較或投資人常見誤判；不得引入新主題、不得新增 [SLIDE_n] 錨點、不得重複既有觀點。
-每句以男：或女：開頭，繁體中文，遵守以下金額與角色規範：{common_rules}
-原稿最後 1,200 字：
-{full_script[-1200:]}"""
-            try:
-                addition = str(call_gemini(supplement_prompt, max_output_tokens=8192, timeout=180)).strip()
-                if not addition or re.search(r"\[SLIDE_\d+\]", addition):
-                    continue
-                if not re.search(r"(?:^|\n)\s*(?:男|女)：", addition):
-                    continue
-                full_script += "\n" + addition
-                total_chars = _spoken_chars(full_script)
-                print(f"完整逐字稿追加第 {attempt} 次補強，累計 {total_chars} 字。")
-                if total_chars >= 4800:
-                    break
-            except Exception as error:
-                print(f"完整逐字稿補強第 {attempt} 次失敗：{error}")
+        print(f"完整逐字稿目前 {total_chars} 字，低於 4,800，重新完整擴寫一次；不在最後一張投影片後追加，避免分鏡失衡。")
+        expansion_prompt = f"""{script_prompt}
+
+【完整稿長度驗收未通過】
+上次完整逐字稿只有 {total_chars} 字，低於 4,800 字。
+請重新撰寫整份完整逐字稿，目標 5,500 至 6,500 字；必須保留全部 {slide_count} 個投影片錨點，且每個錨點恰好一次、順序不變。
+依各主題證據量擴寫，不可平均灌水、不可重複觀點、不可新增主題，也不可把補充內容全部塞進最後一張投影片。
+只輸出完整逐字稿，不要解釋。"""
+        full_script = str(call_gemini(expansion_prompt, max_output_tokens=16384, timeout=360)).strip()
+        actual_anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", full_script)]
+        if actual_anchors != expected_anchors:
+            raise RuntimeError(
+                "完整逐字稿擴寫後分鏡錨點缺失、重複或順序錯誤，停止製作。"
+                f" expected={expected_anchors}, actual={actual_anchors}"
+            )
+        total_chars = _spoken_chars(full_script)
+        print(f"完整逐字稿重新擴寫後：{total_chars} 字。")
         if total_chars < 3200:
             raise RuntimeError(f"完整逐字稿只有 {total_chars} 字，低於 3,200 字最低門檻，停止製作。")
 
