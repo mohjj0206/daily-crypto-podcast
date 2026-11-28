@@ -653,11 +653,21 @@ def _dialogue_count(dialogues):
 
 
 def _expand_dialogues(dialogues):
-    script = "\n".join(f"{role}：{text}" for role, text in dialogues)
+    # 擴寫前把畫面錨點放回逐字稿，避免補稿後資料卡失去與口播的同步位置。
+    anchor_by_index = {}
+    for slide_number, dialogue_index in SPECIAL_SLIDE_ANCHOR_INDEXES.items():
+        anchor_by_index.setdefault(dialogue_index, []).append(slide_number)
+    lines = []
+    for index, (role, text) in enumerate(dialogues):
+        for slide_number in sorted(anchor_by_index.get(index, [])):
+            lines.append(f"[SLIDE_{slide_number}]")
+        lines.append(f"{role}：{text}")
+    script = "\n".join(lines)
     expanded = call_gemini(
         "以下逐字稿偏短。請深度擴寫補強，補充更多白話例子、歷史細節與風險分析。"
         "保持「男：」「女：」開頭、繁體中文、整數美元，禁止台幣、小數金額、承諾獲利與槓桿。"
-        "只輸出擴寫後的逐字稿，不要標題。\n\n"
+        "原有所有 [SLIDE_n] 畫面同步標記必須逐字保留、順序不變，並放在對應主題首次開始的口播之前；"
+        "不得刪除、重新編號或把標記當成口播。只輸出擴寫後的逐字稿，不要標題。\n\n"
         + script
     )
     _, expanded_dialogues = make_dialogues("標題：擴寫\n" + expanded, "")
