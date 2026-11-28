@@ -3003,7 +3003,7 @@ def render_short_video(sdata, mdata, config):
             with open(short_broll_path, "rb") as short_broll_file:
                 short_broll_data = base64.b64encode(short_broll_file.read()).decode("ascii")
             short_broll_markup = (
-                '<video class="broll-bg" autoplay muted loop playsinline '
+                '<video class="broll-bg" autoplay muted playsinline preload="auto" '
                 f'src="data:video/mp4;base64,{short_broll_data}"></video>'
                 '<div class="broll-veil"></div>'
             )
@@ -3567,13 +3567,16 @@ def _render_tutorial_short(tutorial):
     avatars = "".join(hosts)
     short_broll_path = None
     try:
-        short_broll_path = broll_engine.fetch_pixabay_broll(
+        short_broll_path = broll_engine.fetch_pixabay_broll_reel(
             presentation.assign_broll_query({
                 "title": tutorial.get("title", ""),
                 "body": " ".join(str(line.get("text") or "") for line in lines),
                 "layout": "",
             }),
+            card_clock,
             orientation=broll_engine.VERTICAL,
+            clip_seconds=4.0,
+            max_clips=12,
         )
     except Exception as error:
         print(f"Tutorial Shorts Pixabay 取得失敗，改用動態背景：{error}")
@@ -3581,7 +3584,7 @@ def _render_tutorial_short(tutorial):
         with open(short_broll_path, "rb") as handle:
             short_broll_data = base64.b64encode(handle.read()).decode("ascii")
         short_broll_markup = (
-            '<video class="tutorial-broll" autoplay muted loop playsinline '
+            '<video class="tutorial-broll" autoplay muted playsinline preload="auto" '
             f'src="data:video/mp4;base64,{short_broll_data}"></video>'
         )
     else:
@@ -3598,12 +3601,12 @@ body::before {{ content:""; position:absolute; inset:-8%;
 @keyframes flow {{ to {{ transform:translate3d(48px,24px,0); }} }}
 .tutorial-broll {{ position:absolute; inset:0; width:100%; height:100%;
   object-fit:cover; z-index:0; opacity:.76; }}
-body::after {{ content:""; position:absolute; inset:0; z-index:1; background:rgba(3,8,18,.36); }}
+body::after {{ content:""; position:absolute; inset:0; z-index:1; background:rgba(3,8,18,.14); }}
 .badge {{ position:absolute; top:70px; left:50px; right:50px; z-index:2; color:#f59e0b; font-size:40px; font-weight:800; }}
 h1 {{ position:absolute; top:160px; left:50px; right:50px; z-index:2; font-size:68px; line-height:1.2; }}
 .deck {{ position:absolute; left:50px; right:50px; top:460px; height:900px; z-index:2; }}
 article {{ position:absolute; inset:0; display:grid; place-items:center; padding:48px; border-radius:36px;
-  background:rgba(15,23,42,.92); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
+  background:rgba(15,23,42,.42); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
   opacity:0; animation:card var(--card-duration,2s) linear both;
   animation-delay:var(--card-delay,0s); }}
 @keyframes card {{
