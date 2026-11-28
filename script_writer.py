@@ -1508,9 +1508,8 @@ def _normalize_tutorial(payload, lesson):
     fallback_titles = [str(item).strip() for item in (lesson.get("core_concepts") or []) if str(item).strip()]
     if not fallback_titles:
         fallback_titles = [str(lesson.get("title") or "核心概念")]
-    while len(raw_sections) < 3:
-        index = len(raw_sections)
-        raw_sections.append({"title": fallback_titles[index % len(fallback_titles)], "narration": "", "bullets": []})
+    if not raw_sections:
+        raw_sections.append({"title": fallback_titles[0], "narration": "", "bullets": []})
     sections = []
     for index, item in enumerate(raw_sections):
         title = str(item.get("title") or fallback_titles[index % len(fallback_titles)]).strip()
@@ -1570,7 +1569,7 @@ def _load_tutorial_cache():
             cached = json.load(handle)
     except (OSError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 3 <= len(cached.get("sections") or []) <= 8:
+    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 1 <= len(cached.get("sections") or []) <= 8:
         return None
     print("[REUSE_SCRIPT] 使用 cache_last_tutorial_script.json，教學稿不呼叫 Gemini。")
     return cached
@@ -1588,7 +1587,7 @@ def generate_tutorial_script(lesson, reference_note, config):
     concepts = "；".join(lesson.get("core_concepts") or [])
     myths = "；".join(lesson.get("common_misconceptions") or [])
     length_rule = (
-        "測試模式：依題目選擇 3 到 8 段，每段簡短呈現，總長約 200 字。"
+        "測試模式：段落數完全依題目需要決定，可為 1 到 8 段；每段簡短呈現，總長約 200 字。"
         if is_test else
         "正式版口播合計 5,800 到 6,500 字，段落數由題目複雜度決定。Shorts 口播 45 到 55 秒，約 180 到 230 字。"
     )
@@ -1602,14 +1601,14 @@ def generate_tutorial_script(lesson, reference_note, config):
 常見誤區：{myths}
 資料邊界：{reference_note}
 {length_rule}
-請先依題目知識範圍與複雜度自行決定 3 到 8 個段落，段落標題、順序、深度與篇幅皆由內容決定；不得套用固定五段順序，也不得要求每段相同句數。另外獨立輸出 18 到 30 張圖卡，每張 2 到 4 句口播，張數依知識點數量決定。
+請先依題目知識範圍與複雜度自行決定必要的段落數（1 到 8 段皆可，沒有必要就不要湊數），段落標題、順序、深度與篇幅皆由內容決定；不得套用固定段落順序，也不得要求每段相同句數。另外獨立輸出 18 到 30 張圖卡，每張 2 到 4 句口播，張數依知識點數量決定。
 每一張圖卡必須自帶完整欄位，禁止拿口播半句當標題：card_title 是 8 到 16 字的完整知識標題；hero_stat 是本頁核心數據或 4 到 10 字金句，例如「170 萬顆遠古沉睡幣」「UTXO 帳本機制」；bullet_points 是 2 到 3 條、每條 4 到 15 字的極簡短詞（1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭，如 15 分鐘 ➔ 6 秒），禁止超過 15 字。三個欄位都要是完整語意，不能停在「也就是說」這類半截句。
 開頭可依題目特性選擇問題、案例或反直覺事實，不強制使用鉤子。免責聲明「本集是公開資訊整理，不構成投資建議」自然放在適當位置。
 【知識密度】禁止空泛重複。依各段主題選擇最適合的技術機制、歷史證據、數據比較或雙人交鋒，不要求每段都塞入相同種類的素材；資料不足的面向不可以硬湊。
 鐵律：繁體中文。角色只有比特汪與以太喵，男主播唯一名稱就是「比特汪」，嚴禁寫成「位元汪」「位元犬」或把 Bitcoin 譯成「位元」；台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤只供配音，不要出現在 card_title、hero_stat、bullet_points。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：
 {{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"cards":[{{"card_title":"完整標題","hero_stat":"核心金句","bullet_points":["完整要點一","完整要點二"],"lines":[{{"role":"男","text":"不含半截句的口播"}}]}}],"short_script":"男：...\\n女：..."}}
-sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要自然總結本集核心問題並引導觀眾觀看完整教學；只有課題本身涉及定期定額時，才可提及模擬帳本。"""
+sections 必須 1 到 8 段，cards 依知識點數量決定，至少 8 張、最多 30 張。short_script 要自然總結本集核心問題並引導觀眾觀看完整教學；只有課題本身涉及定期定額時，才可提及模擬帳本。"""
     raw = call_gemini(
         prompt, max_output_tokens=65536, timeout=300, json_mode=True, models=PRODUCTION_MODELS,
     )
@@ -1618,7 +1617,7 @@ sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要自�
     except (ValueError, json.JSONDecodeError) as error:
         print(f"教學稿需要補一次合法 JSON：{error}")
         raw = call_gemini(
-            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須 3 到 8 段，cards 必須 18 到 30 張。",
+            prompt + "\n上次輸出不是合法 JSON。這次只回傳合法 JSON，sections 必須 1 到 8 段，cards 依知識點數量決定，至少 8 張、最多 30 張。",
             max_output_tokens=65536,
             timeout=300,
             json_mode=True,
@@ -1639,7 +1638,7 @@ sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要自�
                 "以下教學 JSON 偏短。請依動態段落加深 narration 與 18 到 30 張 cards："
                 "補上與本集課題直接相關的技術機制、可靠歷史證據、數據對比與雙人追問；不要加入與課題無關的固定素材。"
                 "card_title、hero_stat、bullet_points 必須是完整短語，不能是口播半句，也不能含括號標籤。"
-                "維持原有 3 到 8 段動態結構、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
+                "維持原有 1 到 8 段、依題目決定的動態結構、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
                 + raw[:12000],
                 max_output_tokens=65536,
                 timeout=300,
