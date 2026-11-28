@@ -223,10 +223,9 @@ def fetch_rss_news(tw_tz):
         f"{discarded_news['off_topic']} off-topic."
     )
     if len(entries) < 3:
-        raise RuntimeError(
-            "Fewer than 3 RSS articles passed the 36-hour freshness, crypto/macro "
-            "topic, and non-pure-AI filters; refusing to build an episode from stale, "
-            "off-topic, or unverifiable news."
+        print(
+            f"新聞來源軟性降級：本次只有 {len(entries)} 則通過時效與主題驗證的新聞；"
+            "不以舊聞或未驗證內容補足，改由有效市場數據支撐本集。"
         )
     return entries
 
