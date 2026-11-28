@@ -69,7 +69,7 @@ jobs:
           if [ -n "$TARGET_FILE" ]; then
             # 必須先備份原始研究內容，確認備份成功後才允許重置來源檔。
             BACKUP_DIR="backups/chatgpt"
-            BACKUP_FILE="$BACKUP_DIR/$(basename "$TARGET_FILE").\${GITHUB_RUN_ID:-manual}.\${GITHUB_RUN_ATTEMPT:-1}.bak"
+            BACKUP_FILE="$BACKUP_DIR/$(basename "$TARGET_FILE").${GITHUB_RUN_ID:-manual}.${GITHUB_RUN_ATTEMPT:-1}.bak"
             mkdir -p "$BACKUP_DIR"
             cp -p "$TARGET_FILE" "$BACKUP_FILE"
             if ! cmp -s "$TARGET_FILE" "$BACKUP_FILE"; then
@@ -79,11 +79,11 @@ jobs:
             git add "$BACKUP_FILE"
             echo "已完成 CHATGPT 原檔備份：$BACKUP_FILE"
 
-            printf '%s\\n' '# 若要使用 ChatGPT 深度討論內容製片，請將完整文章貼於此檔案並執行 Minimal Story workflow；若無實質內容則自動抓取當日即時新聞。' > "$TARGET_FILE"
+            printf '%s\n' '# 若要使用 ChatGPT 深度討論內容製片，請將完整文章貼於此檔案並執行 Minimal Story workflow；若無實質內容則自動抓取當日即時新聞。' > "$TARGET_FILE"
             git add "$TARGET_FILE"
           fi
 
- then
+          if git diff --cached --quiet; then
             echo "CHATGPT.txt 無實質變動，略過重置提交。"
           else
             git commit -m "chore(minimal): reset CHATGPT.txt after deep-dive production [skip ci]"
