@@ -558,7 +558,7 @@ def _extract_source_sections(material):
 def _section_coverage_keywords(title):
     """從篇章標題抽取主題詞，排除「第X篇」等純編號文字。"""
     text = str(title or "").strip()
-    text = re.sub(r"^第[一二三四五六七八九十百零〇\\d]+篇[｜|：:]", "", text)
+    text = re.sub(r"^第[一二三四五六七八九十百零〇\d]+篇[｜|：:]", "", text)
     text = re.sub(r"^[一二三四五六七八九十]+、", "", text).lower()
     for phrase in (
         "什麼是", "它解決了", "為什麼", "憑什麼", "最容易混淆的",
