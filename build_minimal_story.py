@@ -209,6 +209,41 @@ def read_chatgpt_material():
     return material, path
 
 
+def _validate_story_video(path, label):
+    """發布前確認極簡故事影音檔案存在且同時含有影音串流。"""
+    if not path or not os.path.isfile(path) or os.path.getsize(path) <= 0:
+        raise RuntimeError(f"{label} 渲染檔不存在或為空，停止發佈。")
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type",
+            "-of", "json", path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    metadata = json.loads(probe.stdout or "{}")
+    stream_types = {
+        str(stream.get("codec_type") or "")
+        for stream in metadata.get("streams") or []
+    }
+    try:
+        duration = float((metadata.get("format") or {}).get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0 or not {"video", "audio"}.issubset(stream_types):
+        raise RuntimeError(
+            f"{label} 影音串流驗收失敗：{duration:.3f}s，{sorted(stream_types)}"
+        )
+    print(
+        f"[Minimal Render QA] {label} 通過：{duration:.2f}s，"
+        f"{os.path.getsize(path):,} bytes。"
+    )
+    return {"duration_seconds": round(duration, 3), "size_bytes": os.path.getsize(path)}
+
+
 def reset_chatgpt_file(path=None):
     """製片完成後把 CHATGPT 素材檔還原為預設註解狀態，避免下次重複製片。"""
     target = path or _chatgpt_path()
@@ -1735,6 +1770,11 @@ def main():
     main_result = render_main_story(story)
     create_thumbnail(story)
     render_short_story(story, main_result)
+    render_validation = {
+        "main": _validate_story_video("story_main.mp4", "極簡故事主片"),
+        "short": _validate_story_video("story_short.mp4", "極簡故事 Shorts"),
+    }
+    print(f"[Minimal Render QA] 影音檔完整性通過：{render_validation}")
     print("[Minimal 4/4] 輸出 metadata...")
     write_metadata(story, main_result)
 
@@ -1786,6 +1826,10 @@ def main():
         cur_p=0, fng_num=0, today_str=TODAY_STR,
         short_title=f"{story['topic_title']} #Shorts",
     )
+    # 只有主片與 Shorts 都成功上傳後才重置自訂素材；測試、預覽或任一上傳失敗都保留原稿。
+    if used_chatgpt and chatgpt_path:
+        if not reset_chatgpt_file(chatgpt_path):
+            print("[Minimal] 警告：影片已上傳，但原始 CHATGPT 素材未能重置，請保留並檢查原檔。")
 
 
 if __name__ == "__main__":
