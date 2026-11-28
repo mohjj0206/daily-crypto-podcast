@@ -226,7 +226,8 @@ def main():
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
         "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
         f"▶️ 完整市場解析：{main_video_url}\n\n"
-        "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
+        + broll_credits
+        + "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
         "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
     )
     youtube_uploader.write_publish_bundle(
