@@ -1577,12 +1577,18 @@ def render_main_story(story):
 
             if len(broll_manifest) != len(page_data):
                 raise RuntimeError("Minimal Story 背景素材時間軸數量不完整。")
+            source_assets = broll_engine.get_episode_manifest()
+            unique_source_ids = {
+                (item.get("provider"), item.get("asset_id"))
+                for item in source_assets
+            }
             with open("story_broll_manifest.json", "w", encoding="utf-8") as handle:
                 json.dump(
                     {
                         "source": "Pixabay",
                         "slides": broll_manifest,
-                        "unique_assets": len(validated_broll),
+                        "source_assets": source_assets,
+                        "unique_assets": len(unique_source_ids),
                         "applied_slides": len(broll_manifest),
                     },
                     handle,
