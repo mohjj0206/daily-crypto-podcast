@@ -76,6 +76,7 @@ jobs:
           [ -f transcript.txt ] && FILES+=(transcript.txt)
           [ -f youtube_metadata.txt ] && FILES+=(youtube_metadata.txt)
           [ -f publish_bundle.json ] && FILES+=(publish_bundle.json)
+          [ -f daily_broll_manifest.json ] && FILES+=(daily_broll_manifest.json)
 
           if [ ${#FILES[@]} -gt 0 ]; then
             echo "正在發布預覽至 latest-preview Release..."
