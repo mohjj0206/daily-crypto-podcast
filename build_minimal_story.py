@@ -1479,12 +1479,17 @@ def render_main_story(story):
             for i, item in enumerate(page_data):
                 label = "開場" if i == 0 else f"{i:02d}"
                 try:
+                    page_broll_query = presentation.assign_broll_query({
+                        "title": item["page"].get("big", story.get("topic_title", "")),
+                        "body": " ".join(item["page"].get("lines") or []),
+                        "layout": "minimal_story",
+                    }) or story.get("broll_keywords")
                     requested_broll = broll_engine.fetch_pixabay_broll_reel(
-                        story.get("broll_keywords"),
+                        page_broll_query,
                         item["dur"],
                         orientation=broll_engine.HORIZONTAL,
                         clip_seconds=4.0,
-                        max_clips=4,
+                        max_clips=6,
                     )
                 except Exception as error:
                     print(f"[Minimal] 第 {i + 1} 段 Pixabay 素材搜尋失敗，改用原生動態背景：{error}")
@@ -1737,8 +1742,13 @@ def render_short_story(story, main_result):
                     continue
                 # 每頁 Shorts 優先使用新直式實景素材；外部素材失敗時改用原生動態底圖。
                 try:
+                    short_broll_query = presentation.assign_broll_query({
+                        "title": item["page"].get("big", story.get("topic_title", "")),
+                        "body": " ".join(item["page"].get("lines") or []),
+                        "layout": "short_story",
+                    }) or story.get("broll_keywords")
                     short_broll_path = broll_engine.fetch_pixabay_broll_reel(
-                        story.get("broll_keywords"),
+                        short_broll_query,
                         clip_duration,
                         orientation=broll_engine.VERTICAL,
                         clip_seconds=4.0,
