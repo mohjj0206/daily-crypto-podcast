@@ -2799,7 +2799,7 @@ def render_short_video(sdata, mdata, config):
             if sdata.get("slide_news_details")
             else "今日市場焦點"
         )
-    )[:34]
+    )[:22]
     today_fng = mdata.get("today_fng")
     fng_num = mdata.get("fng_num")
     slide_news_items = sdata.get("slide_news") or []
@@ -3063,7 +3063,7 @@ body {{
   overflow:hidden; text-align:center;
 }}
 .eyebrow {{ color:#94a3b8; font-size:22px; letter-spacing:4px; }}
-.symbol {{ margin-top:6px; color:#38bdf8; font-size:32px; font-weight:800; }}
+.symbol {{ margin-top:6px; color:#38bdf8; font-size:26px; font-weight:800; }}
 .price {{
   margin:2px 0 12px; color:#fbbf24; font-size:68px; font-weight:900;
   text-shadow:0 0 26px rgba(251,191,36,.38);
@@ -3106,7 +3106,7 @@ body {{
 <main class="panel">
   <div class="eyebrow">本集核心主題</div>
   <div class="symbol">{html.escape(headline_for_short)}</div>
-  <div class="price" style="font-size:46px;line-height:1.2;">{html.escape(short_core_conflict[:38])}</div>
+  <div class="price" style="font-size:36px;line-height:1.2;">{html.escape(short_core_conflict[:16])}</div>
   <ul class="points">{highlights_markup}</ul>
 </main>
 </div>
