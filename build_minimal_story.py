@@ -1421,10 +1421,13 @@ html,body{{margin:0;width:{SW}px;height:{SH}px;overflow:hidden;background:#05070
 font-family:"Noto Sans CJK TC","Microsoft JhengHei",sans-serif;}}
 .stage{{position:relative;width:100%;height:100%;
 background:radial-gradient(120% 90% at 50% 20%,#0d1830 0%,#0a1122 45%,#05070f 100%);}}
-.broll{{position:absolute;right:4%;top:10%;bottom:10%;width:38%;height:1536px;object-fit:cover;z-index:2;
-border:2px solid rgba(56,189,248,.72);border-radius:18px;box-shadow:0 0 34px rgba(56,189,248,.22);}}
+.broll{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;opacity:0;
+animation:storyShortBroll var(--broll-cycle,18s) linear infinite;}}
 .dark-mask{{display:none;}}
-.center{{position:absolute;left:4%;top:46%;transform:translateY(-50%);width:54%;text-align:center;z-index:3;}}
+.center{{position:absolute;left:4%;top:46%;transform:translateY(-50%);width:92%;text-align:center;z-index:3;
+animation:storyShortSlide var(--broll-cycle,18s) linear infinite;}}
+@keyframes storyShortBroll{{0%,68%,94%,100%{{opacity:0;}}72%,90%{{opacity:1;}}}}
+@keyframes storyShortSlide{{0%,68%,94%,100%{{opacity:1;}}72%,90%{{opacity:0;}}}}
 .big{{color:#fbbf24;font-size:88px;font-weight:900;line-height:1.12;margin-bottom:70px;
 text-shadow:0 6px 40px rgba(251,191,36,.45);}}
 .lines{{display:flex;flex-direction:column;gap:46px;align-items:center;}}
@@ -1433,7 +1436,7 @@ transition:color .5s,opacity .5s,text-shadow .5s,transform .5s;}}
 .line.active{{color:#fff;opacity:1;transform:scale(1.05);
 text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
 .line.done{{color:#3b4656;opacity:.5;}}
-</style></head><body><div class="stage">{broll_markup}<div class="center">
+</style></head><body><div class="stage" style="--broll-cycle:{max(12.0, float(sum(reveal_seconds) if reveal_seconds else 18.0)):.3f}s;">{broll_markup}<div class="center">
 <div class="big">{big}</div><div class="lines">{line_markup}</div></div></div>
 <script>(function(){{
 const nodes=[].slice.call(document.querySelectorAll(".line"));const times={reveal_json};
