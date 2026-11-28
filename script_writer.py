@@ -890,6 +890,9 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
     bear_case = silence_gap_leaks(sanitize_text(payload.get("bear_case") or "")).strip()
     opening_hook = silence_gap_leaks(sanitize_text(payload.get("opening_hook") or "")).strip()
     narrative_flow = str(payload.get("narrative_flow") or "").strip()
+    evidence_notes = silence_gap_leaks(sanitize_text(payload.get("evidence_notes") or "")).strip()
+    counter_evidence = silence_gap_leaks(sanitize_text(payload.get("counter_evidence") or "")).strip()
+    unknowns = silence_gap_leaks(sanitize_text(payload.get("unknowns") or "")).strip()
 
     slide_news = _pad_slide_news(payload.get("slide_news"), mdata)
     slide_week = _pad_slide_week(payload.get("slide_week"), mdata)
@@ -906,6 +909,9 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
         "bear_case": bear_case,
         "opening_hook": opening_hook,
         "narrative_flow": narrative_flow,
+        "evidence_notes": evidence_notes,
+        "counter_evidence": counter_evidence,
+        "unknowns": unknowns,
         "slide_titles": slide_titles,
         "slide_plan": slide_plan,
         "slide_news": slide_news,
@@ -950,7 +956,7 @@ def _episode_long_enough(part1_raw, part2_raw, is_test):
 # ── 動態 YouTube Metadata 生成 ──────────────────────────────────
 
 def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
-    """生成 65–88 字高點擊率動態標題，依當日核心事件與反直覺衝突。"""
+    """生成適合手機閱讀的 24–42 字主題型標題，不以固定行情數據湊標題。"""
     cur_p = mdata.get("cur_p", 0)
     btc_pct = mdata.get("btc_pct", 0)
     fng = mdata.get("fng_num")
@@ -962,14 +968,14 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
     # 嘗試用 Gemini 生成高點擊標題
     if not is_test:
         prompt = f"""你是一位專業的加密貨幣 YouTube 頻道標題優化師。
-請根據以下當日核心資訊，撰寫一個 65–88 字元（含標點）的高點擊率中文標題。
+請根據本集真正的研究主題，撰寫一個 24–42 字元（含標點與頻道尾綴）的繁體中文 YouTube 標題。
 
 核心要求：
-1. 必須包含好奇心缺口（例如反直覺數據、衝突事件、懸念問題）
-2. 禁止使用「加密貨幣晨報」「BTC、ETH」等公版格式
-3. 必須具體提到當日最衝突的數字或事件
-4. 結尾加上「｜幣看趨勢」
-5. 嚴格控制在 65–88 字元
+1. 讓觀眾一眼知道本集在研究哪個事件、資產或關鍵問題，並留下合理的好奇心缺口。
+2. 優先使用具體事件、數據衝突或反直覺發現；只有當價格或恐慌指數是本集核心時才放入標題。
+3. 禁止用「加密貨幣晨報」「BTC、ETH」等公版格式，也禁止與本集內容無關的恐慌指數或行情數字。
+4. 不誇大、不製造假危機、不承諾漲跌，不使用稿件未支持的數字。
+5. 結尾加上「｜幣看趨勢」，總長嚴格控制在 24–42 字元。
 
 當日數據：
 - BTC 現價：{format_usd(cur_p)}，24H 漲跌：{btc_pct:+.2f}%
@@ -981,24 +987,28 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
         try:
             title = call_gemini(prompt, max_output_tokens=200, timeout=30).strip()
             title = sanitize_text(title)
-            if 65 <= len(title) <= 88 and "幣看趨勢" in title:
+            if 24 <= len(title) <= 42 and title.endswith("｜幣看趨勢"):
                 return title
-            print(f"Gemini 標題長度 {len(title)} 不在 65-88 範圍，使用備援。")
+            print(f"Gemini 標題長度 {len(title)} 不在 24-42 範圍或缺少頻道尾綴，使用備援。")
         except Exception as e:
             print(f"Gemini 標題生成失敗，使用備援：{e}")
 
     # 備援：依數據動態組裝
-    direction = "狂飆" if btc_pct > 3 else ("暴跌" if btc_pct < -3 else "震盪")
-    conflict_short = core_conflict[:24] if core_conflict else "多空分歧加劇"
-    if fng_available:
-        fear_label = "極度恐懼" if fng < 25 else ("貪婪" if fng > 75 else "中性")
-        fear_clause = f"恐慌貪婪指數 {int(fng)}（{fear_label}）"
-    else:
-        fear_clause = "市場情緒指標暫缺"
-    title = f"BTC {direction}！{fear_clause}，{conflict_short}｜幣看趨勢"
-    title = title.strip()
-    if len(title) > 88:
-        title = title[:85] + "｜幣看趨勢"
+    seed = (
+        core_conflict
+        or opening_hook
+        or editorial_brief.get("title")
+        or editorial_brief.get("editorial_lead")
+        or "今日加密市場的關鍵矛盾"
+    )
+    seed = re.sub(r"^[\s，。！？：；]+|[\s，。！？：；]+$", "", sanitize_text(str(seed)))
+    suffix = "｜幣看趨勢"
+    title = f"{seed[:42 - len(suffix)]}{suffix}"
+    if len(title) < 24:
+        extra = sanitize_text(str(editorial_brief.get("editorial_lead") or ""))
+        room = 42 - len(suffix) - len(title)
+        if extra and room > 0:
+            title = f"{title[:-len(suffix)]}：{extra[:room]}{suffix}"
     return title
 
 
@@ -1252,7 +1262,10 @@ def generate_script(mdata, dca_data, config):
 7. slide_news：最多 3 筆真正適合做新聞圖卡的新聞摘要；沒有足夠新聞就回傳較少筆，不要硬湊。
 8. slide_week：只有當今日資料足以支持未來 24 小時條件推演時才提供，最多 3 條；不適用時回傳空陣列。
 9. 每日選題必須差異化，不可因固定數據欄位存在就每天照同一順序講恐慌指數、均線、六幣、新聞、多空和預測。
-10. 投影片文案極簡，每句不超過 15 字，主內容充分利用畫面中央可用區域，不得只放標題或單行文字造成大面積空白。
+10. 建立 evidence_notes：列出 3～8 項本集真正用到的關鍵證據，每項標示「主張｜資料來源或輸入欄位｜日期/觀察期間｜統計口徑｜限制」。只能引用本次資料中實際存在的來源名稱與數字；來源未提供就寫明「來源標示未提供」，不得自行補來源。
+11. 建立 counter_evidence：列出最有力的反方證據、替代解釋或可能推翻主結論的觀察；若目前沒有足夠反證，明確寫「尚無足夠資料判定」，不可為了平衡而捏造。
+12. 建立 unknowns：列出會影響結論、但本次資料無法確認的關鍵未知；不要把系統抓取失敗或資料缺漏寫進口播。
+13. 投影片文案極簡，每句不超過 15 字，主內容充分利用畫面中央可用區域，不得只放標題或單行文字造成大面積空白。
 
 只輸出合法 JSON：
 {{
@@ -1264,6 +1277,9 @@ def generate_script(mdata, dca_data, config):
   "bear_case": "有證據才提出空方論點，否則留空",
   "opening_hook": "若適合才提供開場鉤子，不適合可留空",
   "narrative_flow": "本集動態敘事流程與篇幅分配",
+  "evidence_notes": "本集證據清單，標示資料來源、日期/期間、口徑與限制",
+  "counter_evidence": "最強反方證據或替代解釋",
+  "unknowns": "尚未能確認、會影響結論的關鍵未知",
   "slide_plan": [{{"source_slot": 1, "title": "具體標題"}}],
   "slide_news": [],
   "slide_week": []
@@ -1322,6 +1338,9 @@ def generate_script(mdata, dca_data, config):
 【本集核心主軸】{editorial_brief.get('editorial_lead')}
 【核心矛盾／調查問題】{editorial_brief.get('core_conflict')}
 【編輯敘事地圖】{editorial_brief.get('narrative_flow')}
+【總編輯證據備忘錄】{editorial_brief.get('evidence_notes') or '未提供獨立證據備忘錄；只能依下方原始資料分析。'}
+【反方證據與替代解釋】{editorial_brief.get('counter_evidence') or '依現有資料審慎檢查，不可捏造反方。'}
+【尚未確認的關鍵未知】{editorial_brief.get('unknowns') or '只標示會實質影響結論的未知，不補造數據。'}
 【開場鉤子】{editorial_brief.get('opening_hook')}
 【雙主播口頭禪】{catchphrase_line}
 【可自然帶入術語】{vocab_line}
