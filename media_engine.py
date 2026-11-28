@@ -888,7 +888,7 @@ body {{
   animation: gridFlow 16s linear infinite;
 }}
 .broll-bg {{
-  /* Pixabay 全畫面插播：與簡報輪流出現，不再左右分欄。 */
+  /* Pixabay 影片全畫面作為持續播放的底片。 */
   position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
   object-fit: cover; opacity: 0; background: #050914;
   animation: brollInterlude var(--broll-cycle, 18s) linear infinite;
@@ -1338,6 +1338,9 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
   1.5%, 98% {{ opacity: 1; }}
   100% {{ opacity: 0; }}
 }}
+/* 不再固定顯示未必正在播報的行情跑馬燈與指標儀表；只呈現本頁對應口播的資料卡。 */
+.ticker,
+.metric-rail {{ display: none !important; }}
 /* 保留影片可見範圍，資訊卡以半透明面板疊在影片上，不再互相輪播。 */
 .slide-stage.has-broll .frame {{
   background-color: rgba(7, 13, 26, .84);
