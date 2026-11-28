@@ -574,11 +574,13 @@ def choose_show_format():
     except (OSError, ValueError, json.JSONDecodeError):
         used = []
     # 10 種節目形式，至少隔 5 集才允許回到相同敘事形式。
+    # 從所有合格形式中依台灣日期輪換，避免永遠拿 JSON 第一筆當預設。
     blocked = set(used[-5:])
-    for item in formats:
-        if item.get("id") not in blocked:
-            return item
-    return formats[0]
+    candidates = [item for item in formats if item.get("id") not in blocked]
+    if not candidates:
+        candidates = formats
+    today = datetime.now(ZoneInfo("Asia/Taipei")).date()
+    return candidates[today.toordinal() % len(candidates)]
 
 
 def _slide_slot_names(show_dca):
@@ -1546,6 +1548,8 @@ def generate_script(mdata, dca_data, config):
         "slide_count": len(visual_plan),
         "format_id": show_format.get("id") or "",
         "format_title": show_format.get("title") or "",
+        "visual_style": presentation.visual_style_for_format(show_format.get("id")),
+
         "opening_hook": opening_hook,
         "catchphrases": catchphrases,
     }
