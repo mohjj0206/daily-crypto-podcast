@@ -1544,9 +1544,10 @@ def render_short_story(story, main_result):
                 )
                 min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
                 if coverage < min_coverage:
-                    raise RuntimeError(
-                        f"Shorts Pixabay B-Roll 覆蓋率 {coverage:.0%}，"
-                        f"低於最低要求 {min_coverage:.0%}；請檢查 API Key／配額／直式素材搜尋。"
+                    print(
+                        f"[Minimal] Shorts Pixabay 覆蓋率 {coverage:.0%}，"
+                        f"低於參考值 {min_coverage:.0%}；保留已取得素材，其餘使用動態背景，"
+                        "不因可選 B-Roll 覆蓋率中止影片製作。"
                     )
             else:
                 print("[Minimal] 未設定 Pixabay API Key，Shorts 將使用預設動態底圖。")
