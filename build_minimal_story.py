@@ -1495,14 +1495,16 @@ def render_short_story(story, main_result):
                 clip_duration = clip_durations[i]
                 if clip_duration <= 0:
                     continue
-                # 每頁 Shorts 也必須取得本集尚未使用過的唯一直式素材。
-                short_broll_path = broll_engine.fetch_pixabay_broll(
-                    story.get("broll_keywords"), broll_engine.VERTICAL
-                )
-                if not short_broll_path:
-                    raise RuntimeError(
-                        f"Pixabay Shorts 第 {i + 1} 段未取得新的唯一素材，停止輸出以避免重複畫面。"
+                # 每頁 Shorts 優先使用新直式實景素材；外部素材失敗時改用原生動態底圖。
+                try:
+                    short_broll_path = broll_engine.fetch_pixabay_broll(
+                        story.get("broll_keywords"), broll_engine.VERTICAL
                     )
+                except Exception as error:
+                    print(f"[Minimal Shorts] 第 {i + 1} 段 Pixabay 搜尋失敗，改用動態背景：{error}")
+                    short_broll_path = None
+                if not short_broll_path:
+                    print(f"[Minimal Shorts] 第 {i + 1} 段未取得新素材，改用原生動態背景。")
                 doc = _short_html(item["page"], item["reveal"], short_broll_path)
                 out = f"story_short_p{i}.mp4"
                 rec_sec = clip_duration + 0.4
