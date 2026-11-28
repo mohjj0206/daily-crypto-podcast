@@ -591,12 +591,11 @@ def extract_conditions(raw, defaults):
 
 
 def default_conditions(coin_code, market):
-    sma100 = format_price(market["sma_100"])
-    sma200 = format_price(market["sma_200"])
+    # 通用備援只提供可驗證的研究方向，不假設每個專題都必須分析均線、量價或情緒指標。
     return [
-        f"均線守位｜{coin_code} 價格能否守穩 100 日均線 {sma100}，並觀察 200 日均線 {sma200} 的方向。",
-        "量價確認｜突破或跌破近端區間時，成交量是否同步擴大，回測能否守住關鍵位置。",
-        f"情緒風險｜恐慌與貪婪指數 {market['fear_greed'].get('value', '未知')} 是否轉向，並與價格及 RSI 訊號互相驗證。",
+        "核心證據｜後續可驗證資料是否持續支持本集的主要論點。",
+        "反方訊號｜是否出現足以推翻目前解釋的替代證據或相反變化。",
+        "實際影響｜相關技術、使用需求或經濟誘因是否出現可觀察的變化。",
     ]
 
 
