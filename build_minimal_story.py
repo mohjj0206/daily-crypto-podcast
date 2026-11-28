@@ -770,11 +770,19 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   background: radial-gradient(100% 100% at 50% 0%, #142746 0%, #091426 48%, #050914 100%);
   font-family: "Noto Sans CJK TC", "Noto Sans CJK", "Microsoft JhengHei", sans-serif; }}
 .broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; z-index: 2; right: 86px; left: auto; top: 180px;
-  bottom: 100px; width: 30%; height: 800px; border: 2px solid rgba(56,189,248,.72);
-  border-radius: 18px; box-shadow: 0 0 34px rgba(56,189,248,.22); }}
+  object-fit: cover; z-index: 2; opacity: 0;
+  animation: storyBrollInterlude var(--broll-cycle, 18s) linear infinite; }}
 .dark-mask {{ display: none; }}
-.content {{ position: relative; z-index: 3; width: 64%; height: 100%; display: flex; flex-direction: column; }}
+.content {{ position: relative; z-index: 3; width: 100%; height: 100%; display: flex; flex-direction: column;
+  animation: storySlideInterlude var(--broll-cycle, 18s) linear infinite; }}
+@keyframes storyBrollInterlude {{
+  0%, 68%, 94%, 100% {{ opacity: 0; }}
+  72%, 90% {{ opacity: 1; }}
+}}
+@keyframes storySlideInterlude {{
+  0%, 68%, 94%, 100% {{ opacity: 1; }}
+  72%, 90% {{ opacity: 0; }}
+}}
 .topline {{ display: flex; align-items: center; justify-content: space-between;
   color: #9fb4d1; font-size: 24px; letter-spacing: 3px; font-weight: 700; }}
 .brand {{ color: #fbbf24; }}
@@ -816,7 +824,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
 </style></head>
 <body>
-<div class="stage">
+<div class="stage" style="--broll-cycle:{max(12.0, float(sum(reveal_seconds) if reveal_seconds else 18.0)):.3f}s;">
   {_broll_background_html(broll_path)}
   <div class="content">
     <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
@@ -1000,7 +1008,7 @@ def build_ass(events, out_path):
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         "Style: Main,Noto Sans CJK TC,54,&H00FFFFFF,&H00FFFFFF,&H00202838,&H64000000,"
-        "-1,0,0,0,100,100,0,0,1,3,1,2,280,280,235,1\n\n"
+        "-1,0,0,0,100,100,0,0,1,3,1,2,300,300,72,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -1026,7 +1034,7 @@ def build_ass(events, out_path):
             line_end = end if index == len(chunks) - 1 else start + duration * elapsed_weight / total_weight
             if line_end > line_start:
                 lines.append(
-                    f"Dialogue: 0,{_fmt_ass(line_start)},{_fmt_ass(line_end)},Main,,280,280,235,,{chunk}"
+                    f"Dialogue: 0,{_fmt_ass(line_start)},{_fmt_ass(line_end)},Main,,300,300,72,,{chunk}"
                 )
             line_start = line_end
     if not lines:
