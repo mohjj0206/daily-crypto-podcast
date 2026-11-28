@@ -1456,11 +1456,11 @@ animation:storyShortBroll var(--broll-cycle,18s) linear infinite;}}
 .big{{color:#fbbf24;font-size:88px;font-weight:900;line-height:1.12;margin-bottom:70px;
 text-shadow:0 6px 40px rgba(251,191,36,.45);}}
 .lines{{display:flex;flex-direction:column;gap:46px;align-items:center;}}
-.line{{font-size:62px;font-weight:800;color:#5b6675;opacity:.32;
-transition:color .5s,opacity .5s,text-shadow .5s,transform .5s;}}
-.line.active{{color:#fff;opacity:1;transform:scale(1.05);
+.line{{font-size:62px;font-weight:800;color:#5b6675;opacity:0;visibility:hidden;
+transition:color .35s,opacity .35s,text-shadow .35s,transform .35s;}}
+.line.active{{color:#fff;opacity:1;visibility:visible;transform:scale(1.05);
 text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
-.line.done{{color:#3b4656;opacity:.5;}}
+.line.done{{color:#3b4656;opacity:0;visibility:hidden;}}
 </style></head><body><div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">{broll_markup}<div class="center">
 <div class="big">{big}</div><div class="lines">{line_markup}</div></div></div>
 <script>(function(){{
