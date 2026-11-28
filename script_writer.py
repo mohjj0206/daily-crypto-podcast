@@ -19,6 +19,7 @@ from presentation import (
     plan_daily_slides,
     sanitize_text,
     strip_bracket_tags,
+    visual_style_for_format,
 )
 
 
@@ -1245,7 +1246,7 @@ def generate_script(mdata, dca_data, config):
         )
 
     show_format = choose_show_format()
-    visual_style = presentation.visual_style_for_format(show_format.get("id"))
+    visual_style = visual_style_for_format(show_format.get("id"))
     print(f"[節目視覺模板] {show_format.get('title')}｜format={show_format.get('id')}｜style={visual_style}")
     visual_plan = plan_daily_slides(mdata, show_dca, show_format, dca_slide_body)
     slide_count = len(visual_plan)
