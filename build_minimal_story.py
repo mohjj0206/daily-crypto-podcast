@@ -1681,7 +1681,7 @@ animation:storyShortBroll var(--broll-cycle,18s) linear infinite;}}
 @keyframes storyShortBroll{{0%,68%,94%,100%{{opacity:0;}}72%,90%{{opacity:1;}}}}
 @keyframes storyShortSlide{{0%,68%,94%,100%{{opacity:1;}}72%,90%{{opacity:0;}}}}
 /* Shorts 採影片持續播放，資訊卡只作為前景疊圖。 */
-.broll{{opacity:1 !important;animation:none !important;}}
+.broll{{opacity:1;animation:none;transition:opacity .65s ease;}}
 .stage.has-broll .center{{animation:none !important;}}
 .big{{color:#fbbf24;font-size:88px;font-weight:900;line-height:1.12;margin-bottom:70px;
 text-shadow:0 6px 40px rgba(251,191,36,.45);}}
@@ -1696,6 +1696,12 @@ text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
 <script>(function(){{
 const nodes=[].slice.call(document.querySelectorAll(".line"));const times={reveal_json};
 const start=performance.now();
+const broll=document.querySelector(".broll");
+if(broll){{
+const hideBroll=()=>{{broll.style.opacity="0";window.setTimeout(()=>broll.pause(),700);}};
+broll.addEventListener("ended",hideBroll,{{once:true}});
+window.setTimeout(hideBroll,4200);
+}}
 function apply(a){{for(let i=0;i<nodes.length;i++){{nodes[i].classList.remove("active","done");
 if(i<a)nodes[i].classList.add("done");else if(i===a)nodes[i].classList.add("active");}}}}
 function tick(n){{const t=(n-start)/1000;let a=-1;for(let i=0;i<times.length;i++)if(t>=times[i])a=i;
