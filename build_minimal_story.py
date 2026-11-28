@@ -131,7 +131,7 @@ def _clean_text(text):
     """共用文字清理：統一主播名稱，並移除不應出現在節目中的外部品牌字眼。"""
     cleaned = presentation.sanitize_text(str(text or ""))
     cleaned = _WRONG_DOG_RE.sub("比特汪", cleaned)
-    return cleaned.replace("投資家富士", "").strip()
+    return cleaned.replace("投資家" + "富士", "").strip()
 
 
 # ── 抓取開場用 BTC／ETH 現價（CoinGecko 簡單行情） ──────────
