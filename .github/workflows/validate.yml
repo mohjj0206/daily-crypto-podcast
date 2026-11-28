@@ -1,0 +1,44 @@
+name: Python Syntax Validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**.py"
+      - ".github/workflows/validate.yml"
+  pull_request:
+    paths:
+      - "**.py"
+      - ".github/workflows/validate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile core production modules
+        run: |
+          python -m py_compile \
+            build_and_upload.py \
+            build_special_topic.py \
+            build_minimal_story.py \
+            script_writer.py \
+            media_engine.py \
+            daily_learner.py \
+            broll_engine.py \
+            presentation.py \
+            market_data.py \
+            chart_maker.py \
+            youtube_uploader.py
