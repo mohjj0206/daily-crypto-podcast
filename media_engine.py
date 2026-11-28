@@ -888,12 +888,21 @@ body {{
   animation: gridFlow 16s linear infinite;
 }}
 .broll-bg {{
-  /* Pixabay 獨立展示區：與簡報左右分欄，禁止被簡報卡片覆蓋。 */
-  position: absolute; right: 48px; top: 110px; bottom: 350px; z-index: 4;
-  width: 30%; height: 620px; object-fit: cover;
-  border: 2px solid rgba(56,189,248,.72); border-radius: 18px;
-  box-shadow: 0 0 34px rgba(56,189,248,.22);
-  background: #050914;
+  /* Pixabay 全畫面插播：與簡報輪流出現，不再左右分欄。 */
+  position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
+  object-fit: cover; opacity: 0; background: #050914;
+  animation: brollInterlude var(--broll-cycle, 18s) linear infinite;
+}}
+@keyframes brollInterlude {{
+  0%, 68%, 94%, 100% {{ opacity: 0; }}
+  72%, 90% {{ opacity: 1; }}
+}}
+.ticker, .frame, .metric-rail {{
+  animation: slideInterlude var(--broll-cycle, 18s) linear infinite;
+}}
+@keyframes slideInterlude {{
+  0%, 68%, 94%, 100% {{ opacity: 1; }}
+  72%, 90% {{ opacity: 0; }}
 }}
 .broll-veil {{
   display: none;
@@ -1271,7 +1280,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 </style>
 </head>
 <body>
-<div class="slide-stage kinetic scene-{(idx - 1) % 4}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;">
+<div class="slide-stage kinetic scene-{(idx - 1) % 4}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;--broll-cycle:{max(12.0, float(dur_sec)):.3f}s;">
 {broll_markup}
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
