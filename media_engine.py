@@ -3491,11 +3491,22 @@ def _render_tutorial_short(tutorial):
     hook = html.escape(_fit_cjk_hook(tutorial.get("title") or "", "成本帶怎麼看"))
     badge = html.escape(presentation.tutorial_badge(tutorial.get("ep_id", "EP")))
     cards = []
-    for index, line in enumerate(lines[:4]):
+    card_clock = 0.0
+    for index, line in enumerate(lines):
         phrase = presentation.fit_complete_phrase(line.get("text"), 6, 18, "先看結構")
-        cards.append(
-            f'<article style="animation-delay:{index * duration / 4:.2f}s">{html.escape(phrase)}</article>'
+        line_duration = (
+            float(results[index][3])
+            if index < len(results)
+            else 0.0
         )
+        if line_duration <= 0:
+            continue
+        cards.append(
+            f'<article style="--card-delay:{card_clock:.3f}s;'
+            f'--card-duration:{line_duration:.3f}s">'
+            f'{html.escape(phrase)}</article>'
+        )
+        card_clock += line_duration
     def png_data(path):
         with Image.open(path) as image:
             buffer = io.BytesIO()
@@ -3563,8 +3574,13 @@ h1 {{ position:absolute; top:160px; left:50px; right:50px; z-index:2; font-size:
 .deck {{ position:absolute; left:50px; right:50px; top:460px; height:900px; z-index:2; }}
 article {{ position:absolute; inset:0; display:grid; place-items:center; padding:48px; border-radius:36px;
   background:rgba(15,23,42,.92); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
-  opacity:0; animation:card {duration:.2f}s linear forwards; }}
-@keyframes card {{ 4%,22% {{ opacity:1; transform:scale(1); }} 0%,28%,100% {{ opacity:0; transform:scale(.94); }} }}
+  opacity:0; animation:card var(--card-duration,2s) linear both;
+  animation-delay:var(--card-delay,0s); }}
+@keyframes card {{
+  0% {{ opacity:0; transform:scale(.96); }}
+  4%,94% {{ opacity:1; transform:scale(1); }}
+  100% {{ opacity:0; transform:scale(.98); }}
+}}
 .host {{ position:absolute; bottom:90px; z-index:3; width:240px; height:240px; border-radius:50%; object-fit:cover; background:#111827; }}
 .host.cat {{ left:150px; }}
 .host.dog {{ right:150px; }}
