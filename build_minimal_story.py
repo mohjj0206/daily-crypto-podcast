@@ -708,7 +708,7 @@ def _broll_background_html(broll_path):
     )
 
 
-def _slide_html(slide, reveal_seconds, broll_path, page_label):
+def _slide_html(slide, reveal_seconds, broll_path, page_label, slide_duration=12.0):
     big = html.escape(slide["big"])
     lines = slide.get("lines") or []
     metrics = slide.get("metrics") or []
@@ -822,9 +822,25 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .insight.done {{ color: #9aa9bd; }}
 .page-footer {{ margin-top: 20px; display: flex; justify-content: space-between;
   color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
+
+/* 影片優先：Pixabay 底片持續播放，圖表與數據卡依本頁口播時段浮現。 */
+.broll {{ opacity: 1 !important; animation: none !important; }}
+.stage .content {{
+  animation: storyDataOverlayLifetime var(--slide-duration, 12s) linear both !important;
+  will-change: opacity;
+}}
+@keyframes storyDataOverlayLifetime {{
+  0%, 2% {{ opacity: 0; }}
+  5%, 94% {{ opacity: 1; }}
+  100% {{ opacity: 0; }}
+}}
+.stage.has-broll .content {{
+  background: rgba(5, 12, 25, .34);
+  backdrop-filter: blur(3px);
+}}
 </style></head>
 <body>
-<div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">
+<div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;--slide-duration:{max(0.1, float(slide_duration)):.3f}s;">
   {_broll_background_html(broll_path)}
   <div class="content">
     <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
@@ -868,7 +884,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 
 
 def render_slide_video(idx, slide, dur_sec, reveal_seconds, broll_path, browser, page_label):
-    html_doc = _slide_html(slide, reveal_seconds, broll_path, page_label)
+    html_doc = _slide_html(slide, reveal_seconds, broll_path, page_label, dur_sec)
     out_mp4 = f"story_p{idx}.mp4"
     record_seconds = dur_sec + 0.6
     tpad = ",tpad=stop_mode=clone:stop_duration=1"
@@ -1258,10 +1274,7 @@ def render_main_story(story):
         )
         try:
             if not broll_engine._api_key():
-                raise RuntimeError(
-                    "Minimal Story 必須使用 Pixabay 實景素材，但未設定 PIXABAY_API_KEY；"
-                    "已停止輸出，避免再次產生沒有 Pixabay 的影片。"
-                )
+                print("[Minimal] 未設定 PIXABAY_API_KEY；本集將嘗試使用可用實景素材，失敗時以動態背景備援，不中斷製片。")
             slide_videos = []
             broll_manifest = []
             last_broll_path = None
@@ -1272,26 +1285,25 @@ def render_main_story(story):
                     story.get("broll_keywords"), broll_engine.HORIZONTAL
                 )
                 reused = False
-                if requested_broll:
-                    broll_path = requested_broll
-                    last_broll_path = requested_broll
+                broll_path = requested_broll if requested_broll else None
+                if broll_path:
+                    last_broll_path = broll_path
+                    if broll_path not in validated_broll:
+                        probe = subprocess.check_output(
+                            [
+                                "ffprobe", "-v", "error", "-show_entries",
+                                "stream=codec_type", "-of", "json", broll_path,
+                            ],
+                            text=True,
+                        )
+                        stream_info = json.loads(probe)
+                        if not any(x.get("codec_type") == "video" for x in stream_info.get("streams", [])):
+                            print(f"[Minimal] Pixabay 素材無可解碼影像，改用原生動態背景：{broll_path}")
+                            broll_path = None
+                        else:
+                            validated_broll.add(broll_path)
                 else:
-                    raise RuntimeError(
-                        f"Pixabay 第 {i + 1} 段未取得新的唯一素材；"
-                        "為避免同一集重複使用相同影片，停止製片。"
-                    )
-                if broll_path not in validated_broll:
-                    probe = subprocess.check_output(
-                        [
-                            "ffprobe", "-v", "error", "-show_entries",
-                            "stream=codec_type", "-of", "json", broll_path,
-                        ],
-                        text=True,
-                    )
-                    stream_info = json.loads(probe)
-                    if not any(x.get("codec_type") == "video" for x in stream_info.get("streams", [])):
-                        raise RuntimeError(f"Pixabay 素材沒有可解碼的影像串流：{broll_path}")
-                    validated_broll.add(broll_path)
+                    print(f"[Minimal] 第 {i + 1} 段未取得 Pixabay 新素材，改用原生動態背景，不重複舊素材。")
                 out = render_slide_video(
                     i, item["page"], item["dur"], item["reveal"],
                     broll_path, browser, label,
@@ -1299,13 +1311,13 @@ def render_main_story(story):
                 slide_videos.append(out)
                 broll_manifest.append({
                     "slide": i + 1,
-                    "asset": os.path.basename(broll_path),
-                    "source": "Pixabay",
+                    "asset": os.path.basename(broll_path) if broll_path else None,
+                    "source": "Pixabay" if broll_path else "native_motion_fallback",
                     "reused": reused,
                 })
 
-            if len(broll_manifest) != len(page_data) or not validated_broll:
-                raise RuntimeError("Pixabay 實際套用檢查未通過，停止輸出。")
+            if len(broll_manifest) != len(page_data):
+                raise RuntimeError("Minimal Story 背景素材時間軸數量不完整。")
             with open("story_broll_manifest.json", "w", encoding="utf-8") as handle:
                 json.dump(
                     {
@@ -1318,9 +1330,10 @@ def render_main_story(story):
                     ensure_ascii=False,
                     indent=2,
                 )
+            applied_broll = sum(1 for item in broll_manifest if item["source"] == "Pixabay")
             print(
-                f"[Minimal] Pixabay 實際套用完成：{len(broll_manifest)}/{len(page_data)} 頁，"
-                f"使用 {len(validated_broll)} 支已驗證影片。"
+                f"[Minimal] 背景影片／動態備援已就緒：Pixabay {applied_broll}/{len(page_data)} 頁，"
+                f"使用 {len(validated_broll)} 支已驗證影片；各頁資訊卡依口播時段顯示。"
             )
         finally:
             browser.close()
