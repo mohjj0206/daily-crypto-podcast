@@ -3245,7 +3245,7 @@ def _tutorial_intro_and_outro(intro_seconds, outro_seconds, outro_pause):
     return intro_dur, has_intro
 
 
-def _tutorial_card_html(card, chart_markup, broll_path=None):
+def _tutorial_card_html(card, chart_markup, broll_path=None, card_duration=12.0):
     layout = card.get("layout") or "impact"
     title = html.escape(str(card.get("title") or ""))
     headline = html.escape(str(card.get("headline") or ""))
@@ -3279,10 +3279,16 @@ def _tutorial_card_html(card, chart_markup, broll_path=None):
 <style>
 html,body {{ margin:0; width:1920px; height:1080px; overflow:hidden; background:#070b14; color:#f8fafc;
   font-family:'Noto Sans CJK TC',sans-serif; }}
-video {{ position:absolute; right:70px; top:150px; width:30%; height:630px;
-  object-fit:cover; border:2px solid rgba(56,189,248,.72); border-radius:18px;
-  box-shadow:0 0 34px rgba(56,189,248,.22); }}
-.safe {{ position:absolute; left:180px; right:35%; top:70px; bottom:290px; }}
+video {{ position:absolute; inset:0; width:100%; height:100%; z-index:0;
+  object-fit:cover; border:0; border-radius:0; opacity:.78; }}
+.broll-shade {{ position:absolute; inset:0; z-index:1; background:rgba(3,8,18,.38); }}
+.safe {{ position:absolute; left:110px; right:110px; top:95px; bottom:150px; z-index:2;
+  padding:38px 46px; border:2px solid rgba(214,182,107,.72); border-radius:26px;
+  background:rgba(7,13,26,.78); backdrop-filter:blur(14px);
+  animation:tutorialDataCard var(--card-duration,12s) linear both; }}
+@keyframes tutorialDataCard {{
+  0% {{ opacity:0; }} 1.5%,98% {{ opacity:1; }} 100% {{ opacity:0; }}
+}}
 .kicker {{ color:#f59e0b; font-size:34px; font-weight:800; }}
 h1 {{ margin:12px 0 24px; font-size:54px; line-height:1.25; }}
 .giant {{ margin:20px 0; font-size:92px; font-weight:900; line-height:1.15; color:#fff7ed;
@@ -3307,13 +3313,13 @@ p {{ font-size:40px; line-height:1.35; }}
 aside {{ border:4px solid #38bdf8; border-radius:24px; padding:28px; background:#0f172a; }}
 @keyframes glow {{ 50% {{ text-shadow:0 0 42px rgba(245,158,11,.8); }} }}
 @keyframes pop {{ from {{ opacity:0; transform:translateY(16px); }} to {{ opacity:1; transform:none; }} }}
-</style></head><body>{broll_markup}<div class="safe"><div class="kicker">{title}</div><h1>{headline}</h1>{body}</div></body></html>"""
+</style></head><body>{broll_markup}{'<div class="broll-shade"></div>' if broll_markup else ''}<div class="safe" style="--card-duration:{max(0.1, float(card_duration)):.3f}s;"><div class="kicker">{title}</div><h1>{headline}</h1>{body}</div></body></html>"""
 
 
 def _record_tutorial_card(browser, index, card, duration, chart_markup, broll_path=None):
-    record_seconds = min(float(duration), 4.0)
-    remaining = max(0.0, float(duration) - record_seconds)
-    tpad = f",tpad=stop_mode=clone:stop_duration={remaining:.6f}" if remaining else ""
+    # 必須錄完整卡片時長，否則 B-roll 只播放前 4 秒，後面會凍結成靜態畫面。
+    record_seconds = max(0.1, float(duration))
+    tpad = ""
     with tempfile.TemporaryDirectory(prefix=f"tcard_{index}_") as record_dir:
         context = browser.new_context(
             viewport={"width": MAIN_VIDEO_WIDTH, "height": MAIN_VIDEO_HEIGHT},
@@ -3323,7 +3329,14 @@ def _record_tutorial_card(browser, index, card, duration, chart_markup, broll_pa
         page = context.new_page()
         video = page.video
         try:
-            page.set_content(_tutorial_card_html(card, chart_markup, broll_path), wait_until="load")
+            page.set_content(_tutorial_card_html(card, chart_markup, broll_path, duration), wait_until="load")
+            if broll_path:
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('video'); "
+                    "return !!v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0; }",
+                    timeout=20000,
+                )
+                page.evaluate("() => { const v = document.querySelector('video'); if (v) v.play(); }")
             page.wait_for_timeout(max(1, round(record_seconds * 1000)))
         finally:
             context.close()
@@ -3498,22 +3511,28 @@ def _render_tutorial_short(tutorial):
         )
         clock += segment_duration
     avatars = "".join(hosts)
-    short_broll_path = broll_engine.fetch_pixabay_broll(
-        presentation.assign_broll_query({
-            "title": tutorial.get("title", ""),
-            "body": " ".join(str(line.get("text") or "") for line in lines),
-            "layout": "",
-        }),
-        orientation=broll_engine.VERTICAL,
-    )
-    if not short_broll_path:
-        raise RuntimeError("Tutorial Shorts could not obtain a new unique vertical Pixabay clip.")
-    with open(short_broll_path, "rb") as handle:
-        short_broll_data = base64.b64encode(handle.read()).decode("ascii")
-    short_broll_markup = (
-        '<video class="tutorial-broll" autoplay muted loop playsinline '
-        f'src="data:video/mp4;base64,{short_broll_data}"></video>'
-    )
+    short_broll_path = None
+    try:
+        short_broll_path = broll_engine.fetch_pixabay_broll(
+            presentation.assign_broll_query({
+                "title": tutorial.get("title", ""),
+                "body": " ".join(str(line.get("text") or "") for line in lines),
+                "layout": "",
+            }),
+            orientation=broll_engine.VERTICAL,
+        )
+    except Exception as error:
+        print(f"Tutorial Shorts Pixabay 取得失敗，改用動態背景：{error}")
+    if short_broll_path:
+        with open(short_broll_path, "rb") as handle:
+            short_broll_data = base64.b64encode(handle.read()).decode("ascii")
+        short_broll_markup = (
+            '<video class="tutorial-broll" autoplay muted loop playsinline '
+            f'src="data:video/mp4;base64,{short_broll_data}"></video>'
+        )
+    else:
+        short_broll_markup = ""
+        print("Tutorial Shorts 未取得新直式素材，改用原生動態背景，不中斷製片。")
     short_html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><style>
 {presentation.GLOBAL_DARK_CSS}
 html,body {{ margin:0; width:1080px; height:1920px; overflow:hidden; color:#f8fafc; font-family:'Noto Sans CJK TC',sans-serif; }}
