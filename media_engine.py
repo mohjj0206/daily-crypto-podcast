@@ -2469,7 +2469,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                         slide_durations[idx - 1],
                         orientation=broll_engine.HORIZONTAL,
                         clip_seconds=4.0,
-                        max_clips=4,
+                        max_clips=6,
                     )
                     if broll_path:
                         print(
@@ -2988,8 +2988,13 @@ def render_short_video(sdata, mdata, config):
         )
 
     # Shorts 9:16 全面優先使用直式實景動態底片。
+    short_broll_query = presentation.assign_broll_query({
+        "title": headline_for_short,
+        "body": short_core_conflict + " " + short_summary,
+        "layout": "short_news",
+    }) or "cryptocurrency, stock market, abstract technology"
     short_broll_path = broll_engine.fetch_pixabay_broll_reel(
-        "cryptocurrency, stock market, abstract technology",
+        short_broll_query,
         short_audio_duration,
         orientation=broll_engine.VERTICAL,
         clip_seconds=4.0,
