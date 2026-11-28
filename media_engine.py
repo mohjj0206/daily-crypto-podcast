@@ -1354,6 +1354,17 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
    bottom: 190px !important;
  }}
  /* 關鍵修正：原本 frame 的 90% 不透明底色會把整片 Pixabay 蓋掉。 */
+ /* 強制覆寫各主題版型自己的高不透明底色，避免主題 CSS 再次蓋住底片。 */
+ .slide-stage.has-broll .ticker {{
+   background: rgba(15, 23, 42, .40) !important;
+   backdrop-filter: blur(5px);
+ }}
+ .slide-stage.has-broll .insight-dock article,
+ .slide-stage.has-broll .metric-card,
+ .slide-stage.has-broll .chart-card,
+ .slide-stage.has-broll .chart-panel {{
+   background: rgba(7, 13, 26, .48) !important;
+ }}
  .slide-stage.has-broll .frame {{
    background: rgba(7, 13, 26, .22) !important;
    border-color: rgba(251, 191, 36, .68);
