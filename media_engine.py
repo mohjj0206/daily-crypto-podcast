@@ -1319,10 +1319,39 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .slide-stage.style-data .chart-spotlight-layout {{ grid-template-columns: minmax(0, 68fr) minmax(0, 32fr); }}
 .slide-stage.style-data .insight-dock article {{ border-color: rgba(34,211,238,.52); background: rgba(5,21,34,.92); }}
 
+/* 影片優先：B-roll 全程作為底片播放，簡報只在該頁口播期間浮現。 */
+.broll-bg {{
+  opacity: 1 !important;
+  animation: none !important;
+}}
+.slide-stage.has-broll .ticker,
+.slide-stage.has-broll .frame,
+.slide-stage.has-broll .metric-rail,
+.slide-stage:not(.has-broll) .ticker,
+.slide-stage:not(.has-broll) .frame,
+.slide-stage:not(.has-broll) .metric-rail {{
+  animation: dataOverlayLifetime var(--slide-duration, 12s) linear both !important;
+  will-change: opacity;
+}}
+@keyframes dataOverlayLifetime {{
+  0%, 2% {{ opacity: 0; }}
+  5%, 94% {{ opacity: 1; }}
+  100% {{ opacity: 0; }}
+}}
+/* 保留影片可見範圍，資訊卡以半透明面板疊在影片上，不再互相輪播。 */
+.slide-stage.has-broll .frame {{
+  background-color: rgba(7, 13, 26, .84);
+  backdrop-filter: blur(14px);
+}}
+.slide-stage.has-broll .ticker {{
+  background: rgba(7, 13, 26, .72);
+  backdrop-filter: blur(12px);
+}}
+
 </style>
 </head>
 <body>
-<div class="slide-stage kinetic scene-{(idx - 1) % 4} style-{html.escape(str(slide_data.get("visual_style") or "editorial"))}{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;--broll-cycle:{min(18.0, max(8.0, float(dur_sec))):.3f}s;">
+<div class="slide-stage kinetic scene-{(idx - 1) % 4} style-{html.escape(str(slide_data.get("visual_style") or "editorial"))}{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;--broll-cycle:{min(18.0, max(8.0, float(dur_sec))):.3f}s;--slide-duration:{float(dur_sec):.3f}s;">
 {broll_markup}
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
