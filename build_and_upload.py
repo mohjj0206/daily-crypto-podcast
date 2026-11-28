@@ -9,6 +9,7 @@ import chart_maker
 import presentation
 import script_writer
 import media_engine
+import broll_engine
 import youtube_uploader
 import daily_learner
 
@@ -145,14 +146,16 @@ def main():
         main_render = media_engine.render_main_video(
             sdata, mdata, dca_data, chart_paths, config
         )
+        main_broll_manifest = broll_engine.get_episode_manifest()
         short_video_path = media_engine.render_short_video(
             sdata, mdata, config
         )
+        short_broll_manifest = broll_engine.get_episode_manifest()
     finally:
         tech_chart_dir.cleanup()
 
     # 將本集實際採用的素材來源保存成稽核檔，並同步放入 YouTube 說明欄。
-    broll_manifest = broll_engine.get_episode_manifest()
+    broll_manifest = main_broll_manifest + short_broll_manifest
     with open("daily_broll_manifest.json", "w", encoding="utf-8") as handle:
         json.dump(broll_manifest, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
