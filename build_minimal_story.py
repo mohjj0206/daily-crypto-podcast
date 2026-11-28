@@ -202,7 +202,11 @@ def read_chatgpt_material():
     kept = []
     for line in raw.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped:
+            continue
+        # 只移除程式提供的預設說明註解；Markdown 標題是研究稿結構，
+        # 絕不可因為以 # 開頭就刪掉，否則章節脈絡會在進入 AI 前消失。
+        if stripped.startswith("# 若要使用 ChatGPT 深度討論內容製片"):
             continue
         kept.append(stripped)
     material = "\n".join(kept).strip()
@@ -337,7 +341,7 @@ def _build_story_prompt(news_items, prices):
 }}
 
 【slides 規則】
-- 建議依素材內容安排約 6～10 頁，但不是硬性頁數；可少於或多於此範圍。以完整論點、合理段落節奏與口播總長為優先，禁止為湊頁數拆散或重複內容。全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
+- 建議依素材內容安排約 6～12 頁，但不是硬性頁數；可少於或多於此範圍。以完整論點與合理節奏為優先，禁止為湊頁數拆散或重複內容。全部口播加總約 {target_min_chars}～{target_max_chars} 字；這是依原稿長度調整的篇幅參考，不得為了壓進固定片長而犧牲核心論證。
 - 每頁 dialogue 依論點複雜度自然安排長度，優先把事件、機制、數據與限制講清楚；生活比喻只在能真正降低理解門檻時使用，不要求每頁都有比喻，也不要求每頁相同字數。
 - metrics 只在本頁口播確實解釋且素材有明確證據時才提供，可為 0～4 個；沒有數值依據時不輸出 KPI，不為填滿版面拆分或重複數字。
 - 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
@@ -514,27 +518,40 @@ def build_story(news_items, prices):
 
 # ── CHATGPT.txt 自訂深度素材 × 生活比喻 寫稿引擎 ─────────────
 def _extract_source_sections(material):
-    """只擷取研究正文的一級章節；排除文末參考資料的分類標題。
+    """擷取研究稿的主要章節，優先辨識 Markdown H1 篇章，兼容舊式中文編號。
 
-    CHATGPT.TXT 常在正文後附上法規、研究機構、資料平台與研究限制等來源索引。
-    這些索引也會使用「一、」「二、」編號，但不是影片必須逐項改寫的正文主題；
-    若一併列入，會錯把參考資料分類當成漏講的研究章節。
+    研究素材可能使用「# 第一篇｜...」與「## 1.1 ...」的 Markdown 結構；
+    不能只找「一、」格式，否則主要章節會整批漏檢。
     """
     sections = []
+    fallback_subsections = []
     for line in (material or "").splitlines():
         stripped = line.strip()
-        # 來源索引起始標記：之後的「一、法律與監管」「二、央行與國際組織研究」
-        # 等是參考資料分類，不納入影片正文覆蓋要求。
         if (
             "研究來源與資料使用說明" in stripped
             or stripped.startswith("以下來源用於建立概念")
         ):
             break
-        match = re.match(r"^\s*([一二三四五六七八九十]+、\s*.+?)\s*$", line)
-        if match:
-            title = match.group(1).strip()
-            if title not in sections:
-                sections.append(title)
+
+        heading = re.match(r"^(#{1,3})\s+(.+?)\s*$", stripped)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2).strip()
+            # 排除文件主標題；主要篇章以「第X篇」辨識，避免把封面當成一章。
+            if re.match(r"^第[一二三四五六七八九十百零〇\d]+篇[｜|：:]", title):
+                if title not in sections:
+                    sections.append(title)
+            elif level >= 2 and title not in fallback_subsections:
+                fallback_subsections.append(title)
+            continue
+
+        legacy = re.match(r"^([一二三四五六七八九十]+、\s*.+?)\s*$", stripped)
+        if legacy and legacy.group(1) not in sections:
+            sections.append(legacy.group(1).strip())
+
+    # 舊素材沒有「第X篇」時，以 H2 子章節作覆蓋清單。
+    if not sections:
+        sections = fallback_subsections
     return sections
 
 
@@ -557,21 +574,39 @@ def _section_coverage_keywords(title):
 
 
 def _section_covered_by_content(title, slides):
-    """以章節標題核心詞檢查口播與投影片文字，避免 metadata 漏填造成誤判。"""
+    """只檢查被標記為該章節的實際口播，不用整篇稿件的偶然撞詞冒充覆蓋。"""
     keywords = _section_coverage_keywords(title)
     if not keywords:
         return False, []
     fragments = []
+    spoken_chars = 0
     for slide in slides:
         fragments.extend([slide.get("big", "")] + list(slide.get("lines") or []))
         for item in slide.get("dialogue") or []:
-            fragments.append(item.get("text", "") if isinstance(item, dict) else str(item))
+            spoken = item.get("text", "") if isinstance(item, dict) else str(item)
+            fragments.append(spoken)
+            spoken_chars += len(spoken)
     content = " ".join(str(value) for value in fragments).lower()
     matched = sorted(keyword for keyword in keywords if keyword in content)
-    return len(matched) >= min(2, len(keywords)), matched
+    # 章節至少要有實際口播篇幅，且出現多個主題詞；只有標題標籤不算講過。
+    return spoken_chars >= 100 and len(matched) >= min(3, len(keywords)), matched
 
 
-def _build_custom_prompt(material, prices):
+def _custom_target_range(material):
+    """依原始研究稿篇幅調整深度主題口播長度，避免所有素材都被壓成 9～11 分鐘。"""
+    source_chars = len(material or "")
+    if source_chars <= 8000:
+        return 2600, 3400
+    if source_chars <= 16000:
+        return 3500, 4800
+    if source_chars <= 30000:
+        return 4500, 6200
+    return 5500, 7500
+
+
+def _build_custom_prompt(material, prices, target_min_chars=None, target_max_chars=None):
+    target_min_chars = target_min_chars or _custom_target_range(material)[0]
+    target_max_chars = target_max_chars or _custom_target_range(material)[1]
     btc = prices.get("BTC") or {}
     eth = prices.get("ETH") or {}
     opening = (
@@ -583,13 +618,27 @@ def _build_custom_prompt(material, prices):
     section_checklist = "\n".join(f"- {section}" for section in required_sections)
     return f"""今日日期：{TODAY_STR}
 
-【任務】以下是一份使用者提供的「ChatGPT 深度討論素材」。請完整保留其中的所有核心論點、數據與洞察，改寫成一檔約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字、具備本節目原創特色的雙人生活化比喻深度長談；頁數依素材論點自然安排，不預設固定頁數。不得提及、引用或模仿任何外部創作者、頻道或品牌名稱。
+【任務】以下是一份使用者提供的「ChatGPT 深度研究原稿」。你的工作不是把它改寫成一般新聞摘要，而是把原稿的核心命題、獨特觀點、論證脈絡、關鍵證據與敘事張力，轉化成觀眾聽得懂、願意聽完的雙人深度節目。依原稿篇幅，本集口播目標約 {target_min_chars}～{target_max_chars} 個中文字元；頁數依論點自然安排，不預設固定頁數。不得提及、引用或模仿任何外部創作者、頻道或品牌名稱。
 
 {opening}
 
 【專業研究與寫稿規則】
-1. 忠於素材：完整覆蓋素材中的核心論點、數據與洞察，但不得把素材作者的推論自動當成已證實事實；遇到證據不足、定義不清或內部矛盾，應在口播中準確標示其限制。
-1A. 章節覆蓋：下列原文一級章節必須全部納入簡報，逐字填入相關頁面的 source_sections；不可漏掉、改寫標題或只在片尾一筆帶過。
+1. 原稿保真優先：保留原稿真正想回答的問題、最重要的結論、作者獨特的觀察角度、推理順序與最後留下的判斷。不可把有鮮明論點的研究稿磨平成四平八穩、沒有立場重心的百科摘要。
+2. 論證鏈完整：每個核心論點盡量依「主張 → 原始證據／數據 → 為何能支持主張 → 對市場或投資人的意義 → 證據限制」呈現。不可只保留結論，卻刪掉讓結論成立的關鍵推理。
+3. 章節覆蓋：下列原文主要篇章必須在口播中有實質內容；每個篇章至少標記到一個相關頁面的 source_sections，並在該頁 dialogue 中真正解釋，不可只列標題、只放投影片或在片尾一筆帶過。
+4. 保留敘事靈魂：保留原稿最有辨識度的切入問題、重要對比、關鍵反例、代表性案例、作者提出的獨特比喻與結論張力。可以改寫語句讓口語更自然，但不可用泛用開場、制式轉折或空泛勵志句取代原稿特色。
+5. 壓縮順序：篇幅不足時，優先刪除重複背景、同義反覆、次要例子與不影響結論的枝節；不得優先刪除核心數據、因果解釋、反方證據、風險限制、關鍵案例或結論成立的必要前提。
+6. 事實分級：區分可驗證事實、原稿作者的解讀與本節目的情境推演；重要數字保留日期、單位、比較基準、資料來源與口徑。不得把相關性寫成因果，也不得把模型假設或長期目標改寫成短期預測。
+7. 研究深度：依素材實際涵蓋範圍，釐清技術機制、經濟誘因、利益關係人、資金流向、價值捕獲與風險傳導；不得為了顯得專業而添加無關指標。
+8. 反方審查：保留原稿提出的反方論點與限制；若原稿沒有反方，才補充有證據基礎的合理替代解釋，不為戲劇效果捏造衝突。
+9. 生活比喻是選配：只在能幫助理解時使用，並在比喻後說清楚真實機制；不可用比喻替代技術解釋或數據。
+10. 雙人對話：由「男」（比特汪）與「女」（以太喵）自然交流。主持人不是輪流念稿；一方提出問題、質疑或指出矛盾，另一方用原稿證據回答，必要時再追問。不得預設資產立場或價格方向。
+11. 數字不是裝飾：所有會改變結論的重要數字需納入口播並解釋意義；次要數字可省略，避免流水帳。不得更改數字、日期、百分比、價格區間或機構歸屬。
+12. 結論忠於原稿：明確交代原稿最終判斷、證據支持範圍、尚未解決的問題，以及什麼新證據會改變判斷；不可自行換成更聳動或更保守的結論。
+13. 口語品質：避免「接下來我們來看」「值得注意的是」等制式句連續堆疊；每段都要帶來新資訊、新推理、新例子或有效追問，禁止灌水與重複總結。
+14. 來源不足時誠實處理：原稿若有數字或說法缺乏可追溯來源、內部矛盾或資料時間不一致，保留其問題並明確說明，不可擅自補齊或包裝成已驗證事實。
+
+1A. 主要篇章清單：
 {section_checklist}
 2. 研究深度：釐清技術機制、經濟誘因、利益關係人、資金流向、價值捕獲與風險傳導；依素材實際涵蓋範圍選擇，不得為了顯得專業而添加無關指標。
 3. 事實分級：區分可驗證事實、合理解釋與假設推論；重要數字保留來源支持，交代時間、單位、比較基準及口徑。不得把相關性寫成因果。
@@ -641,7 +690,8 @@ def build_custom_story(material, prices):
     模型呼叫、JSON 解析或內容品質檢查失敗時直接中止，
     不得使用通用保底故事取代使用者提供的深度報導。
     """
-    prompt = _build_custom_prompt(material, prices)
+    target_min_chars, target_max_chars = _custom_target_range(material)
+    prompt = _build_custom_prompt(material, prices, target_min_chars, target_max_chars)
     try:
         raw = script_writer.call_gemini(
             STORY_SYSTEM_PROMPT + "\n\n" + prompt,
@@ -693,9 +743,9 @@ def build_custom_story(material, prices):
         # 每輪以上一輪稿件為基礎，並重新檢查原文一級章節覆蓋與口播總字數。
         repair_attempts = 2
         for repair_index in range(1, repair_attempts + 1):
-            if total >= TARGET_MIN_CHARS:
+            if total >= target_min_chars:
                 break
-            missing_chars = TARGET_MIN_CHARS - total
+            missing_chars = target_min_chars - total
             print(
                 f"[Minimal] 第 {repair_index}/{repair_attempts} 次補強："
                 f"目前口播 {total} 字，距離下限還差 {missing_chars} 字。"
@@ -708,7 +758,7 @@ def build_custom_story(material, prices):
 - 原文一級章節清單：{json.dumps(required_sections, ensure_ascii=False)}
 
 【本輪補強任務】
-- {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字僅為節目長度參考，不是硬性限制；請依素材複雜度與論點完整性自然安排篇幅，避免為達字數灌水。
+- 本集依原稿篇幅設定的口播參考範圍為 {target_min_chars}～{target_max_chars} 字；這不是硬性上限。若核心論證尚未完整，即使超過上限也不可刪掉必要內容；若核心論點已完整，不必為湊字擴寫。
 - 若內容確實過度濃縮，請逐一檢查原文一級章節，將尚未在口播中充分解釋的核心論點補進最適合的既有頁面；若核心論點已完整，不必為湊字擴寫。
 - 優先補充：技術如何運作、為何形成該結果、數據能證明與不能證明什麼、風險如何傳導、不同立場的反方論點、對一般使用者與投資人的實際影響。
 - 不要只加形容詞或重複結論；每段新增口播都必須提供新的解釋、推論或具體例子。
@@ -738,19 +788,19 @@ def build_custom_story(material, prices):
                 f"口播 {total} 字｜各頁字數 {page_lengths}"
             )
 
-        if total < TARGET_MIN_CHARS:
+        if total < target_min_chars:
             print(
-                f"[Minimal] 提醒：口播 {total} 字，低於建議參考下限 "
-                f"{TARGET_MIN_CHARS:,} 字；字數不作為製片阻擋條件，繼續製片。"
+                f"[Minimal] 提醒：口播 {total} 字，低於本稿參考下限 "
+                f"{target_min_chars:,} 字；字數不作為製片阻擋條件，繼續製片。"
             )
-        elif total > TARGET_MAX_CHARS:
+        elif total > target_max_chars:
             print(
-                f"[Minimal] 提醒：口播 {total} 字，高於建議參考上限 "
-                f"{TARGET_MAX_CHARS:,} 字；字數不作為製片阻擋條件，繼續製片。"
+                f"[Minimal] 提醒：口播 {total} 字，高於本稿參考上限 "
+                f"{target_max_chars:,} 字；字數不作為製片阻擋條件，繼續製片。"
             )
         print(
-            f"[Minimal] 深度報導品質檢查通過：{len(story['slides'])} 頁｜"
-            f"口播 {total} 字（建議參考 {TARGET_MIN_CHARS:,}～{TARGET_MAX_CHARS:,} 字，非硬性限制）"
+            f"[Minimal] 深度報導初步檢查：{len(story['slides'])} 頁｜"
+            f"口播 {total} 字（本稿參考 {target_min_chars:,}～{target_max_chars:,} 字；仍須檢視論證保真）"
             f"｜各頁字數 {page_lengths}"
         )
     except Exception as err:
