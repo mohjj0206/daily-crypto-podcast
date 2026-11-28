@@ -1341,6 +1341,12 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 /* 不再固定顯示未必正在播報的行情跑馬燈與指標儀表；只呈現本頁對應口播的資料卡。 */
 .ticker,
 .metric-rail {{ display: none !important; }}
+/* 跑馬燈與底部固定指標已取消，資料卡擴展到主要畫面，保留字幕安全區。 */
+.slide-stage .frame {{
+  left: 48px !important;
+  right: 48px !important;
+  bottom: 190px !important;
+}}
 /* 保留影片可見範圍，資訊卡以半透明面板疊在影片上，不再互相輪播。 */
 .slide-stage.has-broll .frame {{
   background-color: rgba(7, 13, 26, .84);
