@@ -2357,7 +2357,10 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                             f"{os.path.basename(broll_path)}"
                         )
                     else:
-                        print(f"[Pixabay B-Roll] 第 {idx} 頁未取得素材，將記錄於覆蓋率檢查。")
+                        raise RuntimeError(
+                            f"第 {idx} 頁未取得新的唯一 Pixabay 素材；"
+                            "為避免成片缺少實景或重複使用舊素材，停止主片製作。"
+                        )
 
                 if layout == "versus_clash":
                     if "利多" in body or "風險" in body:
