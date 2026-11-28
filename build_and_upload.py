@@ -57,6 +57,34 @@ def _validate_video_output(path, label):
     return result
 
 
+def _broll_attribution(manifest):
+    """將實際採用的 Pixabay 素材整理成可直接公開的來源標註。"""
+    lines = []
+    seen = set()
+    for item in manifest or []:
+        source_url = str(item.get("source_url") or "").strip()
+        creator = str(item.get("creator") or "").strip()
+        asset_id = str(item.get("asset_id") or "").strip()
+        key = source_url or asset_id
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        title = str(item.get("title") or "Pixabay video").strip()
+        if source_url:
+            lines.append(f"- {title}｜{creator or 'Pixabay contributor'}｜{source_url}")
+        else:
+            lines.append(f"- {title}｜{creator or 'Pixabay contributor'}｜Pixabay asset ID: {asset_id}")
+    if not lines:
+        return ""
+    return (
+        "🎬 影片素材來源與授權\n"
+        + "\n".join(lines)
+        + "\n素材依 Pixabay Content License 使用；Pixabay 原則上不強制署名，"
+        "此處仍列出來源供觀眾查核。個別素材仍須遵守肖像、商標及第三方權利限制。"
+        + "\n授權說明：https://pixabay.com/service/license/\n\n"
+    )
+
+
 def main():
     # ── 基本時間與模式設定 ──────────────────────────────────────
     tw_tz = ZoneInfo("Asia/Taipei")
@@ -123,6 +151,13 @@ def main():
     finally:
         tech_chart_dir.cleanup()
 
+    # 將本集實際採用的素材來源保存成稽核檔，並同步放入 YouTube 說明欄。
+    broll_manifest = broll_engine.get_episode_manifest()
+    with open("daily_broll_manifest.json", "w", encoding="utf-8") as handle:
+        json.dump(broll_manifest, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    broll_credits = _broll_attribution(broll_manifest)
+
     # 上傳前先確認主片與 Shorts 的影音檔案完整性；技術檔案不合格時禁止上傳。
     render_validation = {
         "main": _validate_video_output(main_render.get("output_path"), "每日主片"),
@@ -143,6 +178,7 @@ def main():
         (f"{highlights_block}\n\n" if highlights_block else "")
         + f"📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
         + (f"⏱️ 章節\n{chapters_block}\n\n" if chapters_block else "")
+        + broll_credits
         + f"{main_render['v_desc']}"
     )
     short_title = youtube_uploader.build_daily_short_title(sdata)
