@@ -1029,7 +1029,8 @@ def distribute_reveal(n_lines, total_dur, dialogue_segments=None):
     total_chars = sum(chars for chars, _duration in segments)
     anchors = []
     for i in range(n_lines):
-        target = total_chars * (i + 1) / n_lines
+        # 以每個視覺重點所代表的口播區段中點觸發，避免最後一張卡到頁尾才出現。
+        target = total_chars * (i + 0.5) / n_lines
         consumed_chars = 0
         elapsed = 0.0
         anchor = total
