@@ -1286,9 +1286,13 @@ def render_main_story(story):
             validated_broll = set()
             for i, item in enumerate(page_data):
                 label = "開場" if i == 0 else f"{i:02d}"
-                requested_broll = broll_engine.fetch_pixabay_broll(
-                    story.get("broll_keywords"), broll_engine.HORIZONTAL
-                )
+                try:
+                    requested_broll = broll_engine.fetch_pixabay_broll(
+                        story.get("broll_keywords"), broll_engine.HORIZONTAL
+                    )
+                except Exception as error:
+                    print(f"[Minimal] 第 {i + 1} 段 Pixabay 素材搜尋失敗，改用原生動態背景：{error}")
+                    requested_broll = None
                 reused = False
                 broll_path = requested_broll if requested_broll else None
                 if broll_path:
