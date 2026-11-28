@@ -1101,6 +1101,7 @@ def create_slides(coin_code, market, trigger, articles, dialogues):
         SPECIAL_SLIDE_ANCHOR_TITLES = {1: "本集核心研究問題"}
 
     slides = []
+    chart_used = False
     for position, (slide_number, start_index) in enumerate(anchor_rows):
         end_index = (
             anchor_rows[position + 1][1]
@@ -1130,8 +1131,9 @@ def create_slides(coin_code, market, trigger, articles, dialogues):
             r"價格|走勢|均線|RSI|市場結構|量價|波動|技術指標",
             title + " " + spoken_text[:500],
         )
-        if chart_relevant and os.path.exists("topic_chart.png"):
+        if chart_relevant and not chart_used and os.path.exists("topic_chart.png"):
             chart_path = "topic_chart.png"
+            chart_used = True
         slides.append((title[:42], body, chart_path))
 
     if not slides:
