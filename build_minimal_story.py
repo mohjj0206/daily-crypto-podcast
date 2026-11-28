@@ -497,9 +497,22 @@ def build_story(news_items, prices):
 
 # ── CHATGPT.txt 自訂深度素材 × 生活比喻 寫稿引擎 ─────────────
 def _extract_source_sections(material):
-    """擷取原文的一級章節標題，作為深度影片的最低覆蓋清單。"""
+    """只擷取研究正文的一級章節；排除文末參考資料的分類標題。
+
+    CHATGPT.TXT 常在正文後附上法規、研究機構、資料平台與研究限制等來源索引。
+    這些索引也會使用「一、」「二、」編號，但不是影片必須逐項改寫的正文主題；
+    若一併列入，會錯把參考資料分類當成漏講的研究章節。
+    """
     sections = []
     for line in (material or "").splitlines():
+        stripped = line.strip()
+        # 來源索引起始標記：之後的「一、法律與監管」「二、央行與國際組織研究」
+        # 等是參考資料分類，不納入影片正文覆蓋要求。
+        if (
+            "研究來源與資料使用說明" in stripped
+            or stripped.startswith("以下來源用於建立概念")
+        ):
+            break
         match = re.match(r"^\s*([一二三四五六七八九十]+、\s*.+?)\s*$", line)
         if match:
             title = match.group(1).strip()
