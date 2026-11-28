@@ -897,7 +897,7 @@ body {{
   0%, 68%, 94%, 100% {{ opacity: 0; }}
   72%, 90% {{ opacity: 1; }}
 }}
-.ticker, .frame, .metric-rail {{
+ .slide-stage.has-broll .ticker, .slide-stage.has-broll .frame, .slide-stage.has-broll .metric-rail {{
   animation: slideInterlude var(--broll-cycle, 18s) linear infinite;
 }}
 @keyframes slideInterlude {{
@@ -1280,7 +1280,7 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 </style>
 </head>
 <body>
-<div class="slide-stage kinetic scene-{(idx - 1) % 4}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;--broll-cycle:{min(18.0, max(8.0, float(dur_sec))):.3f}s;">
+<div class="slide-stage kinetic scene-{(idx - 1) % 4}{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--pace:{pace:.2f}s;--mvrv-pct:{mvrv_pct}%;--broll-cycle:{min(18.0, max(8.0, float(dur_sec))):.3f}s;">
 {broll_markup}
 <header class="ticker" aria-label="即時行情狀態列">{ticker_markup}</header>
 <main class="{frame_class}" style="--accent:{accent}" aria-label="{label_markup}">
@@ -2903,7 +2903,7 @@ body {{
   object-fit:cover; opacity:0;
   animation:shortBrollInterlude var(--broll-cycle, 18s) linear infinite;
 }}
-.brand, .avatar, .avatar-placeholder, .panel {{
+ .short-stage.has-broll .brand, .short-stage.has-broll .avatar, .short-stage.has-broll .avatar-placeholder, .short-stage.has-broll .panel {{
   animation:shortSlideInterlude var(--broll-cycle, 18s) linear infinite;
 }}
 @keyframes shortBrollInterlude {{
@@ -2980,7 +2980,7 @@ body {{
 @keyframes fadeInUp {{ from {{ opacity:0; transform:translateY(20px); }} to {{ opacity:1; transform:translateY(0); }} }}
 </style></head>
 <body>
-<div class="short-stage" style="--broll-cycle:{min(18.0, max(8.0, float(15.0 if is_test else short_audio_duration))):.3f}s;">
+<div class="short-stage{' has-broll' if short_broll_markup else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(15.0 if is_test else short_audio_duration))):.3f}s;">
 {short_broll_markup}
 <header class="brand">【幣看趨勢】｜每日市場快訊</header>
 {avatar_markup}
