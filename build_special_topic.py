@@ -623,9 +623,14 @@ def make_dialogues(part1, part2):
                 print("[Slide Sync] 超過 12 張卡片安全上限，忽略多餘標記。")
                 continue
             slide_number = len(SPECIAL_SLIDE_ANCHOR_INDEXES) + 1
-            if slide_number not in SPECIAL_SLIDE_ANCHOR_INDEXES:
-                SPECIAL_SLIDE_ANCHOR_INDEXES[slide_number] = len(dialogues)
-                SPECIAL_SLIDE_ANCHOR_TITLES[slide_number] = clean_txt(anchor.group(2))[:42]
+            if SPECIAL_SLIDE_ANCHOR_INDEXES and len(dialogues) == list(SPECIAL_SLIDE_ANCHOR_INDEXES.values())[-1]:
+                # 兩個標記之間沒有口播時合併，避免產生零秒資料卡。
+                last_number = max(SPECIAL_SLIDE_ANCHOR_INDEXES)
+                if anchor.group(2).strip():
+                    SPECIAL_SLIDE_ANCHOR_TITLES[last_number] = clean_txt(anchor.group(2))[:42]
+                continue
+            SPECIAL_SLIDE_ANCHOR_INDEXES[slide_number] = len(dialogues)
+            SPECIAL_SLIDE_ANCHOR_TITLES[slide_number] = clean_txt(anchor.group(2))[:42]
             if raw_number != slide_number:
                 print(f"[Slide Sync] 模型標記編號 {raw_number} 已依實際出現順序校正為 {slide_number}。")
             continue
@@ -1081,47 +1086,51 @@ def wrap_by_width(draw, text, font, max_width):
     return wrapped
 
 
-def create_slides(coin_code, market, trigger, articles, conditions):
+def create_slides(coin_code, market, trigger, articles, dialogues):
+    """每張資料卡直接取自對應錨點後的口播，不再預設 12 個固定章節。"""
+    global SPECIAL_SLIDE_ANCHOR_INDEXES, SPECIAL_SLIDE_ANCHOR_TITLES
     metadata = SUPPORTED_COINS[coin_code]
-    fng = market["fear_greed"]
-    story_titles = [
-        f"{datetime.fromtimestamp(article['published'], TW_TZ).strftime('%m/%d')}｜{article['title']}"
-        if article["published"]
-        else article["title"]
-        for article in articles[:4]
-    ]
-    while len(story_titles) < 4:
-        story_titles.append("相關報導資料不足，以下不推定未經證實的事件")
-    timeline = "\n".join(f"• {title}" for title in story_titles)
-    trend_text = (
-        f"價格 {format_price(market['price'])}｜24H {market['change_24h']:+.2f}%\n"
-        f"100 日線 {format_price(market['sma_100'])}｜200 日線 {format_price(market['sma_200'])}"
-    )
-    rsi_display = "資料不足" if market["rsi_14"] is None else f"{market['rsi_14']:.2f}"
-    technical_items = articles[:4]
-    technical_summary = "\n".join(
-        f"• {article['title']}｜{article['summary'][:90]}"
-        for article in technical_items
-    ) or "目前沒有足夠的技術報導可供核實，不推定未經證實的設計細節。"
-    ecology_items = articles[3:7] or articles[1:5]
-    ecology = "\n".join(
-        f"• {article['title']}｜{article['summary'][:90]}"
-        for article in ecology_items
-    ) or "目前沒有足夠的生態報導可供核實，不推定未經證實的採用或合作。"
-    slides = [
-        ("導火線｜今日專題", f"{coin_code}｜{trigger['title']}\n{trigger['summary'][:180]}", None),
-        ("幣種檔案｜核心定位", f"{metadata['name']}（{coin_code}）\n導火線摘要：{trigger['summary'][:170]}\n定位與用途應以報導及官方文件核實，不將市場敘事當成已驗證事實。", None),
-        ("發展脈絡｜近期報導時間線", timeline, None),
-        ("技術特性｜報導與設計取捨", technical_summary, None),
-        ("生態版圖｜應用與動態", ecology, None),
-        ("即時體檢｜價格與指標", f"{trend_text}\n14 日 RSI：{rsi_display}\n恐慌與貪婪：{fng.get('value', '未知')}（{fng.get('value_classification', '未知')}）", None),
-        (f"{coin_code}｜100 日走勢與均線", f"日線收盤價、20 日均線與 100 日均線；均線不足時不以短期資料冒充長期均線。\n資料區間：近 {min(100, len(market['closes']))} 個日線收盤", "topic_chart.png"),
-        ("多空打折｜避免單邊敘事", "多方：觀察技術進展、實際使用與生態留存是否轉化為可驗證需求。\n空方：評估供給、競爭、治理、安全及市場流動性風險；利多不等於價格必然上漲。", None),
-        ("未來展望｜用條件取代預言", f"{metadata['name']}的後續走勢仍取決於生態落地與市場風險偏好。先列出能驗證的條件，再依資料更新觀點；任何情境都不保證獲利。", None),
-        ("觀察條件 1｜均線結構", conditions[0], None),
-        ("觀察條件 2｜量價確認", conditions[1], None),
-        ("觀察條件 3｜情緒與風險", conditions[2], None),
-    ]
+    anchor_rows = sorted(SPECIAL_SLIDE_ANCHOR_INDEXES.items())
+    if not anchor_rows:
+        anchor_rows = [(1, 0)]
+        SPECIAL_SLIDE_ANCHOR_TITLES = {1: "本集核心研究問題"}
+
+    slides = []
+    for position, (slide_number, start_index) in enumerate(anchor_rows):
+        end_index = (
+            anchor_rows[position + 1][1]
+            if position + 1 < len(anchor_rows)
+            else len(dialogues)
+        )
+        segment = dialogues[start_index:end_index]
+        spoken_text = " ".join(text for _role, text in segment).strip()
+        sentences = [
+            item.strip()
+            for item in re.split(r"(?<=[。！？；])", spoken_text)
+            if len(item.strip()) >= 8
+        ]
+        # 先保留口播中有數字或具體名詞的句子，再依原順序組卡，避免生成未被講述的資訊。
+        selected = [
+            sentence for sentence in sentences
+            if re.search(r"\d|BTC|ETH|SOL|XRP|ADA|ZEC|美元|供給|收入|質押|協議|鏈上|交易", sentence, re.I)
+        ][:4]
+        if len(selected) < 2:
+            selected = sentences[:4]
+        body = "\n".join(selected)[:320] or spoken_text[:320]
+        title = SPECIAL_SLIDE_ANCHOR_TITLES.get(slide_number, "").strip()
+        if not title:
+            title = (sentences[0][:30] if sentences else f"{metadata['name']} 核心研究")
+        chart_path = None
+        chart_relevant = re.search(
+            r"價格|走勢|均線|RSI|市場結構|量價|波動|技術指標",
+            title + " " + spoken_text[:500],
+        )
+        if chart_relevant and os.path.exists("topic_chart.png"):
+            chart_path = "topic_chart.png"
+        slides.append((title[:42], body, chart_path))
+
+    if not slides:
+        raise RuntimeError("單一幣種專題沒有可供渲染的口播資料卡。")
 
     header_font = load_font(24)
     initial_title_size = 34
@@ -1325,8 +1334,6 @@ def run_coin_special():
     prompt1, prompt2_template = build_prompts(coin_code, market, trigger, articles)
     part1 = call_gemini(prompt1)
     part2 = call_gemini(prompt2_template.replace("{part1}", part1[-6000:]))
-    defaults = default_conditions(coin_code, market)
-    conditions, part2 = extract_conditions(part2, defaults)
     title_text, dialogues = make_dialogues(part1, part2)
     dialogues = validate_dialogue_length(dialogues)
     title = f"【幣看深潛】{metadata['name']}｜{title_text}（{TODAY_STR}）"
@@ -1336,7 +1343,7 @@ def run_coin_special():
     dialogue_end = write_audio_and_subtitles(results, intro_duration)
 
     make_topic_chart(coin_code, market)
-    slides = create_slides(coin_code, market, trigger, articles, conditions)
+    slides = create_slides(coin_code, market, trigger, articles, dialogues)
     # 依逐字稿中的 [SLIDE_n] 錨點安排每張資料卡的真實口播區間。
     slide_count = len(slides)
     valid_anchors = all(index in SPECIAL_SLIDE_START_TIMES for index in range(1, slide_count + 1))
