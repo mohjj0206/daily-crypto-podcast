@@ -1,0 +1,2067 @@
+"""深度故事圖解線（數據分析版型 A）——完全獨立主程式，不修改任何舊程式。
+
+設計目標：
+- 深色專業財經數據分析版型：主標題、核心 KPI 卡、數據圖表與口播同步重點。
+- 僅呈現素材中有來源依據的數據；缺少可靠數值時不虛構圖表，改顯示分析重點。
+- 主片採 16:9 資訊圖解，Shorts 維持直式精華版型。
+- 雙人 TTS、逐頁字幕與 Pixabay 動態實景素材維持獨立運作。
+
+輸出：story_main.mp4、story_short.mp4、story_thumb.jpg、story_metadata.txt。
+"""
+
+import base64
+import html
+import json
+import os
+import re
+import subprocess
+import tempfile
+import unicodedata
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+
+import presentation
+import script_writer
+import market_data
+import broll_engine
+import media_engine
+from PIL import Image, ImageDraw, ImageFont
+from playwright.sync_api import sync_playwright
+
+
+# ── 常數 ──────────────────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TW_TZ = timezone(timedelta(hours=8))
+TODAY_STR = datetime.now(TW_TZ).strftime("%Y年%m月%d日")
+IS_TEST = os.environ.get("TEST_MODE", "").strip().lower() == "true"
+
+OUTRO_DURATION = 12.0
+OUTRO_PAUSE = 1.5
+MAIN_W, MAIN_H = media_engine.MAIN_VIDEO_WIDTH, media_engine.MAIN_VIDEO_HEIGHT
+FPS = media_engine.VIDEO_FPS
+
+
+# ── 頭像路徑解析（含檔案存在檢查與圓形裁切備援） ──────────────
+def _circularize_avatar(path, out_path):
+    """把任意頭像圖裁成正方形並套用圓形遮罩，輸出帶 alpha 的過場 PNG。"""
+    with Image.open(path) as source:
+        avatar = source.convert("RGBA")
+    width, height = avatar.size
+    crop = min(width, height)
+    left = (width - crop) // 2
+    top = (height - crop) // 2
+    avatar = avatar.crop((left, top, left + crop, top + crop)).resize(
+        (225, 225), Image.LANCZOS
+    )
+    mask = Image.new("L", (225, 225), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, 224, 224), fill=255)
+    out = Image.new("RGBA", (225, 225), (0, 0, 0, 0))
+    out.paste(avatar, (0, 0), mask)
+    out.save(out_path)
+    return out_path
+
+
+def resolve_avatar_input(preferred, speaker):
+    """確保傳給 FFmpeg -i 的頭像一定存在且為圓形。
+
+    依序檢查 `<speaker>_avatar.png`、`<speaker>_single.png`、
+    `<speaker>_single.png.png`、`avatar.png`，取第一個存在的檔案，
+    重新裁為圓形後**確認產出檔案存在**再回傳；若某來源損壞（如 CI 產生的
+    0 位元或截圖失敗），自動跳到下一個候選，避免 FFmpeg 拿到不存在的
+    `cat_avatar.png`／`dog_avatar.png` 而 exit status 234。
+    """
+    candidates = [
+        preferred or f"{speaker}_avatar.png",
+        f"{speaker}_avatar.png",
+        f"{speaker}_single.png",
+        f"{speaker}_single.png.png",
+        "avatar.png",
+    ]
+    seen = set()
+    out_path = f"{speaker}_avatar_overlay.png"
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if not os.path.exists(candidate):
+            continue
+        try:
+            produced = _circularize_avatar(candidate, out_path)
+        except (OSError, ValueError) as error:
+            print(
+                f"[Minimal] 頭像來源 {candidate} 無法讀取（{error}），"
+                "改用下一個候選。"
+            )
+            continue
+        if os.path.exists(produced):
+            if candidate != preferred:
+                print(
+                    f"[Minimal] 使用圓形備援頭像 {candidate} -> {produced}。"
+                )
+            return produced
+    raise FileNotFoundError(
+        f"No usable avatar for {speaker}: tried {list(seen)}."
+    )
+
+# 單一主題總口播字數目標（含開場；頁數不設硬性限制）。
+TARGET_MIN_CHARS = 2600
+TARGET_MAX_CHARS = 3400
+# 每頁短句上限與每行字數上限。
+MAX_LINES_PER_SLIDE = 4
+MAX_LINE_CHARS = 14
+
+# 根目錄自訂深度素材檔（CHATGPT.txt）。CI 跑在 Linux 為大小寫敏感，
+# 因此同時偵測 .txt 與 .TXT 兩種檔名，避免跨平台找不到檔案。
+CHATGPT_FILENAMES = ("CHATGPT.txt", "CHATGPT.TXT")
+# 有效內文（去除 # 註解與空白行後）超過此字數才進入專屬主題製片模式。
+CHATGPT_MIN_CHARS = 100
+# CHATGPT.txt 的預設註解內容（無實質素材時的狀態，也是製片後還原的內容）。
+CHATGPT_DEFAULT_CONTENT = (
+    "# 若要使用 ChatGPT 深度討論內容製片，請將完整文章貼於此檔案並執行 Minimal Story workflow；"
+    "若無實質內容則自動抓取當日即時新聞。\n"
+)
+
+# 男主播唯一名稱為「比特汪」：本模組自己的文字清洗函式，
+# 無條件把「位元汪／位元犬」等錯誤譯名一律修正為「比特汪」。
+_WRONG_DOG_RE = re.compile(r"位元[汪犬]")
+
+
+def _clean_text(text):
+    """共用文字清理：統一主播名稱，並移除不應出現在節目中的外部品牌字眼。"""
+    cleaned = presentation.sanitize_text(str(text or ""))
+    cleaned = _WRONG_DOG_RE.sub("比特汪", cleaned)
+    return cleaned.replace("投資家" + "富士", "").strip()
+
+
+# ── 抓取開場用 BTC／ETH 現價（CoinGecko 簡單行情） ──────────
+def fetch_opening_prices():
+    prices = {"BTC": None, "ETH": None}
+    try:
+        url = (
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        data = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
+        btc = data.get("bitcoin") or {}
+        eth = data.get("ethereum") or {}
+        prices["BTC"] = {"usd": btc.get("usd"), "change": btc.get("usd_24h_change")}
+        prices["ETH"] = {"usd": eth.get("usd"), "change": eth.get("usd_24h_change")}
+    except Exception as err:  # 靜默退回 None，由寫稿邏輯改成不報價開場
+        print(f"[Minimal] 開場報價抓取失敗，改以不報價開場：{err}")
+    return prices
+
+
+# ── 抓取今日完整新聞正文 ─────────────────────────────────
+def gather_news():
+    entries = market_data.fetch_rss_news(TW_TZ)
+    enriched = market_data.enrich_top_news_with_full_text(entries, max_articles=6)
+    items = []
+    for published_at, entry in enriched:
+        title = _clean_text(entry.get("title", ""))
+        full_text = entry.get("full_text") or script_writer.clean_txt(
+            entry.get("summary", "")
+        )
+        full_text = _clean_text(full_text)
+        items.append(
+            {
+                "title": title,
+                "published": published_at.strftime("%Y-%m-%d %H:%M"),
+                "text": full_text,
+            }
+        )
+    return items
+
+
+# ── 根目錄 CHATGPT.txt 自訂深度素材接入 ────────────────────
+def _chatgpt_path():
+    """回傳實際存在的 CHATGPT 素材檔路徑；找不到時回傳預設檔名（供寫入用）。"""
+    for name in CHATGPT_FILENAMES:
+        candidate = os.path.join(BASE_DIR, name)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(BASE_DIR, CHATGPT_FILENAMES[0])
+
+
+def read_chatgpt_material():
+    """讀取根目錄 CHATGPT.txt，過濾以 # 開頭的註解行與空白行後回傳純內文。
+
+    回傳 (material_text, used_path)：material_text 為 '' 代表無有效素材；
+    used_path 為實際讀到的檔案路徑（找不到時為 None）。
+    """
+    path = _chatgpt_path()
+    if not os.path.exists(path):
+        return "", None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = handle.read()
+    except Exception as err:  # 讀檔失敗則靜默退回當日新聞流程
+        print(f"[Minimal] 讀取 CHATGPT.txt 失敗，改走當日新聞：{err}")
+        return "", None
+    kept = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # 只移除程式提供的預設說明註解；Markdown 標題是研究稿結構，
+        # 絕不可因為以 # 開頭就刪掉，否則章節脈絡會在進入 AI 前消失。
+        if stripped.startswith("# 若要使用 ChatGPT 深度討論內容製片"):
+            continue
+        kept.append(stripped)
+    material = "\n".join(kept).strip()
+    return material, path
+
+
+def _validate_story_video(path, label):
+    """發布前確認極簡故事影音檔案存在且同時含有影音串流。"""
+    if not path or not os.path.isfile(path) or os.path.getsize(path) <= 0:
+        raise RuntimeError(f"{label} 渲染檔不存在或為空，停止發佈。")
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type",
+            "-of", "json", path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    metadata = json.loads(probe.stdout or "{}")
+    stream_types = {
+        str(stream.get("codec_type") or "")
+        for stream in metadata.get("streams") or []
+    }
+    try:
+        duration = float((metadata.get("format") or {}).get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0 or not {"video", "audio"}.issubset(stream_types):
+        raise RuntimeError(
+            f"{label} 影音串流驗收失敗：{duration:.3f}s，{sorted(stream_types)}"
+        )
+    print(
+        f"[Minimal Render QA] {label} 通過：{duration:.2f}s，"
+        f"{os.path.getsize(path):,} bytes。"
+    )
+    return {"duration_seconds": round(duration, 3), "size_bytes": os.path.getsize(path)}
+
+
+def reset_chatgpt_file(path=None):
+    """重置前先建立並驗證不可覆寫的原始備份，備份失敗時絕不清空素材。"""
+    target = path or _chatgpt_path()
+    try:
+        if not os.path.isfile(target):
+            print(f"[Minimal] 找不到 {target}；不建立空白檔，也不執行重置。")
+            return False
+        backup_dir = os.path.join(BASE_DIR, "backups", "chatgpt")
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = datetime.now(TW_TZ).strftime("%Y%m%dT%H%M%S%f")
+        backup_path = os.path.join(
+            backup_dir, f"{os.path.basename(target)}.{stamp}.bak"
+        )
+        with open(target, "rb") as source:
+            original_bytes = source.read()
+        with open(backup_path, "xb") as backup:
+            backup.write(original_bytes)
+        with open(backup_path, "rb") as backup:
+            if backup.read() != original_bytes:
+                raise RuntimeError("原始素材備份驗證失敗")
+        print(f"[Minimal] 原始素材已備份並驗證：{backup_path}")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(CHATGPT_DEFAULT_CONTENT)
+        print(f"[Minimal] 已重置 {os.path.basename(target)} 為預設註解狀態。")
+        return True
+    except Exception as err:
+        print(f"[Minimal] 備份或重置 CHATGPT.txt 失敗；保留原始素材：{err}")
+        return False
+
+
+# ── 單一主題 × 生活比喻 寫稿引擎 ──────────────────────────
+STORY_SYSTEM_PROMPT = (
+    "你是資深加密資產研究員、區塊鏈協議分析師與台灣財經 YouTube 節目主筆。"
+    "你熟悉 Bitcoin、Ethereum、Layer 1/Layer 2、DeFi、穩定幣、Tokenomics、鏈上數據、"
+    "市場微結構、衍生品、宏觀流動性與風險管理。先建立證據與因果分析，再把研究轉成"
+    "清楚、自然、有節奏的雙人對話。生活比喻只在有助理解時使用，不得取代數據或機制。"
+    "你只回傳合法 JSON，絕不輸出多餘文字。"
+)
+
+
+def _build_story_prompt(news_items, prices):
+    news_block = []
+    for idx, item in enumerate(news_items, 1):
+        news_block.append(
+            f"【新聞 {idx}】標題：{item['title']}\n"
+            f"時間：{item['published']}\n正文：{item['text'][:2400]}"
+        )
+    news_joined = "\n\n".join(news_block)
+
+    btc = prices.get("BTC") or {}
+    eth = prices.get("ETH") or {}
+    opening = (
+        "開場直接切入本集核心事件或研究問題。只有當 BTC／ETH 報價與本集主題有實質關聯，"
+        "且提供的價格資料能支持分析時，才自然帶入報價；不得為了每日例行報價打斷專題。"
+    )
+
+    return f"""今日日期：{TODAY_STR}
+
+【任務】只從以下今日新聞中，挑選「最震撼、最值得深挖的 1 個單一核心事件或機構研報」作為整集唯一主軸，做一檔 9～11 分鐘、約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字的精品長談。
+
+{opening}
+
+【專業研究與寫稿規則】
+1. 單一主軸：整集深挖一個核心事件或研究問題，不做逐條新聞流水帳；可使用多則新聞或背景資料作為交叉證據。
+2. 研究先於敘事：釐清事件時間線、涉及主體、協議或市場機制、可驗證數據、受影響對象及尚未確定事項。不要只重述新聞結論。
+3. 事實分級：區分已確認事實、資料支持的解釋與未證實推論。新聞標題或摘要不能代替原始證據；來源沒有提供的數字、日期、機構立場、採用進度不得自行補上。
+4. 因果與替代解釋：每個核心結論都要說明「為何這些證據支持該結論」，並檢查至少一個合理替代解釋。相關性不等於因果，鏈上地址不等於真實身份，交易所流出不必然等於累積，TVL 不等於收入，協議收入不必然歸代幣持有人。
+5. 依題目選擇研究維度：視相關性分析技術機制、Tokenomics、供給與解鎖、排放與銷毀、質押收益與稀釋、協議費用與收入、代幣價值捕獲、鏈上活躍與留存、競爭格局、安全、治理、流動性及宏觀因素；不相關或沒有可靠資料的維度不要硬塞。
+6. 生活比喻是選配：只在能讓抽象機制更易懂時使用，之後仍須說清楚真實技術機制與數據；禁止每個概念都先套比喻。
+7. 雙人對話：由「男」（比特汪）與「女」（以太喵）自然交替。角色個性可以鮮明，但不能預設任何資產必然上漲或必須被支持；至少有一位主持人要提出有力質疑，另一位以證據回應。
+8. 所有重要數字都要寫進口播，但需交代時間、單位、比較基準及數據限制；若數字只是背景且不影響論點，可不必硬塞。
+9. 內容必須基於提供的新聞正文與數據；如資料彼此矛盾，指出矛盾，不得自行挑選有利數字或捏造未經證實的事件。
+10. 結論需說明目前證據支持什麼、仍有哪些未知，以及什麼新證據會改變判斷；不得給出沒有依據的價格預言或保證獲利。
+
+【輸出 JSON 結構】只輸出 JSON，不要 markdown 或註解：
+{{
+  "topic_title": "整集核心主題標題（20 字內、有懸念）",
+  "topic_summary": "一句話說明本集深挖的單一事件",
+  "broll_keywords": "英文 Pixabay 實景底片關鍵字，逗號分隔，3～5 個",
+  "yt_title": "24～42 字元、精準反映本集內容的標題",
+  "opening": [{{"role": "男", "text": "開場 20～30 秒切入主題；只有報價與主題直接相關時才提 BTC／ETH"}}],
+  "slides": [
+    {{
+      "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
+      "lines": ["分析重點1", "分析重點2", "分析重點3"],
+      "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義"}}],
+      "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2]}},
+      "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
+    }}
+  ]
+}}
+
+【slides 規則】
+- 建議依素材內容安排約 6～10 頁，但不是硬性頁數；可少於或多於此範圍。以完整論點、合理段落節奏與口播總長為優先，禁止為湊頁數拆散或重複內容。全部口播加總約 {TARGET_MIN_CHARS}～{TARGET_MAX_CHARS} 字（約 9～11 分鐘）。
+- 每頁 dialogue 依論點複雜度自然安排長度，優先把事件、機制、數據與限制講清楚；生活比喻只在能真正降低理解門檻時使用，不要求每頁都有比喻，也不要求每頁相同字數。
+- metrics 只在本頁口播確實解釋且素材有明確證據時才提供，可為 0～4 個；沒有數值依據時不輸出 KPI，不為填滿版面拆分或重複數字。
+- 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
+- lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
+- **畫面與口播順序必須一致**：lines 必須依照 dialogue 實際講述的先後順序排列；每個 line 都要在 dialogue 中有明確對應的解釋，不得先顯示尚未講到的結論。
+- metrics 依照 dialogue 中數值被提及的順序排列；只有講到該數值及其意義時才讓對應 KPI 卡出現。chart 亦須在口播開始解釋其比較內容時才出現。
+- dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
+- big 是本頁主標題，不再獨佔整張畫面的唯一資訊。
+
+【今日新聞正文】
+{news_joined}
+"""
+
+
+def _len_lines(slide):
+    return [str(x).strip() for x in (slide.get("lines") or []) if str(x).strip()]
+
+
+def _normalize_metrics(raw_metrics, require_source=False):
+    """整理 KPI 卡片，只保留素材明確提供的數據。"""
+    metrics = []
+    for item in raw_metrics or []:
+        if not isinstance(item, dict):
+            continue
+        label = _clean_text(item.get("label"))
+        value = _clean_text(item.get("value"))
+        detail = _clean_text(item.get("detail"))
+        source = _clean_text(item.get("source"))
+        if label and value and (source or not require_source):
+            metrics.append({
+                "label": label[:18], "value": value[:24],
+                "detail": detail[:42], "source": source[:90],
+            })
+        if len(metrics) >= 4:
+            break
+    return metrics
+
+
+def _normalize_chart(raw_chart, require_source=False):
+    """整理比較圖表；只接受明確數值，避免缺值或文字被誤畫成數據。"""
+    if not isinstance(raw_chart, dict):
+        return None
+    labels = raw_chart.get("labels") or []
+    values = raw_chart.get("values") or []
+    points = []
+    for label, value in zip(labels, values):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not str(label).strip():
+            continue
+        points.append({"label": _clean_text(label)[:14], "value": number})
+        if len(points) >= 6:
+            break
+    source = _clean_text(raw_chart.get("source"))
+    if len(points) < 2 or (require_source and not source):
+        return None
+    return {
+        "title": _clean_text(raw_chart.get("title") or "數據比較")[:30],
+        "unit": _clean_text(raw_chart.get("unit") or "")[:12],
+        "source": source[:120],
+        "points": points,
+    }
+
+
+def _normalize_story(raw, news_items, prices, require_source=False):
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("story JSON 不是物件")
+
+    slides_in = data.get("slides") or []
+    if not slides_in:
+        raise ValueError("story 缺少 slides")
+
+    opening = []
+    for line in data.get("opening") or []:
+        role = "男" if str(line.get("role")) == "男" else "女"
+        text = _clean_text(line.get("text"))
+        if text:
+            opening.append((role, text))
+    # 開場沒有內容時，用一句不報價的預設開場。
+    if not opening:
+        opening = [("男", f"今天我們只聊一件最關鍵的事，先把時間留給這個主題。")]
+
+    slides = []
+    for slide in slides_in:
+        lines = _len_lines(slide)[:MAX_LINES_PER_SLIDE]
+        lines = [ln[:MAX_LINE_CHARS] for ln in lines]
+        if not lines:
+            continue
+        dialogue = []
+        for line in slide.get("dialogue") or []:
+            role = "男" if str(line.get("role")) == "男" else "女"
+            text = _clean_text(line.get("text"))
+            if text:
+                dialogue.append((role, text))
+        if not dialogue:
+            continue
+        slides.append(
+            {
+                "big": _clean_text(slide.get("big"))[:16],
+                "lines": lines,
+                "metrics": _normalize_metrics(slide.get("metrics"), require_source),
+                "chart": _normalize_chart(slide.get("chart"), require_source),
+                "source_sections": [
+                    _clean_text(section) for section in (slide.get("source_sections") or [])
+                    if str(section).strip()
+                ],
+                "dialogue": dialogue,
+            }
+        )
+
+    if not slides:
+        raise ValueError("story 沒有可用的 slides")
+
+    return {
+        "topic_title": _clean_text(data.get("topic_title") or "極簡故事")[:30],
+        "topic_summary": _clean_text(data.get("topic_summary")),
+        "broll_keywords": str(data.get("broll_keywords") or "cryptocurrency,finance,data"),
+        "yt_title": _clean_text(data.get("yt_title") or data.get("topic_title") or "極簡故事"),
+        "opening": opening,
+        "slides": slides,
+    }
+
+
+def _fallback_story(news_items, prices):
+    """模型解析失敗時的內建完整保底結構，確保 build_story 永不回傳 None。"""
+    topic_title = "今日市場深度聚焦"
+    if news_items:
+        topic_title = _clean_text(news_items[0].get("title") or topic_title)[:30] or topic_title
+    summary = _clean_text(news_items[0].get("title")) if news_items else ""
+    opening = [("男", "今天我們只聊一件最關鍵的事，先把時間留給這個主題。")]
+    slides = [
+        {
+            "big": topic_title[:16],
+            "lines": ["今日重點", "一次看懂"],
+            "dialogue": [("女", "今天的市場出現關鍵變化，我們用生活化的方式把它講清楚。")],
+        }
+    ]
+    return {
+        "topic_title": topic_title,
+        "topic_summary": summary,
+        "broll_keywords": "cryptocurrency,finance,data",
+        "yt_title": topic_title,
+        "opening": opening,
+        "slides": slides,
+    }
+
+
+def build_story(news_items, prices):
+    """呼叫 Gemini 產製單一主題、生活比喻、逐頁短句的極簡故事腳本。
+
+    100% 回傳非空 dict：模型呼叫或解析失敗時退回內建保底結構，絕不回傳 None。
+    """
+    prompt = _build_story_prompt(news_items, prices)
+    try:
+        raw = script_writer.call_gemini(
+            STORY_SYSTEM_PROMPT + "\n\n" + prompt,
+            max_output_tokens=16384,
+            timeout=300,
+            json_mode=True,
+        )
+        story = _normalize_story(raw, news_items, prices)
+    except Exception as err:  # 模型 429／解析失敗時改用內建保底故事
+        print(f"[Minimal] 寫稿失敗，改用內建保底故事：{err}")
+        story = _fallback_story(news_items, prices)
+    total = sum(len(d[1]) for d in story["opening"])
+    for slide in story["slides"]:
+        total += sum(len(d[1]) for d in slide["dialogue"])
+    print(f"[Minimal] 主題：{story['topic_title']}｜頁數 {len(story['slides'])}｜口播約 {total} 字")
+    return story
+
+
+# ── CHATGPT.txt 自訂深度素材 × 生活比喻 寫稿引擎 ─────────────
+def _extract_source_sections(material):
+    """擷取研究稿的主要章節，優先辨識 Markdown H1 篇章，兼容舊式中文編號。
+
+    研究素材可能使用「# 第一篇｜...」與「## 1.1 ...」的 Markdown 結構；
+    不能只找「一、」格式，否則主要章節會整批漏檢。
+    """
+    sections = []
+    fallback_subsections = []
+    for line in (material or "").splitlines():
+        stripped = line.strip()
+        if (
+            "研究來源與資料使用說明" in stripped
+            or stripped.startswith("以下來源用於建立概念")
+        ):
+            break
+
+        heading = re.match(r"^(#{1,3})\s+(.+?)\s*$", stripped)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2).strip()
+            # 排除文件主標題；主要篇章以「第X篇」辨識，避免把封面當成一章。
+            if re.match(r"^第[一二三四五六七八九十百零〇\d]+篇[｜|：:]", title):
+                if title not in sections:
+                    sections.append(title)
+            elif level >= 2 and title not in fallback_subsections:
+                fallback_subsections.append(title)
+            continue
+
+        legacy = re.match(r"^([一二三四五六七八九十]+、\s*.+?)\s*$", stripped)
+        # 兼容舊式獨立章節標題，但排除「一、...；二、...」這類正文列點。
+        if (
+            legacy
+            and len(legacy.group(1)) <= 60
+            and not re.search(r"[。；;]", legacy.group(1))
+            and legacy.group(1).strip() not in sections
+        ):
+            sections.append(legacy.group(1).strip())
+
+    # 舊素材沒有「第X篇」時，以 H2 子章節作覆蓋清單。
+    if not sections:
+        sections = fallback_subsections
+    return sections
+
+
+def _section_coverage_keywords(title):
+    """從篇章標題抽取主題詞，排除「第X篇」等純編號文字。"""
+    text = str(title or "").strip()
+    text = re.sub(r"^第[一二三四五六七八九十百零〇\d]+篇[｜|：:]", "", text)
+    text = re.sub(r"^[一二三四五六七八九十]+、", "", text).lower()
+    for phrase in (
+        "什麼是", "它解決了", "為什麼", "憑什麼", "最容易混淆的",
+        "給一般投資人的", "實戰檢核清單", "硬核技術面深度拆解",
+        "真實用途與", "估值迷思破解", "破題懸念",
+    ):
+        text = text.replace(phrase, " ")
+    keywords = set(re.findall(r"[a-z][a-z0-9.]*|\d+(?:\.\d+)?", text))
+    for run in re.findall(r"[\u4e00-\u9fff]+", text):
+        if len(run) == 2:
+            keywords.add(run)
+        elif len(run) > 2:
+            keywords.update(run[index:index + 2] for index in range(len(run) - 1))
+    return keywords
+
+
+def _section_covered_by_content(title, slides):
+    """只檢查被標記為該章節的實際口播，不用整篇稿件的偶然撞詞冒充覆蓋。"""
+    keywords = _section_coverage_keywords(title)
+    if not keywords:
+        return False, []
+    fragments = []
+    spoken_chars = 0
+    for slide in slides:
+        fragments.extend([slide.get("big", "")] + list(slide.get("lines") or []))
+        for item in slide.get("dialogue") or []:
+            spoken = item.get("text", "") if isinstance(item, dict) else str(item)
+            fragments.append(spoken)
+            spoken_chars += len(spoken)
+    content = " ".join(str(value) for value in fragments).lower()
+    matched = sorted(keyword for keyword in keywords if keyword in content)
+    # 章節至少要有實際口播篇幅，且出現多個主題詞；只有標題標籤不算講過。
+    return spoken_chars >= 100 and len(matched) >= min(3, len(keywords)), matched
+
+
+def _custom_target_range(material):
+    """依原始研究稿篇幅調整深度主題口播長度，避免所有素材都被壓成 9～11 分鐘。"""
+    source_chars = len(material or "")
+    if source_chars <= 8000:
+        return 2600, 3400
+    if source_chars <= 16000:
+        return 3500, 4800
+    if source_chars <= 30000:
+        return 4500, 6200
+    return 5500, 7500
+
+
+def _build_custom_prompt(material, prices, target_min_chars=None, target_max_chars=None):
+    target_min_chars = target_min_chars or _custom_target_range(material)[0]
+    target_max_chars = target_max_chars or _custom_target_range(material)[1]
+    btc = prices.get("BTC") or {}
+    eth = prices.get("ETH") or {}
+    opening = (
+        "開場直接切入這份自訂深度素材的核心問題。只有當 BTC／ETH 報價與原始素材的論點"
+        "有實質關聯，且價格資料能支持分析時，才自然帶入；不得為了例行報價偏離研究主題。"
+    )
+
+    required_sections = _extract_source_sections(material)
+    section_checklist = "\n".join(f"- {section}" for section in required_sections)
+    return f"""今日日期：{TODAY_STR}
+
+【任務】以下是一份使用者提供的「ChatGPT 深度研究原稿」。你的工作不是把它改寫成一般新聞摘要，而是把原稿的核心命題、獨特觀點、論證脈絡、關鍵證據與敘事張力，轉化成觀眾聽得懂、願意聽完的雙人深度節目。依原稿篇幅，本集口播目標約 {target_min_chars}～{target_max_chars} 個中文字元；頁數依論點自然安排，不預設固定頁數。不得提及、引用或模仿任何外部創作者、頻道或品牌名稱。
+
+{opening}
+
+【專業研究與寫稿規則】
+1. 原稿保真優先：保留原稿真正想回答的問題、最重要的結論、作者獨特的觀察角度、推理順序與最後留下的判斷。不可把有鮮明論點的研究稿磨平成四平八穩、沒有立場重心的百科摘要。
+2. 論證鏈完整：每個核心論點盡量依「主張 → 原始證據／數據 → 為何能支持主張 → 對市場或投資人的意義 → 證據限制」呈現。不可只保留結論，卻刪掉讓結論成立的關鍵推理。
+3. 章節覆蓋：下列原文主要篇章必須在口播中有實質內容；每個篇章至少標記到一個相關頁面的 source_sections，並在該頁 dialogue 中真正解釋，不可只列標題、只放投影片或在片尾一筆帶過。
+4. 保留敘事靈魂：保留原稿最有辨識度的切入問題、重要對比、關鍵反例、代表性案例、作者提出的獨特比喻與結論張力。可以改寫語句讓口語更自然，但不可用泛用開場、制式轉折或空泛勵志句取代原稿特色。
+5. 壓縮順序：篇幅不足時，優先刪除重複背景、同義反覆、次要例子與不影響結論的枝節；不得優先刪除核心數據、因果解釋、反方證據、風險限制、關鍵案例或結論成立的必要前提。
+6. 事實分級：區分可驗證事實、原稿作者的解讀與本節目的情境推演；重要數字保留日期、單位、比較基準、資料來源與口徑。不得把相關性寫成因果，也不得把模型假設或長期目標改寫成短期預測。
+7. 研究深度：依素材實際涵蓋範圍，釐清技術機制、經濟誘因、利益關係人、資金流向、價值捕獲與風險傳導；不得為了顯得專業而添加無關指標。
+8. 反方審查：保留原稿提出的反方論點與限制；若原稿沒有反方，才補充有證據基礎的合理替代解釋，不為戲劇效果捏造衝突。
+9. 生活比喻是選配：只在能幫助理解時使用，並在比喻後說清楚真實機制；不可用比喻替代技術解釋或數據。
+10. 雙人對話：由「男」（比特汪）與「女」（以太喵）自然交流。主持人不是輪流念稿；一方提出問題、質疑或指出矛盾，另一方用原稿證據回答，必要時再追問。不得預設資產立場或價格方向。
+11. 數字不是裝飾：所有會改變結論的重要數字需納入口播並解釋意義；次要數字可省略，避免流水帳。不得更改數字、日期、百分比、價格區間或機構歸屬。
+12. 結論忠於原稿：明確交代原稿最終判斷、證據支持範圍、尚未解決的問題，以及什麼新證據會改變判斷；不可自行換成更聳動或更保守的結論。
+13. 口語品質：避免「接下來我們來看」「值得注意的是」等制式句連續堆疊；每段都要帶來新資訊、新推理、新例子或有效追問，禁止灌水與重複總結。
+14. 來源不足時誠實處理：原稿若有數字或說法缺乏可追溯來源、內部矛盾或資料時間不一致，保留其問題並明確說明，不可擅自補齊或包裝成已驗證事實。
+
+1A. 主要篇章清單：
+{section_checklist}
+
+【輸出 JSON 結構】只輸出 JSON，不要 markdown 或註解：
+{{
+  "topic_title": "整集核心主題標題（20 字內、有懸念）",
+  "topic_summary": "一句話說明本集深挖的單一主題",
+  "broll_keywords": "英文 Pixabay 實景底片關鍵字，逗號分隔，3～5 個",
+  "yt_title": "24～42 字元、精準反映本集內容的標題",
+  "opening": [{{"role": "男", "text": "開場 20～30 秒切入主題；只有報價與主題直接相關時才提 BTC／ETH"}}],
+  "slides": [
+    {{
+      "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
+      "lines": ["分析重點1", "分析重點2", "分析重點3"],
+      "metrics": [{{"label": "指標名稱", "value": "素材中的數值", "detail": "數值意義", "source": "原文中支持此數值的短句"}}],
+      "chart": {{"title": "比較圖表", "unit": "%", "labels": ["項目A", "項目B"], "values": [12.5, 8.2], "source": "原文中支持整組比較的短句"}},
+      "source_sections": ["必須逐字引用上方清單中的原文一級章節標題"],
+      "dialogue": [{{"role": "女", "text": "這一頁的口播段落"}}]
+    }}
+  ]
+}}
+
+【slides 規則】
+- 建議依素材內容安排約 6～12 頁，但不是硬性頁數；可少於或多於此範圍。以完整論點與合理節奏為優先，禁止為湊頁數拆散或重複內容。全部口播加總約 {target_min_chars}～{target_max_chars} 字；這是依原稿長度調整的篇幅參考，不得為了壓進固定片長而犧牲核心論證。
+- 每頁 dialogue 依論點複雜度自然安排長度，優先把事件、機制、數據與限制講清楚；生活比喻只在能真正降低理解門檻時使用，不要求每頁都有比喻，也不要求每頁相同字數。
+- metrics 只在本頁口播確實解釋且素材有明確證據時才提供，可為 0～4 個；每張 KPI 卡都必須附上 source 原文短句，沒有證據就不輸出，不為填滿版面拆分或重複數字。
+- chart 必須附 source 原文短句，且 labels／values 必須能由該證據支持；沒有證據就不要輸出 chart。
+- 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
+- lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
+- **畫面與口播順序必須一致**：lines 按照 dialogue 實際講述順序排列，每個 line 都必須在 dialogue 中有明確對應解釋；不可提前顯示尚未講到的結論。
+- metrics 按照 dialogue 提及數值的先後排列；口播講到該數值時才顯示相應 KPI。chart 必須在口播開始解釋該比較時才出現。
+- dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
+- big 是本頁主標題，不再獨佔整張畫面的唯一資訊。
+
+【自訂深度素材正文】
+{material}
+"""
+
+
+def build_custom_story(material, prices):
+    """把 CHATGPT.txt 自訂深度素材改寫為頁數彈性的深度分析長談。
+
+    模型呼叫、JSON 解析或內容品質檢查失敗時直接中止，
+    不得使用通用保底故事取代使用者提供的深度報導。
+    """
+    target_min_chars, target_max_chars = _custom_target_range(material)
+    prompt = _build_custom_prompt(material, prices, target_min_chars, target_max_chars)
+    try:
+        raw = script_writer.call_gemini(
+            STORY_SYSTEM_PROMPT + "\n\n" + prompt,
+            max_output_tokens=16384,
+            timeout=300,
+            json_mode=True,
+        )
+        raw_data = json.loads(raw)
+        required_sections = _extract_source_sections(material)
+
+        def _validate_story_output(output_text):
+            output_data = json.loads(output_text)
+            raw_slides = output_data.get("slides") or []
+            missing_sections = []
+            section_audit = {}
+            for section in required_sections:
+                # 先找模型明確標記的對應頁；若未標記，才在全文口播中尋找，
+                # 但不能只因 source_sections 有填標題就直接視為合格。
+                assigned_slides = [
+                    slide for slide in raw_slides
+                    if section in (slide.get("source_sections") or [])
+                ]
+                candidates = assigned_slides
+                is_covered, matched = (
+                    _section_covered_by_content(section, candidates)
+                    if candidates else (False, [])
+                )
+                spoken_chars = sum(
+                    len(str(item.get("text", "") if isinstance(item, dict) else item))
+                    for slide in candidates
+                    for item in (slide.get("dialogue") or [])
+                )
+                section_audit[section] = {
+                    "tagged": bool(assigned_slides),
+                    "spoken_chars": spoken_chars,
+                    "matched_terms": matched,
+                }
+                if not is_covered:
+                    missing_sections.append(section)
+            if section_audit:
+                print(
+                    "[Minimal] 章節實質口播覆蓋檢查："
+                    + json.dumps(section_audit, ensure_ascii=False)
+                )
+            if missing_sections:
+                print("[Minimal] 需要補強的篇章：" + "；".join(missing_sections))
+
+            normalized = _normalize_story(output_text, [], prices, require_source=True)
+            lengths = [
+                sum(len(dialogue_text) for _, dialogue_text in slide["dialogue"])
+                for slide in normalized["slides"]
+            ]
+            count = sum(lengths) + sum(len(d[1]) for d in normalized["opening"])
+            # 字數範圍僅作節目長度參考，不作為製片硬性門檻。
+            # 不因略短或略長而拒絕內容；實際品質由章節覆蓋與口播內容決定。
+            return normalized, lengths, count, missing_sections
+
+        story, page_lengths, total, missing_sections = _validate_story_output(raw)
+
+        # 若篇章覆蓋不足或口播確實過短，先做定向補強；不因頁數或字數本身卡住。
+        repair_attempts = 2
+        for repair_index in range(1, repair_attempts + 1):
+            if total >= target_min_chars and not missing_sections:
+                break
+            missing_chars = max(0, target_min_chars - total)
+            print(
+                f"[Minimal] 第 {repair_index}/{repair_attempts} 次內容補強："
+                f"口播 {total} 字、篇章待補 {len(missing_sections)} 個、"
+                f"字數參考差額 {missing_chars} 字。"
+            )
+            repair_prompt = f"""你是《幣看深潛》的資深財經 Podcast 主筆。以下深度研究稿的口播需要補強，請優先修復內容遺漏，不要只增加字數。
+
+【素材與稿件狀況】
+- 原始研究素材共 {len(material)} 個字元。
+- 目前口播共 {total} 字；參考範圍為 {target_min_chars}～{target_max_chars} 字，尚差 {missing_chars} 字（若已達參考下限，這個差額為零）。
+- 原文主要篇章：{json.dumps(required_sections, ensure_ascii=False)}
+- 程式檢查認為尚未充分呈現的篇章：{json.dumps(missing_sections, ensure_ascii=False)}
+
+【本輪補強任務】
+- 本集依原稿篇幅設定的口播參考範圍為 {target_min_chars}～{target_max_chars} 字；這不是硬性上限。若核心論證尚未完整，即使超過上限也不可刪掉必要內容；若核心論點已完整，不必為湊字擴寫。
+- 若內容確實過度濃縮，請逐一檢查原文一級章節，將尚未在口播中充分解釋的核心論點補進最適合的既有頁面；若核心論點已完整，不必為湊字擴寫。
+- 優先補充：技術如何運作、為何形成該結果、數據能證明與不能證明什麼、風險如何傳導、不同立場的反方論點、對一般使用者與投資人的實際影響。
+- 不要只加形容詞或重複結論；每段新增口播都必須提供新的解釋、推論或具體例子。
+- 保留原本 topic_title、topic_summary、yt_title、broll_keywords、頁面順序與 source_sections；必要時可在既有頁面內增加 dialogue 段落。
+- 頁數完全彈性，不得為湊頁數拆分、複製或重複內容。
+- 不得捏造數字、事件、來源或原素材沒有支持的結論；可用明確標示的假設例子解釋機制，但不可把假設說成真實數據。
+- 保持比特汪與以太喵自然交替對話；新增內容必須能直接口播。
+- 不要把 metrics、lines、chart 的文字計入口播字數；字數只計 opening[].text 與 slides[].dialogue[].text。
+- 僅輸出完整合法 JSON，不要 Markdown、說明或程式碼區塊。
+
+【原始素材】
+{material}
+
+【目前完整 JSON 稿件】
+{json.dumps(raw_data, ensure_ascii=False)}
+"""
+            repaired_raw = script_writer.call_gemini(
+                STORY_SYSTEM_PROMPT + "\n\n" + repair_prompt,
+                max_output_tokens=16384,
+                timeout=300,
+                json_mode=True,
+            )
+            raw_data = json.loads(repaired_raw)
+            story, page_lengths, total, missing_sections = _validate_story_output(repaired_raw)
+            print(
+                f"[Minimal] 第 {repair_index} 次補強後："
+                f"口播 {total} 字｜各頁字數 {page_lengths}"
+            )
+
+        if missing_sections:
+            raise ValueError(
+                "經過定向補強後，以下篇章仍未在口播中獲得足夠呈現："
+                + "；".join(missing_sections)
+            )
+        if total < target_min_chars:
+            print(
+                f"[Minimal] 提醒：口播 {total} 字，低於本稿參考下限 "
+                f"{target_min_chars:,} 字；字數不作為製片阻擋條件，繼續製片。"
+            )
+        elif total > target_max_chars:
+            print(
+                f"[Minimal] 提醒：口播 {total} 字，高於本稿參考上限 "
+                f"{target_max_chars:,} 字；字數不作為製片阻擋條件，繼續製片。"
+            )
+        print(
+            f"[Minimal] 深度報導初步檢查：{len(story['slides'])} 頁｜"
+            f"口播 {total} 字（本稿參考 {target_min_chars:,}～{target_max_chars:,} 字；仍須檢視論證保真）"
+            f"｜各頁字數 {page_lengths}"
+        )
+    except Exception as err:
+        print(f"[Minimal] CHATGPT.TXT 深度報導製稿失敗，停止本次製片以保留原始素材：{err}")
+        raise RuntimeError(
+            "CHATGPT.TXT 深度報導未通過品質檢查；已中止製片，不會改用一般新聞或保底故事。"
+        ) from err
+    return story
+
+
+# ── 極簡高留白舞台 HTML ──────────────────────────────────
+def _broll_background_html(broll_path):
+    """將 Pixabay MP4 內嵌為 data URI，避開 Playwright set_content 的 file:// 權限限制。"""
+    if not broll_path:
+        return ""
+    if not os.path.isfile(broll_path) or os.path.getsize(broll_path) < 1024:
+        raise RuntimeError(f"Pixabay 素材不存在或檔案異常：{broll_path}")
+    with open(broll_path, "rb") as handle:
+        encoded = base64.b64encode(handle.read()).decode("ascii")
+    return (
+        '<video class="broll" autoplay muted playsinline preload="auto" '
+        f'src="data:video/mp4;base64,{encoded}"></video>'
+        '<div class="dark-mask"></div>'
+    )
+
+
+def _slide_html(slide, reveal_seconds, broll_path, page_label, slide_duration=12.0):
+    big = html.escape(slide["big"])
+    lines = slide.get("lines") or []
+    metrics = slide.get("metrics") or []
+    chart = slide.get("chart")
+    line_markup = "".join(
+        f'<div class="insight" data-i="{i}"><span class="insight-index">{i + 1:02d}</span>'
+        f'<span>{html.escape(ln)}</span></div>'
+        for i, ln in enumerate(lines[:4])
+    )
+    metric_cards = []
+    for metric_index, item in enumerate(metrics[:4]):
+        reveal_at = (
+            float(reveal_seconds[min(metric_index, len(reveal_seconds) - 1)])
+            if reveal_seconds else 0.0
+        )
+        next_reveal = (
+            float(reveal_seconds[metric_index + 1])
+            if metric_index + 1 < len(reveal_seconds)
+            else float(slide_duration)
+        )
+        card_life = max(0.5, next_reveal - reveal_at)
+        metric_cards.append(
+            f'<div class="metric-card" style="--card-delay:{reveal_at:.3f}s;'
+            f'--card-life:{card_life:.3f}s">'
+            f'<div class="metric-label">{html.escape(item["label"])}</div>'
+            f'<div class="metric-value">{html.escape(item["value"])}</div>'
+            f'<div class="metric-detail">{html.escape(item["detail"])}</div>'
+            f'<div class="metric-source">{html.escape(item.get("source") or "")}</div>'
+            '</div>'
+        )
+    metric_markup = "".join(metric_cards)
+    metrics_section = f'<div class="metrics">{metric_markup}</div>' if metric_markup else ""
+    chart_markup = ""
+    if chart and chart.get("points"):
+        max_value = max(abs(point["value"]) for point in chart["points"]) or 1.0
+        bars = []
+        for point in chart["points"]:
+            width = max(3.0, min(100.0, abs(point["value"]) / max_value * 100))
+            value_text = f'{point["value"]:,.2f}'.rstrip("0").rstrip(".")
+            bars.append(
+                '<div class="chart-row">'
+                f'<div class="chart-label">{html.escape(point["label"])}</div>'
+                f'<div class="chart-track"><div class="chart-bar {"negative" if point["value"] < 0 else "positive"}" '
+                f'style="width:{width:.1f}%"></div></div>'
+                f'<div class="chart-value">{value_text}{html.escape(chart.get("unit") or "")}</div>'
+                '</div>'
+            )
+        chart_markup = (
+            '<section class="panel">'
+            f'<div class="panel-title">{html.escape(chart["title"])}</div>'
+            f'{"".join(bars)}'
+            f'<div class="chart-source">{html.escape(chart.get("source") or "")}</div>'
+            '</section>'
+        )
+    else:
+        chart_markup = (
+            '<section class="panel chart-placeholder">'
+            '<div class="panel-title">數據圖表</div>'
+            '<div class="placeholder-note">本頁沒有足夠的可比較數值，避免使用推測數據製圖</div>'
+            '</section>'
+        )
+    chart_delay = float(reveal_seconds[0]) if reveal_seconds else 0.0
+    chart_life = max(0.5, float(slide_duration) - chart_delay)
+    chart_markup = (
+        f'<div class="chart-timed" style="--chart-delay:{chart_delay:.3f}s;'
+        f'--chart-life:{chart_life:.3f}s">{chart_markup}</div>'
+    )
+    reveal_json = json.dumps([round(x, 3) for x in reveal_seconds])
+    return f"""<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<style>
+@page {{ margin: 0; }}
+* {{ box-sizing: border-box; }}
+html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
+  overflow: hidden; background: #050914; }}
+.stage {{ position: relative; width: {MAIN_W}px; height: {MAIN_H}px;
+  padding: 58px 86px 54px; overflow: hidden;
+  background: radial-gradient(100% 100% at 50% 0%, #142746 0%, #091426 48%, #050914 100%);
+  font-family: "Noto Sans CJK TC", "Noto Sans CJK", "Microsoft JhengHei", sans-serif; }}
+.broll {{ position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; z-index: 2; opacity: 1;
+  animation: none; }}
+.dark-mask {{ display: none; }}
+ .content {{ position: relative; z-index: 3; width: 100%; height: calc(100% - 150px); display: flex; flex-direction: column; }}
+.stage.has-broll .content {{ animation: none !important; }}
+@keyframes storyBrollInterlude {{
+  0%, 68%, 94%, 100% {{ opacity: 0; }}
+  72%, 90% {{ opacity: 1; }}
+}}
+@keyframes storySlideInterlude {{
+  0%, 68%, 94%, 100% {{ opacity: 1; }}
+  72%, 90% {{ opacity: 0; }}
+}}
+.topline {{ display: flex; align-items: center; justify-content: space-between;
+  color: #9fb4d1; font-size: 24px; letter-spacing: 3px; font-weight: 700; }}
+.brand {{ color: #fbbf24; }}
+.headline {{ margin-top: 22px; display: flex; align-items: flex-end; gap: 28px; }}
+.big {{ color: #ffffff; font-size: 66px; font-weight: 900; line-height: 1.16;
+  letter-spacing: 1px; max-width: 1420px; overflow-wrap: anywhere;
+  text-shadow: 0 4px 24px rgba(0,0,0,.55); }}
+.headline-mark {{ flex: 0 0 12px; height: 62px; background: #fbbf24; border-radius: 8px; }}
+.metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px; margin-top: 32px; min-height: 190px; }}
+.metric-card {{ min-width: 0; padding: 22px 24px; border: 1px solid rgba(125,160,205,.28);
+  border-radius: 18px; background: rgba(9,22,42,.42); backdrop-filter: blur(5px); opacity:0; visibility:hidden;
+  animation:metricPop var(--card-life,3s) ease both; animation-delay:var(--card-delay,0s); }}
+@keyframes metricPop {{
+  0% {{ opacity:0; visibility:hidden; transform:translateY(14px) scale(.98); }}
+  5%,88% {{ opacity:1; visibility:visible; transform:translateY(0) scale(1); }}
+  100% {{ opacity:0; visibility:hidden; transform:translateY(-8px) scale(.99); }}
+}}
+.metric-label {{ color: #9fb4d1; font-size: 24px; font-weight: 700; }}
+.metric-value {{ margin-top: 12px; color: #fbbf24; font-size: 48px; font-weight: 900;
+  line-height: 1.12; overflow-wrap: anywhere; }}
+.metric-detail {{ margin-top: 10px; color: #d5deea; font-size: 20px; line-height: 1.35; }}
+.metric-source {{ margin-top: 7px; color: #8296b2; font-size: 15px; line-height: 1.25; }}
+.chart-source {{ margin-top: 10px; color: #8296b2; font-size: 16px; line-height: 1.3; }}
+.lower {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px;
+  flex: 1; min-height: 0; }}
+.panel {{ min-width: 0; padding: 24px 28px; border: 1px solid rgba(125,160,205,.25);
+  border-radius: 18px; background: rgba(8,19,37,.42); backdrop-filter: blur(5px); overflow: hidden; }}
+.chart-timed {{ min-width:0; min-height:0; opacity:0; visibility:hidden;
+  animation:chartPop var(--chart-life,5s) ease both;
+  animation-delay:var(--chart-delay,0s); }}
+@keyframes chartPop {{
+  0% {{ opacity:0; visibility:hidden; transform:translateY(12px); }}
+  4%,92% {{ opacity:1; visibility:visible; transform:translateY(0); }}
+  100% {{ opacity:0; visibility:hidden; transform:translateY(-8px); }}
+}}
+.panel-title {{ color: #ffffff; font-size: 30px; font-weight: 800; margin-bottom: 22px; }}
+.placeholder-note {{ color: #9fb4d1; font-size: 25px; line-height: 1.6; padding-top: 24px; }}
+.chart-row {{ display: grid; grid-template-columns: 170px 1fr 150px; gap: 16px;
+  align-items: center; margin: 22px 0; }}
+.chart-label {{ color: #c9d6e7; font-size: 22px; overflow-wrap: anywhere; }}
+.chart-track {{ height: 22px; border-radius: 20px; background: rgba(148,163,184,.18); overflow: hidden; }}
+.chart-bar {{ height: 100%; border-radius: 20px; background: linear-gradient(90deg,#38bdf8,#fbbf24); }}
+.chart-bar.negative {{ background: linear-gradient(90deg,#fb7185,#be123c); }}
+.chart-value {{ color: #fbbf24; font-size: 22px; font-weight: 800; text-align: right; }}
+.insights {{ display: flex; flex-direction: column; gap: 22px; }}
+.insight {{ display: flex; align-items: flex-start; gap: 16px; color: #e8eef7;
+  font-size: 26px; font-weight: 700; line-height: 1.35; }}
+.insight-index {{ flex: 0 0 42px; color: #fbbf24; font-size: 20px; padding-top: 5px; }}
+.insight.active {{ color: #ffffff; text-shadow: 0 0 18px rgba(251,191,36,.3); }}
+.insight.done {{ color: #9aa9bd; }}
+.page-footer {{ margin-top: 20px; display: flex; justify-content: space-between;
+  color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
+
+/* 影片優先：Pixabay 底片持續播放，圖表與數據卡依本頁口播時段浮現。 */
+.broll {{ opacity: 1; animation: none; transition: opacity .65s ease; }}
+.stage .content {{
+  animation: storyDataOverlayLifetime var(--slide-duration, 12s) linear both !important;
+  will-change: opacity;
+}}
+@keyframes storyDataOverlayLifetime {{
+  0% {{ opacity: 0; }}
+  1.5%, 98% {{ opacity: 1; }}
+  100% {{ opacity: 0; }}
+}}
+.stage.has-broll .content {{
+  background: transparent;
+  backdrop-filter: none;
+}}
+/* 逐條重點只在對應口播期間顯示，講完後退場。 */
+.insight {{ transition: opacity .32s ease, transform .32s ease; }}
+.insight.active {{ opacity: 1 !important; visibility: visible !important; }}
+.insight.done,
+.insight:not(.active):not(.done) {{ opacity: 0 !important; visibility: hidden !important; }}
+</style></head>
+<body>
+<div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;--slide-duration:{max(0.1, float(slide_duration)):.3f}s;">
+  {_broll_background_html(broll_path)}
+  <div class="content">
+    <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
+    <div class="headline"><div class="headline-mark"></div><div class="big">{big}</div></div>
+    {metrics_section}
+    <div class="lower">
+      {chart_markup}
+      <section class="panel">
+        <div class="panel-title">本頁解讀</div>
+        <div class="insights">{line_markup}</div>
+      </section>
+    </div>
+    <div class="page-footer"><span>DATA-DRIVEN DEEP DIVE</span><span>比特汪 × 以太喵</span></div>
+  </div>
+</div>
+<script>
+(function () {{
+  const nodes = Array.prototype.slice.call(document.querySelectorAll(".insight"));
+  const times = {reveal_json};
+  const start = performance.now();
+  // 每頁素材由多個 3～5 秒片段串成完整頁面時長；整段播完才淡出，不循環。
+  const broll = document.querySelector(".broll");
+  if (broll) {{
+    const hideBroll = () => {{
+      broll.style.opacity = "0";
+      window.setTimeout(() => broll.pause(), 700);
+    }};
+    broll.addEventListener("ended", hideBroll, {{ once: true }});
+  }}
+  function apply(active) {{
+    for (let i = 0; i < nodes.length; i++) {{
+      nodes[i].classList.remove("active", "done");
+      if (i < active) nodes[i].classList.add("done");
+      else if (i === active) nodes[i].classList.add("active");
+    }}
+  }}
+  function tick(now) {{
+    const t = (now - start) / 1000;
+    let active = -1;
+    for (let i = 0; i < times.length; i++) if (t >= times[i]) active = i;
+    apply(active);
+    if (active < nodes.length - 1) requestAnimationFrame(tick);
+  }}
+  apply(-1);
+  requestAnimationFrame(tick);
+}})();
+</script>
+</body></html>"""
+
+
+
+def render_slide_video(idx, slide, dur_sec, reveal_seconds, broll_path, browser, page_label):
+    html_doc = _slide_html(slide, reveal_seconds, broll_path, page_label, dur_sec)
+    out_mp4 = f"story_p{idx}.mp4"
+    record_seconds = dur_sec + 0.6
+    tpad = ",tpad=stop_mode=clone:stop_duration=1"
+    with tempfile.TemporaryDirectory(prefix=f"story_slide_{idx}_") as record_dir:
+        context = browser.new_context(
+            viewport={"width": MAIN_W, "height": MAIN_H},
+            device_scale_factor=1,
+            record_video_dir=record_dir,
+            record_video_size={"width": MAIN_W, "height": MAIN_H},
+        )
+        page = context.new_page()
+        video = page.video
+        render_error = None
+        try:
+            page.set_content(html_doc, wait_until="load")
+            page.evaluate("() => document.fonts.ready.then(() => true)")
+            if broll_path:
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('.broll'); "
+                    "return !!v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0; }",
+                    timeout=20000,
+                )
+                page.evaluate("() => document.querySelector('.broll').play()")
+                page.wait_for_function(
+                    "() => { const v = document.querySelector('.broll'); return v && v.currentTime > 0.15; }",
+                    timeout=10000,
+                )
+                print(f"[Minimal] 已確認 Pixabay 影片正在播放：{os.path.basename(broll_path)}")
+            page.wait_for_timeout(max(1, round(record_seconds * 1000)))
+        except Exception as error:
+            render_error = error
+        finally:
+            # Chromium 偶發自行關閉 page/context 時，close() 會拋出
+            # TargetClosedError；不可讓清理例外覆蓋真正的錄影結果或原始錯誤。
+            try:
+                context.close()
+            except Exception as close_error:
+                print(
+                    f"[Minimal] Playwright Context 已先行關閉，略過重複 close："
+                    f"{type(close_error).__name__}: {close_error}"
+                )
+        if render_error is not None:
+            raise RuntimeError(
+                f"[Minimal] 第 {idx + 1} 頁瀏覽器錄影失敗："
+                f"{type(render_error).__name__}: {render_error}"
+            ) from render_error
+        try:
+            recording_path = video.path()
+        except Exception as error:
+            raise RuntimeError(
+                f"[Minimal] 第 {idx + 1} 頁錄影檔無法完成："
+                f"{type(error).__name__}: {error}"
+            ) from error
+        if not os.path.isfile(recording_path) or os.path.getsize(recording_path) <= 0:
+            raise RuntimeError(
+                f"[Minimal] 第 {idx + 1} 頁錄影檔不存在或為空：{recording_path}"
+            )
+        filters = (
+            f"fps={FPS},scale={MAIN_W}:{MAIN_H}:flags=lanczos,"
+            f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS{tpad},format=yuv420p"
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", recording_path,
+                "-vf", filters, "-t", f"{dur_sec:.6f}",
+                "-an", "-r", str(FPS), "-c:v", "libx264",
+                "-preset", "medium", "-crf", media_engine.VIDEO_CRF,
+                "-pix_fmt", "yuv420p", out_mp4,
+            ],
+            check=True,
+        )
+    return out_mp4
+
+
+# ── 逐頁 TTS 合成（雙軌發音） ────────────────────────────
+def synth_dialogues(groups, prefix):
+    """groups: list of (role, text)。回傳 [(idx, fn, display, dur), ...]。"""
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(
+            executor.map(
+                media_engine.synth_audio_segment,
+                enumerate(groups),
+                [prefix] * len(groups),
+            )
+        )
+    return results
+
+
+def concat_audio(files, out_name):
+    list_name = f"{out_name}.txt"
+    with open(list_name, "w", encoding="utf-8") as handle:
+        for fn in files:
+            handle.write(f"file '{os.path.abspath(fn)}'\n")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_name,
+         "-c", "copy", out_name],
+        check=True,
+    )
+    return out_name
+
+
+def distribute_reveal(n_lines, total_dur, dialogue_segments=None):
+    """依實際 TTS 句長與文字長度安排重點揭示，不再把整頁秒數平均切分。
+
+    dialogue_segments: [(spoken_text, actual_tts_duration), ...]。
+    視覺重點仍依序呈現，但揭示點會落在相應口播進度附近。
+    """
+    if n_lines <= 0:
+        return []
+    total = max(0.0, float(total_dur))
+    if total <= 0:
+        return []
+    segments = []
+    for item in dialogue_segments or []:
+        try:
+            spoken = str(item[0] or "").strip()
+            duration = max(0.0, float(item[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if spoken and duration > 0:
+            segments.append((len(spoken), duration))
+    if not segments:
+        # 缺少逐句資料時保留安全退化路徑，並明確標示不是語意級同步。
+        return [round(total * (i + 1) / n_lines, 3) for i in range(n_lines)]
+
+    total_chars = sum(chars for chars, _duration in segments)
+    anchors = []
+    for i in range(n_lines):
+        # 以每個視覺重點所代表的口播區段中點觸發，避免最後一張卡到頁尾才出現。
+        target = total_chars * (i + 0.5) / n_lines
+        consumed_chars = 0
+        elapsed = 0.0
+        anchor = total
+        for chars, duration in segments:
+            if consumed_chars + chars >= target:
+                fraction = (target - consumed_chars) / max(1, chars)
+                anchor = elapsed + duration * max(0.0, min(1.0, fraction))
+                break
+            consumed_chars += chars
+            elapsed += duration
+        anchors.append(round(max(0.05, min(total, anchor)), 3))
+
+    # 確保時間嚴格遞增，避免多個短重點在同一影格同時觸發。
+    for i in range(1, len(anchors)):
+        anchors[i] = max(anchors[i], round(anchors[i - 1] + 0.08, 3))
+    return [min(total, value) for value in anchors]
+# ── 底部 54pt 自動換行字幕（ASS） ────────────────────────
+def _fmt_ass(seconds):
+    seconds = max(0.0, seconds)
+    h, r = divmod(seconds, 3600)
+    m, s = divmod(r, 60)
+    return f"{int(h)}:{int(m):02d}:{s:05.2f}"
+
+
+def _clean_subtitle_text(text):
+    """字幕去除中英文標點；保留 1.25、27.53% 等數字格式。"""
+    source = presentation.strip_bracket_tags(
+        presentation.sanitize_text(str(text or ""))
+    )
+    source = re.sub(r"\s+", " ", source).strip()
+    cleaned = []
+    for index, char in enumerate(source):
+        if char == "." and index > 0 and index + 1 < len(source):
+            if source[index - 1].isdigit() and source[index + 1].isdigit():
+                cleaned.append(char)
+                continue
+        if char == "%" and index > 0 and source[index - 1].isdigit():
+            cleaned.append(char)
+            continue
+        if unicodedata.category(char).startswith("P"):
+            continue
+        cleaned.append(char)
+    return re.sub(r"\s+", " ", "".join(cleaned)).strip()
+
+
+def _split_ass_subtitle(text, max_width, font_size=54):
+    """依字型實際寬度切成單行片段；每個片段獨立計時，絕不使用 ASS 多行換行。"""
+    font = ImageFont.truetype(media_engine.get_system_font_path(), font_size)
+    tokens = re.findall(r"\d+(?:\.\d+)?%?|[A-Za-z]+(?:[A-Za-z0-9._-]*[A-Za-z0-9])?|.", text)
+    chunks = []
+    current = ""
+    for token in tokens:
+        candidate = current + token
+        if current and font.getlength(candidate) > max_width:
+            if current.strip():
+                chunks.append(current.strip())
+            current = token.strip()
+        else:
+            current = candidate
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
+
+
+def build_ass(events, out_path):
+    """逐行字幕：同一時間只顯示一行，依口播時長分配每行顯示時間。"""
+    header = (
+        "[Script Info]\nScriptType: v4.00+\n"
+        f"PlayResX: {MAIN_W}\nPlayResY: {MAIN_H}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Main,Noto Sans CJK TC,54,&H00FFFFFF,&H00FFFFFF,&H00202838,&H64000000,"
+        "-1,0,0,0,100,100,0,0,1,3,1,2,300,300,72,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    font = ImageFont.truetype(media_engine.get_system_font_path(), 54)
+    lines = []
+    max_width = max(400, MAIN_W - 560)
+    for start, end, spoken in events:
+        if end <= start:
+            continue
+        clean = _clean_subtitle_text(spoken)
+        if not clean:
+            continue
+        chunks = _split_ass_subtitle(clean, max_width, font_size=54)
+        if not chunks:
+            continue
+        weights = [max(1.0, font.getlength(chunk)) for chunk in chunks]
+        total_weight = sum(weights)
+        duration = end - start
+        elapsed_weight = 0.0
+        line_start = start
+        for index, (chunk, weight) in enumerate(zip(chunks, weights)):
+            elapsed_weight += weight
+            line_end = end if index == len(chunks) - 1 else start + duration * elapsed_weight / total_weight
+            if line_end > line_start:
+                lines.append(
+                    f"Dialogue: 0,{_fmt_ass(line_start)},{_fmt_ass(line_end)},Main,,300,300,72,,{chunk}"
+                )
+            line_start = line_end
+    if not lines:
+        lines.append("Dialogue: 0,0:00:00.00,0:00:01.00,Main,,0,0,0,,")
+    with open(out_path, "w", encoding="utf-8") as handle:
+        handle.write(header + "\n".join(lines) + "\n")
+    print(f"[Minimal] 逐行字幕完成：{len(lines)} 行；每個時間區間僅一行，已移除標點。")
+    return out_path
+
+
+# ── 把開場＋各頁整理成統一頁面列表 ────────────────────────
+def _split_summary_lines(summary):
+    summary = presentation.sanitize_text(summary or "")
+    if not summary:
+        return ["今日最關鍵的一件事"]
+    parts = [p for p in re.split(r"[，。；、,;\n]+", summary) if p.strip()]
+    lines = []
+    for part in parts:
+        piece = part.strip()[:MAX_LINE_CHARS]
+        if piece:
+            lines.append(piece)
+        if len(lines) >= MAX_LINES_PER_SLIDE:
+            break
+    return lines or [summary[:MAX_LINE_CHARS]]
+
+
+def build_pages(story):
+    # 防呆：story 若為 None／非 dict（上游漏回傳）一律降級為空 dict，確保 .get 不崩潰。
+    if not isinstance(story, dict):
+        story = {}
+    # 防呆：topic_title／各字串欄位若為 None（模型漏填）不得拋出 TypeError。
+    topic_title = (
+        story.get("topic_title") or story.get("title") or "今日市場深度聚焦"
+    ).strip()
+    pages = []
+    pages.append(
+        {
+            "big": topic_title[:16],
+            "lines": _split_summary_lines(story.get("topic_summary") or ""),
+            "dialogue": story.get("opening") or [],
+        }
+    )
+    for slide in story.get("slides") or []:
+        pages.append(
+            {
+                "big": (slide.get("big") or "").strip(),
+                "lines": slide.get("lines") or [],
+                "metrics": slide.get("metrics") or [],
+                "chart": slide.get("chart"),
+                "dialogue": slide.get("dialogue") or [],
+            }
+        )
+    return pages
+# ── 主片合成 ─────────────────────────────────────────────
+def _escape_filter_path(path):
+    r"""把檔案路徑轉成 FFmpeg filtergraph 內可安全使用的形式。
+
+    `subtitles=`/`ass=` 濾鏡的路徑若含 `:`、`\`、`'` 會被 filtergraph 解析器
+    誤判，導致 libass 打不開檔案而回傳 exit status 234。這裡統一轉為絕對
+    路徑、正斜線，並跳脫 filtergraph 保留字元。
+    """
+    absolute = os.path.abspath(path).replace("\\", "/")
+    return absolute.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def _ensure_nonempty_file(path, label):
+    """確認輸入檔案存在且大小 > 0，否則丟出含檢查重點的錯誤。"""
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"[Minimal] 主片合成缺少輸入 [{label}]：{path} 不存在。"
+            "請檢查前一步驟是否成功產出該檔案。"
+        )
+    size = os.path.getsize(path)
+    if size <= 0:
+        raise RuntimeError(
+            f"[Minimal] 主片合成輸入 [{label}] 為空檔（0 bytes）：{path}。"
+        )
+    return size
+
+
+def _mux_story_avatars(video_path, audio_path, output_path, subtitle_path, speaker_intervals, speech_end):
+    """沿用 Render and Upload Podcast 的 VTuber 合成方式，依實際說話時間切換兩位主持人。"""
+    talk_videos = {
+        "cat": "cat_vtober.mp4" if os.path.exists("cat_vtober.mp4") else None,
+        "dog": "dor_vtober.mp4" if os.path.exists("dor_vtober.mp4") else None,
+    }
+    assets = media_engine.create_speaker_avatars(talk_videos)
+    cat_speaking = "+".join(
+        f"between(t,{start:.6f},{end:.6f})" for start, end in speaker_intervals["F"]
+    ) or "0"
+    dog_speaking = "+".join(
+        f"between(t,{start:.6f},{end:.6f})" for start, end in speaker_intervals["M"]
+    ) or "0"
+    speech_window = f"between(t,0,{speech_end:.6f})"
+    command = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path]
+    indexes = {}
+
+    def add_input(name, path, is_video=False):
+        indexes[name] = len(indexes) + 2
+        if is_video:
+            command.extend(["-stream_loop", "-1", "-i", path])
+        else:
+            command.extend(["-loop", "1", "-framerate", str(FPS), "-i", path])
+
+    add_input("cat_idle", assets["cat_idle"])
+    add_input("cat_talk", talk_videos["cat"] or assets["cat_speaking"], bool(talk_videos["cat"]))
+    add_input("dog_idle", assets["dog_idle"])
+    add_input("dog_talk", talk_videos["dog"] or assets["dog_speaking"], bool(talk_videos["dog"]))
+    if any(talk_videos.values()):
+        add_input("circle_mask", assets["circle_mask"])
+    for speaker in ("cat", "dog"):
+        if talk_videos[speaker]:
+            add_input(f"{speaker}_ring", assets[f"{speaker}_ring"])
+
+    filters = [f"[0:v]ass='{_escape_filter_path(subtitle_path)}'[v_sub]"]
+    active = [speaker for speaker in ("cat", "dog") if talk_videos[speaker]]
+    if len(active) == 2:
+        filters.append(f"[{indexes['circle_mask']}:v]format=gray,split=2[cat_mask][dog_mask]")
+    elif active:
+        filters.append(f"[{indexes['circle_mask']}:v]format=gray[{active[0]}_mask]")
+    for speaker in active:
+        filters.append(
+            f"[{indexes[f'{speaker}_talk']}:v]fps={FPS},"
+            "scale=252:252:force_original_aspect_ratio=increase,crop=252:252,setsar=1,format=rgba"
+            f"[{speaker}_square];[{speaker}_square][{speaker}_mask]alphamerge[{speaker}_talk_circle]"
+        )
+    cat_talk = "[cat_talk_circle]" if talk_videos["cat"] else f"[{indexes['cat_talk']}:v]"
+    dog_talk = "[dog_talk_circle]" if talk_videos["dog"] else f"[{indexes['dog_talk']}:v]"
+    filters.extend([
+        f"[v_sub][{indexes['cat_idle']}:v]overlay=x=42:y=817.5:enable='{speech_window}*not({cat_speaking})'[v_cat_idle]",
+        f"[v_cat_idle]{cat_talk}overlay=x=42:y='804+6*sin(t*14)':eval=frame:enable='{cat_speaking}'[v_cat_talk]",
+    ])
+    stage = "v_cat_talk"
+    if talk_videos["cat"]:
+        filters.append(
+            f"[{stage}][{indexes['cat_ring']}:v]overlay=x=42:y='804+6*sin(t*14)':eval=frame:enable='{cat_speaking}'[v_cat_speaking]"
+        )
+        stage = "v_cat_speaking"
+    filters.extend([
+        f"[{stage}][{indexes['dog_idle']}:v]overlay=x=1653:y=817.5:enable='{speech_window}*not({dog_speaking})'[v_dog_idle]",
+        f"[v_dog_idle]{dog_talk}overlay=x=1653:y='804+6*sin(t*16)':eval=frame:enable='{dog_speaking}'[v_dog_talk]",
+    ])
+    stage = "v_dog_talk"
+    if talk_videos["dog"]:
+        filters.append(
+            f"[{stage}][{indexes['dog_ring']}:v]overlay=x=1653:y='804+6*sin(t*16)':eval=frame:enable='{dog_speaking}'[v_dog_speaking]"
+        )
+        stage = "v_dog_speaking"
+    filters.append(f"[{stage}]null[v_out]")
+    command.extend([
+        "-filter_complex", ";".join(filters),
+        "-map", "[v_out]", "-map", "1:a:0",
+        "-c:v", "libx264", "-preset", "medium", "-crf", media_engine.VIDEO_CRF,
+        "-r", str(FPS), "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", output_path,
+    ])
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        print("[Minimal] VTuber 雙人動畫合成失敗：")
+        print(result.stderr[-3000:])
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
+    print(
+        "[Minimal] VTuber 動畫已合成："
+        f"以太喵={'影片動畫' if talk_videos['cat'] else '靜態說話圖'}，"
+        f"比特汪={'影片動畫' if talk_videos['dog'] else '靜態說話圖'}"
+    )
+
+
+def render_main_story(story):
+    pages = build_pages(story)
+    broll_engine.reset_episode_rotation()
+
+    # 1. 逐頁合成 TTS，算出每頁時長與字幕事件。
+    page_data = []
+    subtitle_events = []
+    speaker_intervals = {"F": [], "M": []}
+    cursor = 0.0
+    all_audio = []
+    global_index = 0
+    for page in pages:
+        groups = page["dialogue"]
+        synth = synth_dialogues(groups, f"story_line{global_index}_")
+        global_index += len(groups)
+        page_dur = 0.0
+        page_audio = []
+        for idx, fn, display, dur in synth:
+            segment_start = cursor + page_dur
+            page_dur += dur
+            segment_end = cursor + page_dur
+            subtitle_events.append((segment_start, segment_end, display))
+            role = groups[idx][0] if idx < len(groups) else "男"
+            speaker_intervals["F" if role == "女" else "M"].append((segment_start, segment_end))
+            page_audio.append(fn)
+        page_audio_path = concat_audio(page_audio, f"story_page_{len(page_data)}.mp3")
+        reveal_segments = [
+            (groups[idx][1] if idx < len(groups) else display, dur)
+            for idx, _fn, display, dur in synth
+        ]
+        reveal = distribute_reveal(
+            len(page["lines"]), page_dur, reveal_segments
+        )
+        page_data.append(
+            {
+                "page": page,
+                "dur": page_dur,
+                "audio": page_audio_path,
+                "reveal": reveal,
+                "start": cursor,
+            }
+        )
+        all_audio.append(page_audio_path)
+        cursor += page_dur
+
+    dialogue_end = cursor
+
+    # 輸出口播／畫面時間軸，方便逐頁核對資料卡是否在正確口播進度浮現。
+    visual_timeline = []
+    for page_index, item in enumerate(page_data, 1):
+        reveal = item["reveal"]
+        if any(reveal[i] > reveal[i + 1] for i in range(len(reveal) - 1)):
+            raise RuntimeError(
+                f"[Minimal] 第 {page_index} 頁資料卡時間軸不是遞增順序：{reveal}"
+            )
+        visual_timeline.append({
+            "page": page_index,
+            "start_seconds": round(item["start"], 3),
+            "duration_seconds": round(item["dur"], 3),
+            "insight_reveal_seconds": reveal,
+            "metric_reveal_seconds": [
+                reveal[min(i, len(reveal) - 1)] for i in range(len(item["page"].get("metrics") or []))
+            ] if reveal else [],
+            "chart_reveal_seconds": reveal[0] if reveal else 0.0,
+            "background_video_continues": True,
+        })
+    with open("story_visual_timeline.json", "w", encoding="utf-8") as handle:
+        json.dump(visual_timeline, handle, ensure_ascii=False, indent=2)
+    print(
+        f"[Minimal] 口播畫面時間軸完成：{len(visual_timeline)} 頁；"
+        "資料卡按實際 TTS 句長排程，背景影片不受前景動畫影響。"
+    )
+
+    # 2. 用 Playwright 逐頁錄影。
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--autoplay-policy=no-user-gesture-required",
+            ],
+        )
+        try:
+            if not broll_engine._api_key():
+                print("[Minimal] 未設定 PIXABAY_API_KEY；本集將嘗試使用可用實景素材，失敗時以動態背景備援，不中斷製片。")
+            slide_videos = []
+            broll_manifest = []
+            last_broll_path = None
+            validated_broll = set()
+            for i, item in enumerate(page_data):
+                label = "開場" if i == 0 else f"{i:02d}"
+                try:
+                    page_broll_query = presentation.assign_broll_query({
+                        "title": item["page"].get("big", story.get("topic_title", "")),
+                        "body": " ".join(item["page"].get("lines") or []),
+                        "layout": "minimal_story",
+                    }) or story.get("broll_keywords")
+                    requested_broll = broll_engine.fetch_pixabay_broll_reel(
+                        page_broll_query,
+                        item["dur"],
+                        orientation=broll_engine.HORIZONTAL,
+                        clip_seconds=4.0,
+                        max_clips=6,
+                    )
+                except Exception as error:
+                    print(f"[Minimal] 第 {i + 1} 段 Pixabay 素材搜尋失敗，改用原生動態背景：{error}")
+                    requested_broll = None
+                reused = False
+                broll_path = requested_broll if requested_broll else None
+                if broll_path:
+                    last_broll_path = broll_path
+                    if broll_path not in validated_broll:
+                        probe = subprocess.check_output(
+                            [
+                                "ffprobe", "-v", "error", "-show_entries",
+                                "stream=codec_type", "-of", "json", broll_path,
+                            ],
+                            text=True,
+                        )
+                        stream_info = json.loads(probe)
+                        if not any(x.get("codec_type") == "video" for x in stream_info.get("streams", [])):
+                            print(f"[Minimal] Pixabay 素材無可解碼影像，改用原生動態背景：{broll_path}")
+                            broll_path = None
+                        else:
+                            validated_broll.add(broll_path)
+                else:
+                    print(f"[Minimal] 第 {i + 1} 段未取得 Pixabay 新素材，改用原生動態背景，不重複舊素材。")
+                try:
+                    out = render_slide_video(
+                        i, item["page"], item["dur"], item["reveal"],
+                        broll_path, browser, label,
+                    )
+                except RuntimeError as render_error:
+                    # GitHub runner 偶發在連續錄製多頁後讓 Chromium 整個程序提前退出。
+                    # 只在 Playwright 明確回報 target/browser closed 時重啟並重試當頁一次；
+                    # 一般 HTML、素材或 FFmpeg 錯誤仍直接失敗，避免掩蓋真正問題。
+                    error_text = str(render_error).lower()
+                    if not any(token in error_text for token in (
+                        "targetclosederror", "target page", "browser has been closed",
+                    )):
+                        raise
+                    print(
+                        f"[Minimal] 第 {i + 1} 頁偵測到 Chromium 提前關閉，"
+                        "重新啟動瀏覽器並重試一次。"
+                    )
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+                    browser = playwright.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--autoplay-policy=no-user-gesture-required",
+                        ],
+                    )
+                    out = render_slide_video(
+                        i, item["page"], item["dur"], item["reveal"],
+                        broll_path, browser, label,
+                    )
+                slide_videos.append(out)
+                broll_manifest.append({
+                    "slide": i + 1,
+                    "asset": os.path.basename(broll_path) if broll_path else None,
+                    "source": "Pixabay" if broll_path else "native_motion_fallback",
+                    "reused": reused,
+                    "playback_seconds": round(float(item["dur"]), 2) if broll_path else 0,
+                    "loop": False,
+                })
+
+            if len(broll_manifest) != len(page_data):
+                raise RuntimeError("Minimal Story 背景素材時間軸數量不完整。")
+            source_assets = broll_engine.get_episode_manifest()
+            unique_source_ids = {
+                (item.get("provider"), item.get("asset_id"))
+                for item in source_assets
+            }
+            with open("story_broll_manifest.json", "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "source": "Pixabay",
+                        "slides": broll_manifest,
+                        "source_assets": source_assets,
+                        "unique_assets": len(unique_source_ids),
+                        "applied_slides": len(broll_manifest),
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            applied_broll = sum(1 for item in broll_manifest if item["source"] == "Pixabay")
+            print(
+                f"[Minimal] 背景影片／動態備援已就緒：Pixabay {applied_broll}/{len(page_data)} 頁，"
+                f"使用 {len(validated_broll)} 支已驗證影片；各頁資訊卡依口播時段顯示。"
+            )
+        finally:
+            try:
+                browser.close()
+            except Exception as close_error:
+                print(
+                    "[Minimal] Chromium 結束時已關閉，略過重複 close："
+                    f"{type(close_error).__name__}: {close_error}"
+                )
+
+    # 3. 拼接語音 + 片尾停頓 + 片尾音樂。
+    media_engine.create_outro_audio(OUTRO_DURATION, OUTRO_PAUSE)
+    voice = concat_audio(all_audio, "story_voice.mp3")
+    full_audio = concat_audio(
+        [voice, "outro_pause.mp3", "outro_music.mp3"], "story_full_audio.mp3"
+    )
+
+    # 4. 拼接所有頁面影片 + 片尾影片。
+    media_engine.create_outro_frame()
+    media_engine.create_outro_video(OUTRO_DURATION)
+    concat_list = "story_video_concat.txt"
+    with open(concat_list, "w", encoding="utf-8") as handle:
+        for fn in slide_videos:
+            handle.write(f"file '{os.path.abspath(fn)}'\n")
+        handle.write(f"file '{os.path.abspath('outro.mp4')}'\n")
+    base_result = subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+         "-c", "copy", "story_base.mp4"],
+        capture_output=True,
+        text=True,
+    )
+    if base_result.returncode != 0:
+        print("[Minimal] 底片拼接（story_base.mp4）失敗，stderr 末尾內容：")
+        print(base_result.stderr[-2000:])
+        raise subprocess.CalledProcessError(
+            base_result.returncode, base_result.args,
+            output=base_result.stdout, stderr=base_result.stderr,
+        )
+    _ensure_nonempty_file("story_base.mp4", "主片底片")
+
+    # 5. 字幕 + 雙頭像 + 混音合成最終主片。
+    ass_path = build_ass(subtitle_events, "story_subs.ass")
+    transition_times = [item["start"] for item in page_data[1:]]
+    mixed = "story_mixed.mp3"
+    media_engine.mix_voice_with_bed(full_audio, mixed, transition_times)
+
+    # 執行 FFmpeg 前確認主片底片與字幕存在，再依每段 TTS 時間疊入兩位主持人的動態頭像。
+    _ensure_nonempty_file("story_base.mp4", "主片底片")
+    _ensure_nonempty_file(ass_path, "字幕檔")
+    _mux_story_avatars(
+        "story_base.mp4", mixed, "story_main.mp4", ass_path,
+        speaker_intervals, dialogue_end,
+    )
+    print(f"[Minimal] 主片完成：story_main.mp4（口播 {dialogue_end:.1f}s + 片尾）")
+    return {"dialogue_end": dialogue_end, "pages": page_data}
+
+
+# ── 縮圖 ─────────────────────────────────────────────────
+def create_thumbnail(story):
+    W, H = 1280, 720
+    image = Image.new("RGB", (W, H), "#05070f")
+    draw = ImageDraw.Draw(image)
+    for y in range(H):
+        ratio = y / H
+        r = max(int(13 - 8 * ratio), 5)
+        g = max(int(24 - 16 * ratio), 7)
+        b = max(int(48 - 33 * ratio), 15)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+    font_path = media_engine.get_system_font_path()
+    title_font = ImageFont.truetype(font_path, 78)
+    big_font = ImageFont.truetype(font_path, 96)
+
+    topic = story["topic_title"]
+    big = story["slides"][0]["big"] if story.get("slides") else topic
+    bbox = draw.textbbox((0, 0), big, font=big_font)
+    draw.text(((W - (bbox[2] - bbox[0])) / 2, 120), big, fill="#fbbf24", font=big_font)
+    lines, cur = [], ""
+    for ch in list(topic):
+        if draw.textbbox((0, 0), cur + ch, font=title_font)[2] > 1080:
+            lines.append(cur)
+            cur = ch
+        else:
+            cur += ch
+    if cur:
+        lines.append(cur)
+    y = 300
+    for ln in lines[:3]:
+        bbox = draw.textbbox((0, 0), ln, font=title_font)
+        draw.text(((W - (bbox[2] - bbox[0])) / 2, y), ln, fill="#ffffff", font=title_font)
+        y += 96
+    image.save("story_thumb.jpg", "JPEG", quality=92)
+# ── Shorts 直式精華（9:16） ──────────────────────────────
+def _short_html(page, reveal_seconds, broll_path=None):
+    big = html.escape(page["big"])
+    line_markup = "".join(
+        f'<div class="line">{html.escape(ln)}</div>' for ln in page["lines"]
+    )
+    reveal_json = json.dumps([round(x, 3) for x in reveal_seconds])
+    SW, SH = media_engine.SHORT_VIDEO_WIDTH, media_engine.SHORT_VIDEO_HEIGHT
+    broll_markup = _broll_background_html(broll_path) if broll_path else ""
+    return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<style>
+html,body{{margin:0;width:{SW}px;height:{SH}px;overflow:hidden;background:#05070f;
+font-family:"Noto Sans CJK TC","Microsoft JhengHei",sans-serif;}}
+.stage{{position:relative;width:100%;height:100%;
+background:radial-gradient(120% 90% at 50% 20%,#0d1830 0%,#0a1122 45%,#05070f 100%);}}
+ .broll{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;opacity:1;
+animation:none;}}
+.dark-mask{{display:none;}}
+.center{{position:absolute;left:4%;top:46%;transform:translateY(-50%);width:92%;text-align:center;z-index:3;}}
+.stage.has-broll .center{{animation:none !important;}}
+@keyframes storyShortBroll{{0%,68%,94%,100%{{opacity:0;}}72%,90%{{opacity:1;}}}}
+@keyframes storyShortSlide{{0%,68%,94%,100%{{opacity:1;}}72%,90%{{opacity:0;}}}}
+/* Shorts 採影片持續播放，資訊卡只作為前景疊圖。 */
+.broll{{opacity:1;animation:none;transition:opacity .65s ease;}}
+.stage.has-broll .center{{animation:none !important;}}
+.big{{color:#fbbf24;font-size:88px;font-weight:900;line-height:1.12;margin-bottom:70px;
+text-shadow:0 6px 40px rgba(251,191,36,.45);}}
+.lines{{display:flex;flex-direction:column;gap:46px;align-items:center;}}
+.line{{font-size:62px;font-weight:800;color:#5b6675;opacity:0;visibility:hidden;
+transition:color .35s,opacity .35s,text-shadow .35s,transform .35s;}}
+.line.active{{color:#fff;opacity:1;visibility:visible;transform:scale(1.05);
+text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
+.line.done{{color:#3b4656;opacity:0;visibility:hidden;}}
+</style></head><body><div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">{broll_markup}<div class="center">
+<div class="big">{big}</div><div class="lines">{line_markup}</div></div></div>
+<script>(function(){{
+const nodes=[].slice.call(document.querySelectorAll(".line"));const times={reveal_json};
+const start=performance.now();
+const broll=document.querySelector(".broll");
+if(broll){{
+const hideBroll=()=>{{broll.style.opacity="0";window.setTimeout(()=>broll.pause(),700);}};
+broll.addEventListener("ended",hideBroll,{{once:true}});
+}}
+function apply(a){{for(let i=0;i<nodes.length;i++){{nodes[i].classList.remove("active","done");
+if(i<a)nodes[i].classList.add("done");else if(i===a)nodes[i].classList.add("active");}}}}
+function tick(n){{const t=(n-start)/1000;let a=-1;for(let i=0;i<times.length;i++)if(t>=times[i])a=i;
+apply(a);if(a<nodes.length-1)requestAnimationFrame(tick);}}apply(-1);requestAnimationFrame(tick);}})();
+</script></body></html>"""
+
+
+def render_short_story(story, main_result):
+    W, H = media_engine.SHORT_VIDEO_WIDTH, media_engine.SHORT_VIDEO_HEIGHT
+    short_pages = main_result["pages"][:2]
+    short_total = min(60.0, sum(item["dur"] for item in short_pages))
+    remaining = short_total
+    clip_durations = []
+    for item in short_pages:
+        clip_duration = min(item["dur"], max(0.0, remaining))
+        clip_durations.append(clip_duration)
+        remaining -= clip_duration
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage",
+                  "--autoplay-policy=no-user-gesture-required"],
+        )
+        try:
+            clips = []
+            for i, item in enumerate(short_pages):
+                clip_duration = clip_durations[i]
+                if clip_duration <= 0:
+                    continue
+                # 每頁 Shorts 優先使用新直式實景素材；外部素材失敗時改用原生動態底圖。
+                try:
+                    short_broll_query = presentation.assign_broll_query({
+                        "title": item["page"].get("big", story.get("topic_title", "")),
+                        "body": " ".join(item["page"].get("lines") or []),
+                        "layout": "short_story",
+                    }) or story.get("broll_keywords")
+                    short_broll_path = broll_engine.fetch_pixabay_broll_reel(
+                        short_broll_query,
+                        clip_duration,
+                        orientation=broll_engine.VERTICAL,
+                        clip_seconds=4.0,
+                        max_clips=4,
+                    )
+                except Exception as error:
+                    print(f"[Minimal Shorts] 第 {i + 1} 段 Pixabay 搜尋失敗，改用動態背景：{error}")
+                    short_broll_path = None
+                if not short_broll_path:
+                    print(f"[Minimal Shorts] 第 {i + 1} 段未取得新素材，改用原生動態背景。")
+                doc = _short_html(item["page"], item["reveal"], short_broll_path)
+                out = f"story_short_p{i}.mp4"
+                rec_sec = clip_duration + 0.4
+                with tempfile.TemporaryDirectory() as rd:
+                    ctx = browser.new_context(
+                        viewport={"width": W, "height": H}, device_scale_factor=1,
+                        record_video_dir=rd, record_video_size={"width": W, "height": H},
+                    )
+                    page = ctx.new_page()
+                    video = page.video
+                    try:
+                        page.set_content(doc, wait_until="load")
+                        page.evaluate("() => document.fonts.ready.then(() => true)")
+                        page.wait_for_timeout(max(1, round(rec_sec * 1000)))
+                    finally:
+                        ctx.close()
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", video.path(),
+                         "-vf", f"fps={FPS},scale={W}:{H}:flags=lanczos,"
+                                f"trim=duration={rec_sec:.4f},setpts=PTS-STARTPTS,format=yuv420p",
+                         "-t", f"{clip_duration:.4f}", "-an", "-r", str(FPS),
+                         "-c:v", "libx264", "-preset", "medium",
+                         "-crf", media_engine.VIDEO_CRF, "-pix_fmt", "yuv420p", out],
+                        check=True,
+                    )
+                clips.append(out)
+
+            broll_stats = broll_engine.get_episode_stats()[broll_engine.VERTICAL]
+            if os.environ.get("PIXABAY_API_KEY", "").strip():
+                coverage = (
+                    broll_stats["success"] / broll_stats["requested"]
+                    if broll_stats["requested"] else 0.0
+                )
+                print(
+                    f"[Minimal] Shorts Pixabay 覆蓋率：{broll_stats['success']}/"
+                    f"{broll_stats['requested']}（{coverage:.0%}）"
+                )
+                min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
+                if coverage < min_coverage:
+                    print(
+                        f"[Minimal] Shorts Pixabay 覆蓋率 {coverage:.0%}，"
+                        f"低於參考值 {min_coverage:.0%}；保留已取得素材，其餘使用動態背景，"
+                        "不因可選 B-Roll 覆蓋率中止影片製作。"
+                    )
+            else:
+                print("[Minimal] 未設定 Pixabay API Key，Shorts 將使用預設動態底圖。")
+        finally:
+            browser.close()
+
+    short_audio_full = concat_audio([p["audio"] for p in short_pages], "story_short_audio_full.mp3")
+    short_audio = "story_short_audio.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", short_audio_full, "-t", f"{short_total:.4f}",
+         "-c:a", "libmp3lame", "-q:a", "2", short_audio],
+        check=True,
+    )
+    list_name = "story_short_concat.txt"
+    with open(list_name, "w", encoding="utf-8") as handle:
+        for fn in clips:
+            handle.write(f"file '{os.path.abspath(fn)}'\n")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_name,
+         "-c", "copy", "story_short_base.mp4"], check=True,
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", "story_short_base.mp4", "-i", short_audio,
+         "-map", "0:v", "-map", "1:a", "-c:v", "copy",
+         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+         "story_short.mp4"], check=True,
+    )
+    print("[Minimal] Shorts 完成：story_short.mp4")
+# ── Metadata ─────────────────────────────────────────────
+def _broll_attribution_text():
+    """依本次實際使用素材產生可放入 YouTube 說明欄的來源與授權標註。"""
+    manifest = broll_engine.get_episode_manifest()
+    unique = {}
+    for item in manifest:
+        key = (item.get("provider"), item.get("asset_id"))
+        if key not in unique:
+            unique[key] = item
+    lines = []
+    for item in unique.values():
+        creator = str(item.get("creator") or "Pixabay contributor").strip()
+        source = str(item.get("source_url") or "").strip()
+        if not source:
+            continue
+        lines.append(
+            f"- Pixabay｜{creator}｜{source}｜Pixabay Content License: "
+            "https://pixabay.com/service/license/"
+        )
+    if not lines:
+        return ""
+    return "\n\n🎬 動態影像素材來源與授權\n" + "\n".join(lines)
+
+
+def write_metadata(story, main_result):
+    lines = [f"【極簡故事】{story['yt_title']}\n", "本集核心看點："]
+    for slide in story["slides"][:3]:
+        head = slide["lines"][0] if slide["lines"] else ""
+        lines.append(f"• {slide['big']}｜{head}")
+    lines.append("")
+    lines.append("⏱️ 章節（依實際語音秒數）")
+    cursor = 0.0
+    for item in main_result["pages"]:
+        label = item["page"]["big"] or "開場"
+        m, s = divmod(int(cursor), 60)
+        lines.append(f"{m:02d}:{s:02d} {label}")
+        cursor += item["dur"]
+    lines.append("")
+    lines.append("免責聲明：本節目為市場資訊分享，不構成任何投資建議。加密貨幣波動劇烈，請審慎評估風險。")
+    credits = _broll_attribution_text()
+    if credits:
+        lines.append(credits)
+    with open("story_metadata.txt", "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    print("[Minimal] Metadata 完成：story_metadata.txt")
+
+
+# ── 主流程 ───────────────────────────────────────────────
+def main():
+    # 正式故事影片完成後預設上傳；測試模式永遠只產生預覽。
+    enable_yt = (not IS_TEST) and os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() == "true"
+    print(f"=== 極簡故事圖解線啟動 [{TODAY_STR}]（測試模式:{IS_TEST}）===")
+    prices = fetch_opening_prices()
+
+    # 優先使用根目錄 CHATGPT.txt 自訂深度素材；無有效內容（<100 字）時退回當日新聞。
+    material, chatgpt_path = read_chatgpt_material()
+    used_chatgpt = len(material) >= CHATGPT_MIN_CHARS
+    if used_chatgpt:
+        print(
+            f"[Minimal] 偵測到 CHATGPT.txt 自訂深度素材（共 {len(material)} 字），"
+            "進入專屬主題製片模式！"
+        )
+        print("[Minimal 1/4] 以 CHATGPT.txt 自訂深度素材撰寫生活比喻長談...")
+        story = build_custom_story(material, prices)
+    else:
+        print("[Minimal 1/4] 抓取今日完整新聞正文...")
+        news_items = gather_news()
+        print(
+            f"[Minimal 2/4] 選定單一主題並撰寫生活比喻長談"
+            f"（{len(news_items)} 則素材）..."
+        )
+        story = build_story(news_items, prices)
+
+    print("[Minimal 3/4] 合成逐行亮起極簡舞台主片與 Shorts...")
+    main_result = render_main_story(story)
+    create_thumbnail(story)
+    render_short_story(story, main_result)
+    render_validation = {
+        "main": _validate_story_video("story_main.mp4", "極簡故事主片"),
+        "short": _validate_story_video("story_short.mp4", "極簡故事 Shorts"),
+    }
+    print(f"[Minimal Render QA] 影音檔完整性通過：{render_validation}")
+    print("[Minimal 4/4] 輸出 metadata...")
+    write_metadata(story, main_result)
+
+    # 輸出標準化發佈清單，供雲端一鍵發佈腳本（publish_preview_to_youtube.py）使用。
+    import youtube_uploader
+    story_description = (
+        open("story_metadata.txt", encoding="utf-8").read()
+        if os.path.exists("story_metadata.txt") else ""
+    )
+    short_total = min(60.0, sum(item["dur"] for item in main_result["pages"][:2]))
+    youtube_uploader.write_publish_bundle(
+        pipeline_type="story",
+        main_video_path="story_main.mp4",
+        short_video_path="story_short.mp4",
+        thumb_path="story_thumb.jpg",
+        main_title=story["yt_title"],
+        main_description=story_description,
+        short_title=f"{story['yt_title']}｜{int(short_total)} 秒精華 #Shorts",
+        short_description=(
+            f"完整極簡故事：https://is.gd/2JOYTF\n\n"
+            "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
+            "本節目為市場資訊分享，不構成任何投資建議。"
+            + _broll_attribution_text()
+            + "\n#Shorts #比特幣 #加密貨幣 #幣看趨勢"
+        ),
+        tags=["加密貨幣", "比特幣", "以太幣", "區塊鏈", "極簡故事", "幣看趨勢"],
+        first_comment=(
+            "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n"
+            f"你對「{story['yt_title']}」這集的看法是？留言告訴比特汪與以太喵！👇"
+        ),
+    )
+
+    if not enable_yt:
+        print("[ENABLE_YOUTUBE_UPLOAD=false] 跳過 YouTube 上傳，保留 story_main.mp4 等供 Releases 預覽。")
+        return
+    youtube = youtube_uploader.build_youtube_client()
+    if youtube is None:
+        raise RuntimeError("YouTube 用戶端建立失敗；保留 CHATGPT.txt 原始素材，不執行重置。")
+    description = (
+        open("story_metadata.txt", encoding="utf-8").read()
+        if os.path.exists("story_metadata.txt") else ""
+    )
+    video_id = youtube_uploader.upload_main_video(
+        youtube, video_path="story_main.mp4", thumb_path="story_thumb.jpg",
+        title=story["yt_title"], description=description,
+        tags=["加密貨幣", "比特幣", "以太幣", "區塊鏈", "極簡故事", "幣看趨勢"],
+        show_dca=False, cur_p=0, btc_pct=0.0, fng_num=0, is_test=IS_TEST,
+    )
+    youtube_uploader.upload_short_video(
+        youtube, short_path="story_short.mp4", main_video_id=video_id,
+        cur_p=0, fng_num=0, today_str=TODAY_STR,
+        short_title=f"{story['topic_title']} #Shorts",
+        description_suffix=_broll_attribution_text(),
+    )
+    # 只有主片與 Shorts 都成功上傳後才重置自訂素材；測試、預覽或任一上傳失敗都保留原稿。
+    if used_chatgpt and chatgpt_path:
+        if not reset_chatgpt_file(chatgpt_path):
+            print("[Minimal] 警告：影片已上傳，但原始 CHATGPT 素材未能重置，請保留並檢查原檔。")
+
+
+if __name__ == "__main__":
+    main()
+    print("[Minimal] 縮圖完成：story_thumb.jpg")
