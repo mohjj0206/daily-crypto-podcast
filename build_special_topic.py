@@ -1759,7 +1759,9 @@ def main():
 
     youtube = youtube_uploader.build_youtube_client()
     print("ENABLE_YOUTUBE_UPLOAD=true，上傳教學長片與教學 Shorts。")
-    video_id = youtube_uploader.upload_tutorial_video(youtube, rendered, tutorial, is_test)
+    video_id = youtube_uploader.upload_tutorial_video(
+        youtube, rendered, tutorial, is_test, broll_credits=_broll_credits_text().strip()
+    )
     _write_tutorial_publish_bundle(rendered, tutorial, video_id)
     if not youtube_uploader.is_real_video_id(video_id):
         print(f"教學長片沒有 11 碼 video_id（{video_id!r}），不更新進度。")
