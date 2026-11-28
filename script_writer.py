@@ -1245,6 +1245,8 @@ def generate_script(mdata, dca_data, config):
         )
 
     show_format = choose_show_format()
+    visual_style = presentation.visual_style_for_format(show_format.get("id"))
+    print(f"[節目視覺模板] {show_format.get('title')}｜format={show_format.get('id')}｜style={visual_style}")
     visual_plan = plan_daily_slides(mdata, show_dca, show_format, dca_slide_body)
     slide_count = len(visual_plan)
     thermo_count = sum(1 for slide in visual_plan if slide["role"] == "thermometer")
@@ -1548,7 +1550,7 @@ def generate_script(mdata, dca_data, config):
         "slide_count": len(visual_plan),
         "format_id": show_format.get("id") or "",
         "format_title": show_format.get("title") or "",
-        "visual_style": presentation.visual_style_for_format(show_format.get("id")),
+        "visual_style": visual_style,
 
         "opening_hook": opening_hook,
         "catchphrases": catchphrases,
