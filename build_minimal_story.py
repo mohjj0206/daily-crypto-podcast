@@ -709,8 +709,11 @@ def build_custom_story(material, prices):
                     slide for slide in raw_slides
                     if section in (slide.get("source_sections") or [])
                 ]
-                candidates = assigned_slides or raw_slides
-                is_covered, matched = _section_covered_by_content(section, candidates)
+                candidates = assigned_slides
+                is_covered, matched = (
+                    _section_covered_by_content(section, candidates)
+                    if candidates else (False, [])
+                )
                 spoken_chars = sum(
                     len(str(item.get("text", "") if isinstance(item, dict) else item))
                     for slide in candidates
