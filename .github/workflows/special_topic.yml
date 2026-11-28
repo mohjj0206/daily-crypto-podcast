@@ -87,6 +87,8 @@ jobs:
           [ -f transcript.txt ] && FILES+=(transcript.txt)
           [ -f youtube_metadata.txt ] && FILES+=(youtube_metadata.txt)
           [ -f publish_bundle.json ] && FILES+=(publish_bundle.json)
+          [ -f tutorial_broll_manifest.json ] && FILES+=(tutorial_broll_manifest.json)
+          [ -f topic_broll_manifest.json ] && FILES+=(topic_broll_manifest.json)
 
           if [ ${#FILES[@]} -gt 0 ]; then
             echo "正在發布教學預覽至 latest-preview Release..."
@@ -108,6 +110,8 @@ jobs:
             tutorial_chart.png
             transcript.txt
             youtube_metadata.txt
+            tutorial_broll_manifest.json
+            topic_broll_manifest.json
           retention-days: 5
 
       - name: Commit tutorial progress
