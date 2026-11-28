@@ -726,6 +726,41 @@ def run_ffprobe_duration(filename):
     return float(output.decode().strip())
 
 
+def validate_topic_output(path="output_topic.mp4"):
+    """上傳前確認專題影片包含有效影音串流。"""
+    if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+        raise RuntimeError(f"專題影片渲染失敗：{path} 不存在或為空。")
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type",
+            "-of", "json", path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    metadata = json.loads(probe.stdout or "{}")
+    stream_types = {
+        str(stream.get("codec_type") or "")
+        for stream in metadata.get("streams") or []
+    }
+    try:
+        duration = float((metadata.get("format") or {}).get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0 or not {"video", "audio"}.issubset(stream_types):
+        raise RuntimeError(
+            f"專題影片影音串流驗收失敗：{duration:.3f}s，{sorted(stream_types)}"
+        )
+    print(
+        f"[Render QA] 單一幣種專題通過：{duration:.2f}s，"
+        f"{os.path.getsize(path):,} bytes。"
+    )
+    return duration
+
+
 def synthesize_one(item):
     index, (role, text) = item
     voice_name = "cmn-TW-Neural2-B" if role == "男" else "cmn-TW-Neural2-A"
@@ -1519,6 +1554,7 @@ def run_coin_special():
         ],
         check=True,
     )
+    validate_topic_output("output_topic.mp4")
     create_thumbnail(coin_code, title, market, topic_icon)
     upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slides, market)
 
