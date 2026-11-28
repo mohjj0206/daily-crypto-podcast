@@ -414,7 +414,7 @@ def fetch_pixabay_broll_reel(
         list_path = os.path.join(work, "concat.txt")
         with open(list_path, "w", encoding="utf-8") as handle:
             for path in segment_paths:
-                handle.write(f"file '{path}'\\n")
+                handle.write(f"file '{path}'\n")
         concat_path = os.path.join(work, "reel_clips.mp4")
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
@@ -441,8 +441,8 @@ def fetch_pixabay_broll_reel(
                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             with open(list_path, "w", encoding="utf-8") as handle:
-                handle.write(f"file '{concat_path}'\\n")
-                handle.write(f"file '{fallback_path}'\\n")
+                handle.write(f"file '{concat_path}'\n")
+                handle.write(f"file '{fallback_path}'\n")
             subprocess.run(
                 ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
                  "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
