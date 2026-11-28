@@ -2778,7 +2778,7 @@ def render_short_video(sdata, mdata, config):
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding\n"
         "Style: Default,Noto Sans CJK TC,68,&H0000D7FF,&H000000FF,&H00101010,"
-        "&HAA000000,1,0,0,0,100,100,0,0,1,4,2,2,60,60,285,1\n\n"
+        "&HAA000000,1,0,0,0,100,100,0,0,1,4,2,2,100,100,90,1\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, "
         "MarginV, Effect, Text\n"
     )
@@ -2898,10 +2898,21 @@ body {{
 }}
 @keyframes gridFlow {{ to {{ transform:translate3d(42px,21px,0); }} }}
 .broll-bg {{
-  /* 直式 B-Roll 獨立置於字幕卡下方，不作背景、不被簡報覆蓋。 */
-  position:absolute; left:34px; right:34px; bottom:20px; z-index:2;
-  width:calc(100% - 68px); height:220px; object-fit:cover;
-  border:2px solid rgba(56,189,248,.72); border-radius:18px;
+  /* 直式 Pixabay 全螢幕插播，與簡報卡輪流播放。 */
+  position:absolute; inset:0; z-index:1; width:100%; height:100%;
+  object-fit:cover; opacity:0;
+  animation:shortBrollInterlude var(--broll-cycle, 18s) linear infinite;
+}}
+.brand, .avatar, .avatar-placeholder, .panel {{
+  animation:shortSlideInterlude var(--broll-cycle, 18s) linear infinite;
+}}
+@keyframes shortBrollInterlude {{
+  0%,68%,94%,100% {{ opacity:0; }}
+  72%,90% {{ opacity:1; }}
+}}
+@keyframes shortSlideInterlude {{
+  0%,68%,94%,100% {{ opacity:1; }}
+  72%,90% {{ opacity:0; }}
 }}
 .broll-veil {{ display:none; }}
 .brand {{
@@ -2969,7 +2980,7 @@ body {{
 @keyframes fadeInUp {{ from {{ opacity:0; transform:translateY(20px); }} to {{ opacity:1; transform:translateY(0); }} }}
 </style></head>
 <body>
-<div class="short-stage">
+<div class="short-stage" style="--broll-cycle:{max(12.0, float(render_duration)):.3f}s;">
 {short_broll_markup}
 <header class="brand">【幣看趨勢】｜每日市場快訊</header>
 {avatar_markup}
