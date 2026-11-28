@@ -348,23 +348,6 @@ def fetch_pixabay_broll_reel(
         _episode_used[orient].append(video_id)
         _episode_used_ids.add(video_id)
         selected.append((source_path, hit, str(video_id)))
-        _episode_stats[orient]["success"] += 1
-        _episode_manifest.append({
-            "provider": "Pixabay",
-            "asset_id": str(video_id),
-            "title": str(hit.get("tags") or (queries[0] if queries else "")).strip(),
-            "creator": str(hit.get("user") or "").strip(),
-            "source_url": str(hit.get("pageURL") or "").strip(),
-            "search_query": str(queries[0] if queries else ""),
-            "orientation": orient,
-            "duration_seconds": hit.get("duration"),
-            "tags": str(hit.get("tags") or "").strip(),
-            "local_file": os.path.basename(source_path),
-            "license": "Pixabay Content License",
-            "license_url": "https://pixabay.com/service/license/",
-            "attribution_required_by_provider": False,
-            "segment_seconds": clip_seconds,
-        })
 
     if not selected:
         _episode_stats[orient]["failed"] += required
@@ -407,6 +390,23 @@ def fetch_pixabay_broll_reel(
             if os.path.isfile(segment_path) and os.path.getsize(segment_path) > 0:
                 segment_paths.append(segment_path)
                 elapsed += segment_duration
+                _episode_stats[orient]["success"] += 1
+                _episode_manifest.append({
+                    "provider": "Pixabay",
+                    "asset_id": str(video_id),
+                    "title": str(hit.get("tags") or (queries[0] if queries else "")).strip(),
+                    "creator": str(hit.get("user") or "").strip(),
+                    "source_url": str(hit.get("pageURL") or "").strip(),
+                    "search_query": str(queries[0] if queries else ""),
+                    "orientation": orient,
+                    "duration_seconds": hit.get("duration"),
+                    "tags": str(hit.get("tags") or "").strip(),
+                    "local_file": os.path.basename(source_path),
+                    "license": "Pixabay Content License",
+                    "license_url": "https://pixabay.com/service/license/",
+                    "attribution_required_by_provider": False,
+                    "segment_seconds": round(segment_duration, 3),
+                })
 
         if not segment_paths:
             _episode_stats[orient]["failed"] += required
