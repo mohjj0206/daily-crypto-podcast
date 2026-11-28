@@ -1831,6 +1831,29 @@ def render_short_story(story, main_result):
     )
     print("[Minimal] Shorts 完成：story_short.mp4")
 # ── Metadata ─────────────────────────────────────────────
+def _broll_attribution_text():
+    """依本次實際使用素材產生可放入 YouTube 說明欄的來源與授權標註。"""
+    manifest = broll_engine.get_episode_manifest()
+    unique = {}
+    for item in manifest:
+        key = (item.get("provider"), item.get("asset_id"))
+        if key not in unique:
+            unique[key] = item
+    lines = []
+    for item in unique.values():
+        creator = str(item.get("creator") or "Pixabay contributor").strip()
+        source = str(item.get("source_url") or "").strip()
+        if not source:
+            continue
+        lines.append(
+            f"- Pixabay｜{creator}｜{source}｜Pixabay Content License: "
+            "https://pixabay.com/service/license/"
+        )
+    if not lines:
+        return ""
+    return "\n\n🎬 動態影像素材來源與授權\n" + "\n".join(lines)
+
+
 def write_metadata(story, main_result):
     lines = [f"【極簡故事】{story['yt_title']}\n", "本集核心看點："]
     for slide in story["slides"][:3]:
@@ -1846,6 +1869,9 @@ def write_metadata(story, main_result):
         cursor += item["dur"]
     lines.append("")
     lines.append("免責聲明：本節目為市場資訊分享，不構成任何投資建議。加密貨幣波動劇烈，請審慎評估風險。")
+    credits = _broll_attribution_text()
+    if credits:
+        lines.append(credits)
     with open("story_metadata.txt", "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
     print("[Minimal] Metadata 完成：story_metadata.txt")
@@ -1907,7 +1933,9 @@ def main():
         short_description=(
             f"完整極簡故事：https://is.gd/2JOYTF\n\n"
             "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
-            "本節目為市場資訊分享，不構成任何投資建議。\n#Shorts #比特幣 #加密貨幣 #幣看趨勢"
+            "本節目為市場資訊分享，不構成任何投資建議。"
+            + _broll_attribution_text()
+            + "\n#Shorts #比特幣 #加密貨幣 #幣看趨勢"
         ),
         tags=["加密貨幣", "比特幣", "以太幣", "區塊鏈", "極簡故事", "幣看趨勢"],
         first_comment=(
