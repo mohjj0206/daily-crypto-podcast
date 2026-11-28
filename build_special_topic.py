@@ -1358,9 +1358,8 @@ def run_coin_special():
         for index, (slide_title, slide_body, _chart_path) in enumerate(slides, 1):
             start_time = slide_starts[index - 1]
             end_time = slide_starts[index] if index < slide_count else dialogue_end
-            duration = max(0.1, end_time - start_time)
-            if index == slide_count:
-                duration += OUTRO_PAUSE
+            spoken_duration = max(0.1, end_time - start_time)
+            duration = spoken_duration + (OUTRO_PAUSE if index == slide_count else 0.0)
 
             query = presentation.assign_broll_query({
                 "title": slide_title,
@@ -1397,7 +1396,7 @@ def run_coin_special():
                 )
                 broll_manifest.append({"slide": index, "asset": None, "source": "native_motion_fallback"})
 
-            fade_out_start = max(0.0, duration - 0.45)
+            fade_out_start = max(0.0, spoken_duration - 0.35)
             overlay_filter = (
                 f"[1:v]format=rgba,fade=t=in:st=0:d=0.28:alpha=1,"
                 f"fade=t=out:st={fade_out_start:.4f}:d=0.35:alpha=1[card];"
