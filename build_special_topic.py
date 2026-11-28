@@ -1292,6 +1292,26 @@ def create_thumbnail(coin_code, topic_title, market, topic_icon):
     image.save("thumb_topic.jpg", "JPEG", quality=92)
 
 
+def _broll_credits_text():
+    """列出本次實際使用的 Pixabay 來源，供主片與 Shorts 說明欄標註。"""
+    unique = {}
+    for item in broll_engine.get_episode_manifest():
+        key = (item.get("provider"), item.get("asset_id"))
+        if key not in unique:
+            unique[key] = item
+    rows = []
+    for item in unique.values():
+        source = str(item.get("source_url") or "").strip()
+        if not source:
+            continue
+        creator = str(item.get("creator") or "Pixabay contributor").strip()
+        rows.append(
+            f"- Pixabay｜{creator}｜{source}｜Pixabay Content License: "
+            "https://pixabay.com/service/license/"
+        )
+    return "\n\n🎬 動態影像素材來源與授權\n" + "\n".join(rows) if rows else ""
+
+
 def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slides, market):
     if IS_TEST or os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() != "true":
         print("[TEST_MODE 或停用上傳] 跳過 YouTube 上傳，保留 output_topic.mp4 與 thumb_topic.jpg。")
@@ -1320,8 +1340,9 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
         f"⏱️ 本集章節（含動態片尾）\n{chr(10).join(chapters)}\n\n"
         f"即時價格：{format_price(market['price'])}\n"
         f"24 小時漲跌：{market['change_24h']:+.2f}%\n"
-        "本節目僅作公開資訊與市場數據整理，不構成投資建議。加密資產波動劇烈，請自行研究並承擔風險。\n\n"
-        f"#幣看深潛 #{coin_code} #加密貨幣 #區塊鏈"
+        "本節目僅作公開資訊與市場數據整理，不構成投資建議。加密資產波動劇烈，請自行研究並承擔風險。"
+        + _broll_credits_text()
+        + f"\n\n#幣看深潛 #{coin_code} #加密貨幣 #區塊鏈"
     )
     request = youtube.videos().insert(
         part="snippet,status",
@@ -1532,7 +1553,10 @@ def run_coin_special():
             )
             video_list.write(f"file 'topic_p{index}.mp4'\n")
         with open("topic_broll_manifest.json", "w", encoding="utf-8") as manifest_file:
-            json.dump(broll_manifest, manifest_file, ensure_ascii=False, indent=2)
+            json.dump(
+                {"timeline": broll_manifest, "sources": broll_engine.get_episode_manifest()},
+                manifest_file, ensure_ascii=False, indent=2
+            )
         video_list.write("file 'outro.mp4'\n")
     broll_stats = broll_engine.get_episode_stats()[broll_engine.HORIZONTAL]
     broll_coverage = (
@@ -1647,6 +1671,7 @@ def _write_tutorial_publish_bundle(rendered, tutorial, main_video_id):
         "本集圖表是教學結構示意，不是即時持倉普查，也不構成投資建議。\n"
         "模擬定期定額不是真實成交。加密貨幣波動劇烈，請自行研究。\n\n"
         "⏱️ 章節\n" + "\n".join(rendered.get("chapters") or [])
+        + _broll_credits_text()
     )
     main_url = (
         f"https://www.youtube.com/watch?v={main_video_id}"
@@ -1657,7 +1682,9 @@ def _write_tutorial_publish_bundle(rendered, tutorial, main_video_id):
     short_description = (
         f"完整教學：{main_url}\n"
         f"📊 公開帳本：{youtube_uploader.LEDGER_URL}\n\n"
-        "結構示意，不構成投資建議。\n#Shorts #幣看深潛 #比特幣"
+        "結構示意，不構成投資建議。"
+        + _broll_credits_text()
+        + "\n#Shorts #幣看深潛 #比特幣"
     )
     youtube_uploader.write_publish_bundle(
         pipeline_type="tutorial",
