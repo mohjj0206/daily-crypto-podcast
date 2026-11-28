@@ -349,6 +349,11 @@ def fetch_pixabay_broll_reel(
         video_id = hit.get("id")
         if video_id is None or video_id in _episode_used_ids:
             continue
+        try:
+            if float(hit.get("duration") or clip_seconds) < 3.0:
+                continue
+        except (TypeError, ValueError):
+            pass
         video_url = _pick_video_url(hit)
         if not video_url:
             continue
@@ -405,7 +410,7 @@ def fetch_pixabay_broll_reel(
                 _episode_manifest.append({
                     "provider": "Pixabay",
                     "asset_id": str(video_id),
-                    "title": str(hit.get("tags") or (queries[0] if queries else "")).strip(),
+                    "title": str(hit.get("tags") or source_query or "").strip(),
                     "creator": str(hit.get("user") or "").strip(),
                     "source_url": str(hit.get("pageURL") or "").strip(),
                     "search_query": str(source_query or ""),
