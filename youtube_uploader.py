@@ -358,7 +358,9 @@ def build_daily_short_title(sdata):
 
 def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today_str, short_title=None):
     main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
-    short_title = short_title or build_daily_short_title({})
+    short_title = str(short_title or "").strip()
+    if not short_title:
+        raise RuntimeError("上傳 Shorts 前必須提供與短片主題一致的標題。")
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
         "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
