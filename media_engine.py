@@ -890,7 +890,7 @@ body {{
 .broll-bg {{
   /* Pixabay 獨立展示區：與簡報左右分欄，禁止被簡報卡片覆蓋。 */
   position: absolute; right: 48px; top: 110px; bottom: 350px; z-index: 4;
-  width: 30%; height: auto; object-fit: cover;
+  width: 30%; height: 620px; object-fit: cover;
   border: 2px solid rgba(56,189,248,.72); border-radius: 18px;
   box-shadow: 0 0 34px rgba(56,189,248,.22);
   background: #050914;
@@ -3159,7 +3159,7 @@ def _tutorial_card_html(card, chart_markup, broll_path=None):
 <style>
 html,body {{ margin:0; width:1920px; height:1080px; overflow:hidden; background:#070b14; color:#f8fafc;
   font-family:'Noto Sans CJK TC',sans-serif; }}
-video {{ position:absolute; right:70px; top:150px; bottom:300px; width:30%; height:auto;
+video {{ position:absolute; right:70px; top:150px; width:30%; height:630px;
   object-fit:cover; border:2px solid rgba(56,189,248,.72); border-radius:18px;
   box-shadow:0 0 34px rgba(56,189,248,.22); }}
 .safe {{ position:absolute; left:180px; right:35%; top:70px; bottom:290px; }}
@@ -3378,6 +3378,22 @@ def _render_tutorial_short(tutorial):
         )
         clock += segment_duration
     avatars = "".join(hosts)
+    short_broll_path = broll_engine.fetch_pixabay_broll(
+        presentation.assign_broll_query({
+            "title": tutorial.get("title", ""),
+            "body": " ".join(str(line.get("text") or "") for line in lines),
+            "layout": "",
+        }),
+        orientation=broll_engine.VERTICAL,
+    )
+    if not short_broll_path:
+        raise RuntimeError("Tutorial Shorts could not obtain a new unique vertical Pixabay clip.")
+    with open(short_broll_path, "rb") as handle:
+        short_broll_data = base64.b64encode(handle.read()).decode("ascii")
+    short_broll_markup = (
+        '<video class="tutorial-broll" autoplay muted loop playsinline '
+        f'src="data:video/mp4;base64,{short_broll_data}"></video>'
+    )
     short_html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><style>
 {presentation.GLOBAL_DARK_CSS}
 html,body {{ margin:0; width:1080px; height:1920px; overflow:hidden; color:#f8fafc; font-family:'Noto Sans CJK TC',sans-serif; }}
@@ -3387,9 +3403,11 @@ body::before {{ content:""; position:absolute; inset:-8%;
   linear-gradient(rgba(56,189,248,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.08) 1px,transparent 1px);
   background-size:auto,48px 48px,48px 48px; animation:flow 14s linear infinite; }}
 @keyframes flow {{ to {{ transform:translate3d(48px,24px,0); }} }}
-.badge {{ position:absolute; top:70px; left:70px; right:70px; color:#f59e0b; font-size:40px; font-weight:800; }}
-h1 {{ position:absolute; top:160px; left:70px; right:70px; font-size:78px; line-height:1.2; }}
-.deck {{ position:absolute; left:80px; right:80px; top:460px; height:900px; }}
+.tutorial-broll {{ position:absolute; right:36px; top:450px; width:390px; height:1120px;
+  object-fit:cover; border:2px solid rgba(56,189,248,.72); border-radius:24px; }}
+.badge {{ position:absolute; top:70px; left:50px; right:50px; color:#f59e0b; font-size:40px; font-weight:800; }}
+h1 {{ position:absolute; top:160px; left:50px; right:480px; font-size:68px; line-height:1.2; }}
+.deck {{ position:absolute; left:50px; right:480px; top:460px; height:900px; }}
 article {{ position:absolute; inset:0; display:grid; place-items:center; padding:48px; border-radius:36px;
   background:rgba(15,23,42,.92); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
   opacity:0; animation:card {duration:.2f}s linear forwards; }}
@@ -3399,7 +3417,7 @@ article {{ position:absolute; inset:0; display:grid; place-items:center; padding
 .host.dog {{ right:150px; }}
 .host.talk {{ opacity:0; animation:speak linear 1; }}
 @keyframes speak {{ 0%,100% {{ opacity:1; }} }}
-</style></head><body><div class="badge">{badge}</div><h1>{hook}</h1><div class="deck">{''.join(cards)}</div>{avatars}</body></html>"""
+</style></head><body>{short_broll_markup}<div class="badge">{badge}</div><h1>{hook}</h1><div class="deck">{''.join(cards)}</div>{avatars}</body></html>"""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
