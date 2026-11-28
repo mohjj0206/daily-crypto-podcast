@@ -315,24 +315,35 @@ def fetch_pixabay_broll_reel(
     if not queries:
         queries = [_next_fallback_keyword()]
     # 一次搜尋取得候選池，避免每 4 秒都呼叫一次 API。
-    hits = []
+    candidate_hits = []
+    query_by_id = {}
     used_queries = []
     for query in queries[:2]:
         used_queries.append(query)
-        hits = _query_pixabay(query, orient)
-        if hits:
+        for hit in _query_pixabay(query, orient):
+            video_id = hit.get("id")
+            if video_id is None or video_id in _episode_used_ids or video_id in query_by_id:
+                continue
+            candidate_hits.append(hit)
+            query_by_id[video_id] = query
+        if len(candidate_hits) >= required:
             break
-    if not hits:
+    if len(candidate_hits) < required:
         fallback = _next_fallback_keyword()
         if fallback not in used_queries:
-            hits = _query_pixabay(fallback, orient)
-            if hits:
-                queries = [fallback]
+            for hit in _query_pixabay(fallback, orient):
+                video_id = hit.get("id")
+                if video_id is None or video_id in _episode_used_ids or video_id in query_by_id:
+                    continue
+                candidate_hits.append(hit)
+                query_by_id[video_id] = fallback
+                if len(candidate_hits) >= required:
+                    break
 
     selected = []
     cache_path = _cache_dir(cache_dir)
     _episode_stats[orient]["requested"] += required
-    for hit in hits:
+    for hit in candidate_hits:
         if len(selected) >= required:
             break
         video_id = hit.get("id")
@@ -347,7 +358,7 @@ def fetch_pixabay_broll_reel(
             continue
         _episode_used[orient].append(video_id)
         _episode_used_ids.add(video_id)
-        selected.append((source_path, hit, str(video_id)))
+        selected.append((source_path, hit, str(video_id), query_by_id.get(video_id, queries[0] if queries else "")))
 
     if not selected:
         _episode_stats[orient]["failed"] += required
@@ -361,7 +372,7 @@ def fetch_pixabay_broll_reel(
     with tempfile.TemporaryDirectory(prefix="broll_reel_") as work:
         segment_paths = []
         elapsed = 0.0
-        for index, (source_path, hit, video_id) in enumerate(selected):
+        for index, (source_path, hit, video_id, source_query) in enumerate(selected):
             remaining = target_duration - elapsed
             if remaining <= 0:
                 break
@@ -397,7 +408,7 @@ def fetch_pixabay_broll_reel(
                     "title": str(hit.get("tags") or (queries[0] if queries else "")).strip(),
                     "creator": str(hit.get("user") or "").strip(),
                     "source_url": str(hit.get("pageURL") or "").strip(),
-                    "search_query": str(queries[0] if queries else ""),
+                    "search_query": str(source_query or ""),
                     "orientation": orient,
                     "duration_seconds": hit.get("duration"),
                     "tags": str(hit.get("tags") or "").strip(),
