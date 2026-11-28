@@ -493,7 +493,7 @@ def fill_story_slide_bodies(slides, editorial, news_details, week_lines):
 
 
 def build_tutorial_cards(sections, lesson=None):
-    """把五段口播切成約 25 到 35 張圖卡，每張 2 到 4 句。"""
+    """依實際口播長度與知識點切成適量圖卡，每張約 2 到 4 句。"""
     spoken = []
     for section_index, section in enumerate(sections or []):
         for line in section.get("lines") or []:
