@@ -13,6 +13,8 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import subprocess
+import tempfile
 
 # ── 常數 ──────────────────────────────────────────────
 HORIZONTAL = "horizontal"
@@ -287,3 +289,165 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
     _episode_stats[orient]["failed"] += 1
     print(f"[Pixabay B-Roll] 查詢失敗 ({last_reason})，不重複使用舊素材，回傳無素材")
     return None
+
+def fetch_pixabay_broll_reel(
+    keywords,
+    duration_seconds,
+    orientation=HORIZONTAL,
+    cache_dir="assets/broll_cache",
+    clip_seconds=4.0,
+    max_clips=4,
+):
+    """建立不循環的動態背景串接：每個來源只取約 4 秒，素材不夠時接原生動態底片。"""
+    orient = _orientation(orientation)
+    target_duration = max(0.1, float(duration_seconds or 0.1))
+    clip_seconds = max(3.0, min(5.0, float(clip_seconds)))
+    max_clips = max(1, min(12, int(max_clips)))
+    required = min(max_clips, max(1, int((target_duration + clip_seconds - 0.001) // clip_seconds)))
+
+    if not _api_key():
+        _episode_stats[orient]["missing_key"] += required
+        _episode_stats[orient]["requested"] += required
+        print("[Pixabay B-Roll] 缺少 API Key，使用既有動態背景。")
+        return None
+
+    queries = _clean_keywords(keywords)
+    if not queries:
+        queries = [_next_fallback_keyword()]
+    # 一次搜尋取得候選池，避免每 4 秒都呼叫一次 API。
+    hits = []
+    used_queries = []
+    for query in queries[:2]:
+        used_queries.append(query)
+        hits = _query_pixabay(query, orient)
+        if hits:
+            break
+    if not hits:
+        fallback = _next_fallback_keyword()
+        if fallback not in used_queries:
+            hits = _query_pixabay(fallback, orient)
+            if hits:
+                queries = [fallback]
+
+    selected = []
+    cache_path = _cache_dir(cache_dir)
+    _episode_stats[orient]["requested"] += required
+    for hit in hits:
+        if len(selected) >= required:
+            break
+        video_id = hit.get("id")
+        if video_id is None or video_id in _episode_used_ids:
+            continue
+        video_url = _pick_video_url(hit)
+        if not video_url:
+            continue
+        ext = os.path.splitext(video_url.split("?")[0])[1] or ".mp4"
+        source_path = os.path.join(cache_path, f"{orient}_{video_id}{ext}")
+        if not os.path.exists(source_path) and not _download(video_url, source_path):
+            continue
+        _episode_used[orient].append(video_id)
+        _episode_used_ids.add(video_id)
+        selected.append((source_path, hit, str(video_id)))
+        _episode_stats[orient]["success"] += 1
+        _episode_manifest.append({
+            "provider": "Pixabay",
+            "asset_id": str(video_id),
+            "title": str(hit.get("tags") or (queries[0] if queries else "")).strip(),
+            "creator": str(hit.get("user") or "").strip(),
+            "source_url": str(hit.get("pageURL") or "").strip(),
+            "search_query": str(queries[0] if queries else ""),
+            "orientation": orient,
+            "duration_seconds": hit.get("duration"),
+            "tags": str(hit.get("tags") or "").strip(),
+            "local_file": os.path.basename(source_path),
+            "license": "Pixabay Content License",
+            "license_url": "https://pixabay.com/service/license/",
+            "attribution_required_by_provider": False,
+            "segment_seconds": clip_seconds,
+        })
+
+    if not selected:
+        _episode_stats[orient]["failed"] += required
+        return None
+
+    width, height = _ORIENTATION_WH[orient]
+    reel_path = os.path.join(
+        cache_path,
+        f"reel_{orient}_{int(time.time() * 1000)}_{len(selected)}.mp4",
+    )
+    with tempfile.TemporaryDirectory(prefix="broll_reel_") as work:
+        segment_paths = []
+        elapsed = 0.0
+        for index, (source_path, hit, video_id) in enumerate(selected):
+            remaining = target_duration - elapsed
+            if remaining <= 0:
+                break
+            segment_duration = min(clip_seconds, remaining)
+            segment_path = os.path.join(work, f"segment_{index:02d}.mp4")
+            command = [
+                "ffmpeg", "-y", "-i", source_path,
+                "-t", f"{segment_duration:.3f}",
+                "-vf",
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},fps=24,setsar=1,format=yuv420p",
+                "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                "-crf", "27", "-pix_fmt", "yuv420p", segment_path,
+            ]
+            try:
+                subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except (OSError, subprocess.CalledProcessError):
+                continue
+            if os.path.isfile(segment_path) and os.path.getsize(segment_path) > 0:
+                segment_paths.append(segment_path)
+                elapsed += segment_duration
+
+        if not segment_paths:
+            _episode_stats[orient]["failed"] += required
+            return None
+
+        list_path = os.path.join(work, "concat.txt")
+        with open(list_path, "w", encoding="utf-8") as handle:
+            for path in segment_paths:
+                handle.write(f"file '{path}'\\n")
+        concat_path = os.path.join(work, "reel_clips.mp4")
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+             "-pix_fmt", "yuv420p", concat_path],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+        # 素材池不足以覆蓋整段口播時，接原生動態背景，不重播舊素材。
+        if elapsed + 0.05 < target_duration:
+            fallback_path = os.path.join(work, "motion_fallback.mp4")
+            remainder = target_duration - elapsed
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-f", "lavfi", "-i",
+                    f"color=c=#07101f:s={width}x{height}:r=24:d={remainder:.3f}",
+                    "-vf",
+                    "drawgrid=width=72:height=72:thickness=1:color=0x355070@0.42,"
+                    "zoompan=z='min(zoom+0.00035,1.04)':d=1:"
+                    f"s={width}x{height}:fps=24,format=yuv420p",
+                    "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-crf", "27", "-pix_fmt", "yuv420p", fallback_path,
+                ],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            with open(list_path, "w", encoding="utf-8") as handle:
+                handle.write(f"file '{concat_path}'\\n")
+                handle.write(f"file '{fallback_path}'\\n")
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+                 "-pix_fmt", "yuv420p", reel_path],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        else:
+            os.replace(concat_path, reel_path)
+
+    print(
+        f"[Pixabay B-Roll] 已建立 {len(segment_paths)} 段不重複素材串接，"
+        f"每段最長 {clip_seconds:.1f}s，總長目標 {target_duration:.1f}s。"
+    )
+    return reel_path
