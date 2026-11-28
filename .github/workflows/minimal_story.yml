@@ -76,7 +76,7 @@ jobs:
               echo "CHATGPT 原檔備份驗證失敗；禁止重置或刪除原檔。"
               exit 1
             fi
-            git add "$BACKUP_FILE"
+            git add "$BACKUP_DIR"
             echo "已完成 CHATGPT 原檔備份：$BACKUP_FILE"
 
             printf '%s\n' '# 若要使用 ChatGPT 深度討論內容製片，請將完整文章貼於此檔案並執行 Minimal Story workflow；若無實質內容則自動抓取當日即時新聞。' > "$TARGET_FILE"
