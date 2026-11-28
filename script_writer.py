@@ -809,7 +809,7 @@ def load_cached_script():
         "slide_news_details", "slide_news", "slide_24h_conditions",
         "dca_slide_caption", "dca_slide_body",
     )
-    if not isinstance(cached, dict) or any(key not in cached for key in required):
+    if not isinstance(cached, dict) or cached.get("script_structure_version") != 2 or any(key not in cached for key in required):
         print("[REUSE_SCRIPT] 快取欄位不完整，改走正常產稿。")
         return None
     print("[REUSE_SCRIPT] 已載入 cache_last_script.json，本集不呼叫 Gemini。")
