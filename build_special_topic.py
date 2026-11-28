@@ -1492,6 +1492,17 @@ def run_coin_special():
         with open("topic_broll_manifest.json", "w", encoding="utf-8") as manifest_file:
             json.dump(broll_manifest, manifest_file, ensure_ascii=False, indent=2)
         video_list.write("file 'outro.mp4'\n")
+    broll_stats = broll_engine.get_episode_stats()[broll_engine.HORIZONTAL]
+    broll_coverage = (
+        broll_stats["success"] / broll_stats["requested"]
+        if broll_stats["requested"] else 0.0
+    )
+    print(
+        f"[Pixabay] 專題素材統計：成功 {broll_stats['success']}/"
+        f"{broll_stats['requested']}｜失敗 {broll_stats['failed']}｜"
+        f"缺少金鑰 {broll_stats['missing_key']}｜覆蓋率 {broll_coverage:.0%}"
+    )
+    print("[Pixabay] 覆蓋率只作為製片品質記錄；未取得素材時已使用原生動態背景，不阻擋成片。")
     subprocess.run(
         [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
