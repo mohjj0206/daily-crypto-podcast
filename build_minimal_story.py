@@ -539,8 +539,8 @@ def _build_custom_prompt(material, prices):
   "topic_title": "整集核心主題標題（20 字內、有懸念）",
   "topic_summary": "一句話說明本集深挖的單一主題",
   "broll_keywords": "英文 Pixabay 實景底片關鍵字，逗號分隔，3～5 個",
-  "yt_title": "65～88 字元高點擊懸念標題",
-  "opening": [{{"role": "男", "text": "開場 30 秒報價＋點出主題的對話"}}],
+  "yt_title": "24～42 字元、精準反映本集內容的標題",
+  "opening": [{{"role": "男", "text": "開場 20～30 秒切入主題；只有報價與主題直接相關時才提 BTC／ETH"}}],
   "slides": [
     {{
       "big": "中央大數字對比，例如 15 分鐘 ➔ 6 秒（12 字內）",
