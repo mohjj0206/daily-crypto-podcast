@@ -653,6 +653,8 @@ def _dialogue_count(dialogues):
 
 
 def _expand_dialogues(dialogues):
+    global SPECIAL_SLIDE_ANCHOR_INDEXES
+    original_anchors = dict(SPECIAL_SLIDE_ANCHOR_INDEXES)
     # 擴寫前把畫面錨點放回逐字稿，避免補稿後資料卡失去與口播的同步位置。
     anchor_by_index = {}
     for slide_number, dialogue_index in SPECIAL_SLIDE_ANCHOR_INDEXES.items():
@@ -671,7 +673,10 @@ def _expand_dialogues(dialogues):
         + script
     )
     _, expanded_dialogues = make_dialogues("標題：擴寫\n" + expanded, "")
-    return expanded_dialogues or dialogues
+    if expanded_dialogues:
+        return expanded_dialogues
+    SPECIAL_SLIDE_ANCHOR_INDEXES = original_anchors
+    return dialogues
 
 
 def validate_dialogue_length(dialogues):
