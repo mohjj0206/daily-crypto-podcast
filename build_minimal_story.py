@@ -245,15 +245,32 @@ def _validate_story_video(path, label):
 
 
 def reset_chatgpt_file(path=None):
-    """製片完成後把 CHATGPT 素材檔還原為預設註解狀態，避免下次重複製片。"""
+    """重置前先建立並驗證不可覆寫的原始備份，備份失敗時絕不清空素材。"""
     target = path or _chatgpt_path()
     try:
+        if not os.path.isfile(target):
+            print(f"[Minimal] 找不到 {target}；不建立空白檔，也不執行重置。")
+            return False
+        backup_dir = os.path.join(BASE_DIR, "backups", "chatgpt")
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = datetime.now(TW_TZ).strftime("%Y%m%dT%H%M%S%f")
+        backup_path = os.path.join(
+            backup_dir, f"{os.path.basename(target)}.{stamp}.bak"
+        )
+        with open(target, "rb") as source:
+            original_bytes = source.read()
+        with open(backup_path, "xb") as backup:
+            backup.write(original_bytes)
+        with open(backup_path, "rb") as backup:
+            if backup.read() != original_bytes:
+                raise RuntimeError("原始素材備份驗證失敗")
+        print(f"[Minimal] 原始素材已備份並驗證：{backup_path}")
         with open(target, "w", encoding="utf-8") as handle:
             handle.write(CHATGPT_DEFAULT_CONTENT)
         print(f"[Minimal] 已重置 {os.path.basename(target)} 為預設註解狀態。")
         return True
     except Exception as err:
-        print(f"[Minimal] 重置 CHATGPT.txt 失敗：{err}")
+        print(f"[Minimal] 備份或重置 CHATGPT.txt 失敗；保留原始素材：{err}")
         return False
 
 
