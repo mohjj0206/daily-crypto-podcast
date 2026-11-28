@@ -1373,9 +1373,60 @@ def run_coin_special():
 
     broll_engine.reset_episode_rotation()
     broll_manifest = []
+    # 若開場鉤子早於第一張資料卡，仍要補上持續播放的背景影片，不能直接跳過這段口播時間。
+    lead_duration = max(0.0, float(slide_starts[0]) - float(intro_duration))
+    lead_broll_path = None
+    if lead_duration > 0.10:
+        try:
+            lead_broll_path = broll_engine.fetch_pixabay_broll(
+                f"{metadata['english']} cryptocurrency cinematic finance technology",
+                orientation=broll_engine.HORIZONTAL,
+            )
+        except Exception as error:
+            print(f"[Pixabay] 專題開場背景素材取得失敗，改用動態底圖：{error}")
+        if lead_broll_path:
+            lead_input = ["-stream_loop", "-1", "-i", lead_broll_path]
+            lead_filter = (
+                "[0:v]scale=1280:720:force_original_aspect_ratio=increase,"
+                f"crop=1280:720,fps=24,trim=duration={lead_duration:.4f},"
+                "setpts=PTS-STARTPTS[v]"
+            )
+            broll_manifest.append({
+                "slide": 0,
+                "asset": os.path.basename(lead_broll_path),
+                "source": "Pixabay_opening",
+            })
+        else:
+            lead_input = [
+                "-f", "lavfi", "-i",
+                f"color=c=#070b14:s=1280x720:r=24:d={lead_duration:.4f}",
+            ]
+            lead_filter = (
+                "[0:v]drawgrid=width=64:height=64:thickness=1:color=0x26364d@0.34,"
+                "zoompan=z='min(zoom+0.0004,1.05)':d=1:"
+                "s=1280x720:fps=24,"
+                f"trim=duration={lead_duration:.4f},setpts=PTS-STARTPTS[v]"
+            )
+            broll_manifest.append({
+                "slide": 0,
+                "asset": None,
+                "source": "native_motion_fallback",
+            })
+        subprocess.run(
+            [
+                "ffmpeg", "-y", *lead_input,
+                "-vf", lead_filter, "-an", "-t", f"{lead_duration:.4f}",
+                "-r", "24", "-c:v", "libx264", "-preset", "ultrafast",
+                "-crf", "26", "-pix_fmt", "yuv420p", "topic_lead.mp4",
+            ],
+            check=True,
+        )
+        print(f"[Slide Sync] 開場純背景片段｜{intro_duration:.2f}s–{slide_starts[0]:.2f}s")
     with open("topic_list.txt", "w", encoding="utf-8") as video_list:
         if has_intro:
             video_list.write("file 'intro.mp4'\n")
+        if lead_duration > 0.10:
+            video_list.write("file 'topic_lead.mp4'\n")
         for index, (slide_title, slide_body, _chart_path) in enumerate(slides, 1):
             start_time = slide_starts[index - 1]
             end_time = slide_starts[index] if index < slide_count else dialogue_end
