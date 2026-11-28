@@ -546,7 +546,13 @@ def _extract_source_sections(material):
             continue
 
         legacy = re.match(r"^([一二三四五六七八九十]+、\s*.+?)\s*$", stripped)
-        if legacy and legacy.group(1) not in sections:
+        # 兼容舊式獨立章節標題，但排除「一、...；二、...」這類正文列點。
+        if (
+            legacy
+            and len(legacy.group(1)) <= 60
+            and not re.search(r"[。；;]", legacy.group(1))
+            and legacy.group(1).strip() not in sections
+        ):
             sections.append(legacy.group(1).strip())
 
     # 舊素材沒有「第X篇」時，以 H2 子章節作覆蓋清單。
