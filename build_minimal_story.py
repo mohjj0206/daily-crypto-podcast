@@ -718,15 +718,28 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label, slide_duration=12
         f'<span>{html.escape(ln)}</span></div>'
         for i, ln in enumerate(lines[:4])
     )
-    metric_markup = "".join(
-        '<div class="metric-card">'
-        f'<div class="metric-label">{html.escape(item["label"])}</div>'
-        f'<div class="metric-value">{html.escape(item["value"])}</div>'
-        f'<div class="metric-detail">{html.escape(item["detail"])}</div>'
-        f'<div class="metric-source">{html.escape(item.get("source") or "")}</div>'
-        '</div>'
-        for item in metrics[:4]
-    )
+    metric_cards = []
+    for metric_index, item in enumerate(metrics[:4]):
+        reveal_at = (
+            float(reveal_seconds[min(metric_index, len(reveal_seconds) - 1)])
+            if reveal_seconds else 0.0
+        )
+        next_reveal = (
+            float(reveal_seconds[metric_index + 1])
+            if metric_index + 1 < len(reveal_seconds)
+            else float(slide_duration)
+        )
+        card_life = max(0.5, next_reveal - reveal_at)
+        metric_cards.append(
+            f'<div class="metric-card" style="--card-delay:{reveal_at:.3f}s;'
+            f'--card-life:{card_life:.3f}s">'
+            f'<div class="metric-label">{html.escape(item["label"])}</div>'
+            f'<div class="metric-value">{html.escape(item["value"])}</div>'
+            f'<div class="metric-detail">{html.escape(item["detail"])}</div>'
+            f'<div class="metric-source">{html.escape(item.get("source") or "")}</div>'
+            '</div>'
+        )
+    metric_markup = "".join(metric_cards)
     metrics_section = f'<div class="metrics">{metric_markup}</div>' if metric_markup else ""
     chart_markup = ""
     if chart and chart.get("points"):
@@ -794,7 +807,13 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 20px; margin-top: 32px; min-height: 190px; }}
 .metric-card {{ min-width: 0; padding: 22px 24px; border: 1px solid rgba(125,160,205,.28);
-  border-radius: 18px; background: rgba(9,22,42,.9); }}
+  border-radius: 18px; background: rgba(9,22,42,.9); opacity:0; visibility:hidden;
+  animation:metricPop var(--card-life,3s) ease both; animation-delay:var(--card-delay,0s); }}
+@keyframes metricPop {{
+  0% {{ opacity:0; visibility:hidden; transform:translateY(14px) scale(.98); }}
+  5%,88% {{ opacity:1; visibility:visible; transform:translateY(0) scale(1); }}
+  100% {{ opacity:0; visibility:hidden; transform:translateY(-8px) scale(.99); }}
+}}
 .metric-label {{ color: #9fb4d1; font-size: 24px; font-weight: 700; }}
 .metric-value {{ margin-top: 12px; color: #fbbf24; font-size: 48px; font-weight: 900;
   line-height: 1.12; overflow-wrap: anywhere; }}
