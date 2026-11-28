@@ -3542,16 +3542,17 @@ body::before {{ content:""; position:absolute; inset:-8%;
   linear-gradient(rgba(56,189,248,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.08) 1px,transparent 1px);
   background-size:auto,48px 48px,48px 48px; animation:flow 14s linear infinite; }}
 @keyframes flow {{ to {{ transform:translate3d(48px,24px,0); }} }}
-.tutorial-broll {{ position:absolute; right:36px; top:450px; width:390px; height:1120px;
-  object-fit:cover; border:2px solid rgba(56,189,248,.72); border-radius:24px; }}
-.badge {{ position:absolute; top:70px; left:50px; right:50px; color:#f59e0b; font-size:40px; font-weight:800; }}
-h1 {{ position:absolute; top:160px; left:50px; right:480px; font-size:68px; line-height:1.2; }}
-.deck {{ position:absolute; left:50px; right:480px; top:460px; height:900px; }}
+.tutorial-broll {{ position:absolute; inset:0; width:100%; height:100%;
+  object-fit:cover; z-index:0; opacity:.76; }}
+body::after {{ content:""; position:absolute; inset:0; z-index:1; background:rgba(3,8,18,.36); }}
+.badge {{ position:absolute; top:70px; left:50px; right:50px; z-index:2; color:#f59e0b; font-size:40px; font-weight:800; }}
+h1 {{ position:absolute; top:160px; left:50px; right:50px; z-index:2; font-size:68px; line-height:1.2; }}
+.deck {{ position:absolute; left:50px; right:50px; top:460px; height:900px; z-index:2; }}
 article {{ position:absolute; inset:0; display:grid; place-items:center; padding:48px; border-radius:36px;
   background:rgba(15,23,42,.92); border:4px solid #f59e0b; font-size:64px; font-weight:800; text-align:center;
   opacity:0; animation:card {duration:.2f}s linear forwards; }}
 @keyframes card {{ 4%,22% {{ opacity:1; transform:scale(1); }} 0%,28%,100% {{ opacity:0; transform:scale(.94); }} }}
-.host {{ position:absolute; bottom:90px; width:240px; height:240px; border-radius:50%; object-fit:cover; background:#111827; }}
+.host {{ position:absolute; bottom:90px; z-index:3; width:240px; height:240px; border-radius:50%; object-fit:cover; background:#111827; }}
 .host.cat {{ left:150px; }}
 .host.dog {{ right:150px; }}
 .host.talk {{ opacity:0; animation:speak linear 1; }}
@@ -3707,7 +3708,7 @@ def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_second
         browser = playwright.chromium.launch()
         try:
             if not broll_engine._api_key():
-                raise RuntimeError("Tutorial video requires PIXABAY_API_KEY.")
+                print("[Tutorial] 未設定 PIXABAY_API_KEY；改用原生動態背景，不中斷製片。")
             for index, card in enumerate(cards, 1):
                 markup = chart_markup if card.get("layout") == "chart" else ""
                 query = presentation.assign_broll_query({
@@ -3715,11 +3716,13 @@ def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_second
                     "body": " ".join(str(card.get(key) or "") for key in ("headline", "myth", "truth")),
                     "layout": "",
                 })
-                broll_path = broll_engine.fetch_pixabay_broll(query, broll_engine.HORIZONTAL)
+                try:
+                    broll_path = broll_engine.fetch_pixabay_broll(query, broll_engine.HORIZONTAL)
+                except Exception as error:
+                    print(f"[Tutorial] 第 {index} 張 Pixabay 素材取得失敗，改用動態背景：{error}")
+                    broll_path = None
                 if not broll_path:
-                    raise RuntimeError(
-                        f"Tutorial card {index} has no new unique Pixabay footage; stopping to prevent reuse."
-                    )
+                    print(f"[Tutorial] 第 {index} 張沒有新 Pixabay 素材，改用動態背景，不重複舊素材。")
                 _record_tutorial_card(
                     browser, index, card, card_durations[index - 1], markup, broll_path
                 )
