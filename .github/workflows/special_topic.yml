@@ -61,7 +61,7 @@ jobs:
           MODE: evergreen
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
           # 排程與一般手動製片預設上傳；手動可關閉，TEST_MODE 會在程式端強制跳過。
-          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_youtube_upload || 'true' }}
+          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && (inputs.enable_youtube_upload && 'true' || 'false') || 'true' }}
           REUSE_SCRIPT: ${{ inputs.reuse_script || 'false' }}
           TARGET_EP_ID: ${{ inputs.target_ep_id || '' }}
           CUSTOM_TOPIC: ${{ inputs.custom_topic || '' }}
