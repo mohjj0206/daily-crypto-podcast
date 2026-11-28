@@ -687,9 +687,9 @@ def _build_custom_prompt(material, prices, target_min_chars=None, target_max_cha
 
 def _parse_story_json(raw_text):
     """解析模型 JSON；容忍 Markdown code fence 與 JSON 前後的說明文字。"""
-    text = str(raw_text or "").strip().lstrip("\\ufeff")
-    text = re.sub(r"^\\s*```(?:json)?\\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\\s*```\\s*$", "", text)
+    text = str(raw_text or "").strip().lstrip("\ufeff")
+    text = re.sub(r"^\s*```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text)
     start = text.find("{")
     if start < 0:
         raise ValueError("模型回應找不到 JSON 物件開頭")
@@ -697,7 +697,7 @@ def _parse_story_json(raw_text):
         payload, _ = json.JSONDecoder().raw_decode(text[start:])
     except json.JSONDecodeError as error:
         absolute_pos = start + error.pos
-        excerpt = text[max(0, absolute_pos - 100):absolute_pos + 140].replace("\\n", " ")
+        excerpt = text[max(0, absolute_pos - 100):absolute_pos + 140].replace("\n", " ")
         raise ValueError(
             f"模型 JSON 格式錯誤：{error.msg}（第 {error.lineno} 行，第 {error.colno} 欄）；"
             f"錯誤附近內容：{excerpt!r}"
@@ -736,7 +736,7 @@ def build_custom_story(material, prices):
 {raw}
 """
             repaired_json = script_writer.call_gemini(
-                STORY_SYSTEM_PROMPT + "\\n\\n" + json_repair_prompt,
+                STORY_SYSTEM_PROMPT + "\n\n" + json_repair_prompt,
                 max_output_tokens=16384,
                 timeout=300,
                 json_mode=True,
