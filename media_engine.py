@@ -796,7 +796,7 @@ def render_animated_slide(idx, slide_data, dur_sec, out_mp4, browser, reveal_tim
             with open(broll_path, "rb") as broll_file:
                 broll_data = base64.b64encode(broll_file.read()).decode("ascii")
             broll_markup = (
-                '<video class="broll-bg" autoplay muted loop playsinline '
+                '<video class="broll-bg" autoplay muted playsinline preload="auto" '
                 f'src="data:video/mp4;base64,{broll_data}"></video>'
                 '<div class="broll-veil"></div>'
             )
@@ -890,8 +890,8 @@ body {{
 .broll-bg {{
   /* Pixabay 影片全畫面作為持續播放的底片。 */
   position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
-  object-fit: cover; opacity: 0; background: #050914;
-  animation: brollInterlude var(--broll-cycle, 18s) linear infinite;
+  object-fit: cover; opacity: 1; background: #050914;
+  animation: none;
 }}
 @keyframes brollInterlude {{
   0%, 68%, 94%, 100% {{ opacity: 0; }}
@@ -2464,8 +2464,12 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                 broll_path = None
                 if broll_query:
                     print(f"[Pixabay B-Roll] 第 {idx} 頁依口播內容搜尋：{broll_query}")
-                    broll_path = broll_engine.fetch_pixabay_broll(
-                        broll_query, orientation=broll_engine.HORIZONTAL
+                    broll_path = broll_engine.fetch_pixabay_broll_reel(
+                        broll_query,
+                        slide_durations[idx - 1],
+                        orientation=broll_engine.HORIZONTAL,
+                        clip_seconds=4.0,
+                        max_clips=4,
                     )
                     if broll_path:
                         print(
@@ -2984,9 +2988,12 @@ def render_short_video(sdata, mdata, config):
         )
 
     # Shorts 9:16 全面優先使用直式實景動態底片。
-    short_broll_path = broll_engine.fetch_pixabay_broll(
+    short_broll_path = broll_engine.fetch_pixabay_broll_reel(
         "cryptocurrency, stock market, abstract technology",
+        short_audio_duration,
         orientation=broll_engine.VERTICAL,
+        clip_seconds=4.0,
+        max_clips=12,
     )
     if not short_broll_path:
         print("[Pixabay B-Roll] Shorts 未取得直式素材，改用既有動態科技背景繼續製作，不中斷成片。")
@@ -3034,8 +3041,8 @@ body {{
 .broll-bg {{
   /* 直式 Pixabay 全螢幕插播，與簡報卡輪流播放。 */
   position:absolute; inset:0; z-index:1; width:100%; height:100%;
-  object-fit:cover; opacity:0;
-  animation:shortBrollInterlude var(--broll-cycle, 18s) linear infinite;
+  object-fit:cover; opacity:1;
+  animation:none;
 }}
  .short-stage.has-broll .brand, .short-stage.has-broll .avatar, .short-stage.has-broll .avatar-placeholder, .short-stage.has-broll .panel {{
   animation:shortSlideInterlude var(--broll-cycle, 18s) linear infinite;
@@ -3308,7 +3315,7 @@ def _tutorial_card_html(card, chart_markup, broll_path=None, card_duration=12.0)
         with open(broll_path, "rb") as handle:
             encoded = base64.b64encode(handle.read()).decode("ascii")
         broll_markup = (
-            '<video autoplay muted loop playsinline '
+            '<video autoplay muted playsinline preload="auto" '
             f'src="data:video/mp4;base64,{encoded}"></video>'
         )
     return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
@@ -3317,10 +3324,10 @@ html,body {{ margin:0; width:1920px; height:1080px; overflow:hidden; background:
   font-family:'Noto Sans CJK TC',sans-serif; }}
 video {{ position:absolute; inset:0; width:100%; height:100%; z-index:0;
   object-fit:cover; border:0; border-radius:0; opacity:.78; }}
-.broll-shade {{ position:absolute; inset:0; z-index:1; background:rgba(3,8,18,.38); }}
+ .broll-shade {{ position:absolute; inset:0; z-index:1; background:rgba(3,8,18,.16); }}
 .safe {{ position:absolute; left:110px; right:110px; top:95px; bottom:150px; z-index:2;
   padding:38px 46px; border:2px solid rgba(214,182,107,.72); border-radius:26px;
-  background:rgba(7,13,26,.78); backdrop-filter:blur(14px);
+  background:rgba(7,13,26,.34); backdrop-filter:blur(7px);
   animation:tutorialDataCard var(--card-duration,12s) linear both; }}
 @keyframes tutorialDataCard {{
   0% {{ opacity:0; }} 1.5%,98% {{ opacity:1; }} 100% {{ opacity:0; }}
@@ -3332,8 +3339,8 @@ h1 {{ margin:12px 0 24px; font-size:54px; line-height:1.25; }}
 .sub {{ font-size:36px; color:#cbd5e1; }}
 .split {{ display:grid; grid-template-columns:1fr 1fr; gap:28px; height:72%; }}
 article {{ border-radius:28px; padding:36px; }}
-.bad {{ background:#3f1218; border:4px solid #ef4444; }}
-.good {{ background:#052e1a; border:4px solid #22c55e; }}
+.bad {{ background:rgba(63,18,24,.58); border:4px solid #ef4444; }}
+.good {{ background:rgba(5,46,26,.58); border:4px solid #22c55e; }}
 small {{ font-size:32px; font-weight:800; }}
 p {{ font-size:40px; line-height:1.35; }}
 .steps {{ list-style:none; margin:0; padding:0; position:relative; }}
@@ -3346,7 +3353,7 @@ p {{ font-size:40px; line-height:1.35; }}
   background:#f59e0b; color:#111827; }}
 .chart-row {{ display:grid; grid-template-columns:1.3fr .7fr; gap:24px; height:100%; }}
 .chart-row img {{ width:100%; height:620px; object-fit:contain; }}
-aside {{ border:4px solid #38bdf8; border-radius:24px; padding:28px; background:#0f172a; }}
+aside {{ border:4px solid #38bdf8; border-radius:24px; padding:28px; background:rgba(15,23,42,.52); }}
 @keyframes glow {{ 50% {{ text-shadow:0 0 42px rgba(245,158,11,.8); }} }}
 @keyframes pop {{ from {{ opacity:0; transform:translateY(16px); }} to {{ opacity:1; transform:none; }} }}
 </style></head><body>{broll_markup}{'<div class="broll-shade"></div>' if broll_markup else ''}<div class="safe" style="--card-duration:{max(0.1, float(card_duration)):.3f}s;"><div class="kicker">{title}</div><h1>{headline}</h1>{body}</div></body></html>"""
@@ -3769,7 +3776,13 @@ def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_second
                     "layout": "",
                 })
                 try:
-                    broll_path = broll_engine.fetch_pixabay_broll(query, broll_engine.HORIZONTAL)
+                    broll_path = broll_engine.fetch_pixabay_broll_reel(
+                        query,
+                        card_durations[index - 1],
+                        orientation=broll_engine.HORIZONTAL,
+                        clip_seconds=4.0,
+                        max_clips=4,
+                    )
                 except Exception as error:
                     print(f"[Tutorial] 第 {index} 張 Pixabay 素材取得失敗，改用動態背景：{error}")
                     broll_path = None
