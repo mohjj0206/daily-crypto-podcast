@@ -3580,8 +3580,8 @@ def _write_broadcast_ass(path, timed_lines, start_time):
 def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5):
     """教學長片：15 秒片頭、25 到 35 張快切圖卡、雙頭像、1.5 秒停頓與 12 秒片尾。"""
     sections = tutorial.get("sections") or []
-    if len(sections) != 5:
-        raise RuntimeError("Tutorial render requires 5 sections.")
+    if not 3 <= len(sections) <= 8:
+        raise RuntimeError("Tutorial render requires 3 to 8 topic-driven sections.")
     cards = tutorial.get("cards") or presentation.build_tutorial_cards(sections, tutorial)
     if not cards:
         raise RuntimeError("Tutorial script has no spoken lines.")
