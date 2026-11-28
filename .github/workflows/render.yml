@@ -95,6 +95,7 @@ jobs:
             *.jpg
             *.png
             *.txt
+            daily_broll_manifest.json
             !avatar.png
             !info.mp4
             !cat_vtober.mp4
