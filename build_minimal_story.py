@@ -968,7 +968,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   const nodes = Array.prototype.slice.call(document.querySelectorAll(".insight"));
   const times = {reveal_json};
   const start = performance.now();
-  // 每頁實景素材只播放一次，最多約 4.2 秒；淡出後停播，避免長頁面反覆循環造成重播感。
+  // 每頁素材由多個 3～5 秒片段串成完整頁面時長；整段播完才淡出，不循環。
   const broll = document.querySelector(".broll");
   if (broll) {{
     const hideBroll = () => {{
@@ -976,7 +976,6 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
       window.setTimeout(() => broll.pause(), 700);
     }};
     broll.addEventListener("ended", hideBroll, {{ once: true }});
-    window.setTimeout(hideBroll, 4200);
   }}
   function apply(active) {{
     for (let i = 0; i < nodes.length; i++) {{
@@ -1732,7 +1731,6 @@ const broll=document.querySelector(".broll");
 if(broll){{
 const hideBroll=()=>{{broll.style.opacity="0";window.setTimeout(()=>broll.pause(),700);}};
 broll.addEventListener("ended",hideBroll,{{once:true}});
-window.setTimeout(hideBroll,4200);
 }}
 function apply(a){{for(let i=0;i<nodes.length;i++){{nodes[i].classList.remove("active","done");
 if(i<a)nodes[i].classList.add("done");else if(i===a)nodes[i].classList.add("active");}}}}
