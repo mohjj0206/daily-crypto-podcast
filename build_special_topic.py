@@ -679,7 +679,11 @@ def _expand_dialogues(dialogues):
         + script
     )
     _, expanded_dialogues = make_dialogues("標題：擴寫\n" + expanded, "")
-    if expanded_dialogues and len(SPECIAL_SLIDE_ANCHOR_INDEXES) == len(original_anchors):
+    if (
+        expanded_dialogues
+        and len(SPECIAL_SLIDE_ANCHOR_INDEXES) == len(original_anchors)
+        and SPECIAL_SLIDE_ANCHOR_TITLES == original_titles
+    ):
         return expanded_dialogues
     SPECIAL_SLIDE_ANCHOR_INDEXES = original_anchors
     SPECIAL_SLIDE_ANCHOR_TITLES = original_titles
@@ -1274,8 +1278,8 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
     chapters.append(f"{outro_start // 60:02d}:{outro_start % 60:02d} 片尾互動與推薦影片")
     description = (
         f"本集【幣看深潛】聚焦 {SUPPORTED_COINS[coin_code]['name']}（{coin_code}），"
-        f"整理公開報導、技術脈絡、生態動態與即時行情。\n\n"
-        f"⏱️ 專題章節（含 12 秒動態片尾）\n{chr(10).join(chapters)}\n\n"
+        f"依本集實際研究主題整理公開報導、技術脈絡與市場證據。\n\n"
+        f"⏱️ 本集章節（含動態片尾）\n{chr(10).join(chapters)}\n\n"
         f"即時價格：{format_price(market['price'])}\n"
         f"24 小時漲跌：{market['change_24h']:+.2f}%\n"
         "本節目僅作公開資訊與市場數據整理，不構成投資建議。加密資產波動劇烈，請自行研究並承擔風險。\n\n"
