@@ -1662,6 +1662,14 @@ def _write_tutorial_publish_bundle(rendered, tutorial, main_video_id):
     """輸出教學線標準化發佈清單 publish_bundle.json。"""
     import youtube_uploader
 
+    with open("tutorial_broll_manifest.json", "w", encoding="utf-8") as handle:
+        json.dump(
+            broll_engine.get_episode_manifest(),
+            handle,
+            ensure_ascii=False,
+            indent=2,
+        )
+
     ep_id = tutorial.get("ep_id", "EP")
     title = f"{presentation.tutorial_badge(ep_id)}｜{tutorial.get('title', '系統教學')}"
     description = (
