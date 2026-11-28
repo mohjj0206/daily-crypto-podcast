@@ -341,7 +341,11 @@ def fill_slide_bodies_from_narration(slides, full_script):
     current_slide = None
     dialogue_index = 0
     anchor_pattern = re.compile(r"\[SLIDE_(\d+)\]")
-    dialogue_pattern = re.compile(r"^(男|女)[：:]\s*(.*)$")
+    # 接受「男：[serious]」、「男 [serious]：」及獨立一行的 [SLIDE_n]。
+    # 不改動錨點順序，也不替缺失錨點補值；只修正模型輸出格式差異造成的漏解析。
+    dialogue_pattern = re.compile(
+        r"^(男|女)\\s*(?:\\[[^\\]]+\\]\\s*)*[：:]\\s*(.*)$"
+    )
     slide_count = len(slides or [])
     anchors = [int(value) for value in anchor_pattern.findall(str(full_script or ""))]
     expected = list(range(1, slide_count + 1))
@@ -352,13 +356,25 @@ def fill_slide_bodies_from_narration(slides, full_script):
         )
 
     for raw_line in str(full_script or "").splitlines():
-        match = dialogue_pattern.match(raw_line.strip())
-        if not match:
+        line = raw_line.strip()
+        if not line:
             continue
-        spoken = match.group(2).strip()
-        anchor_match = anchor_pattern.search(spoken)
+
+        # 模型有時會把錨點獨立輸出，先更新目前頁面，再解析本行或下一行口播。
+        anchor_match = anchor_pattern.search(line)
         if anchor_match:
             current_slide = int(anchor_match.group(1))
+            line = anchor_pattern.sub("", line).strip()
+
+        match = dialogue_pattern.match(line)
+        if not match:
+            continue
+
+        spoken = match.group(2).strip()
+        # 兼容錨點出現在角色標籤之後、口播文字之前的格式。
+        inline_anchor = anchor_pattern.search(spoken)
+        if inline_anchor:
+            current_slide = int(inline_anchor.group(1))
             spoken = anchor_pattern.sub("", spoken).strip()
         if not spoken:
             continue
