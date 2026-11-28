@@ -805,7 +805,7 @@ def load_cached_script():
         print(f"[REUSE_SCRIPT] 快取讀取失敗，改走正常產稿：{error}")
         return None
     required = (
-        "part1_raw", "part2_raw", "full_script", "ai_title", "video_title",
+        "script_structure_version", "part1_raw", "part2_raw", "full_script", "ai_title", "video_title",
         "slide_news_details", "slide_news", "slide_24h_conditions",
         "dca_slide_caption", "dca_slide_body",
     )
@@ -1424,6 +1424,7 @@ def generate_script(mdata, dca_data, config):
     opening_hook = editorial_brief.get("opening_hook") or _opening_hook(full_script)
 
     result = {
+        "script_structure_version": 2,
         "part1_raw": part1_raw,
         "part2_raw": part2_raw,
         "part3_raw": part3_raw,
@@ -1582,6 +1583,7 @@ def _normalize_tutorial(payload, lesson):
         "series": lesson.get("series") or "",
         "lesson_title": lesson.get("title") or "",
         "title": sanitize_text(payload.get("title") or lesson.get("title") or "系統教學"),
+        "structure_version": 2,
         "sections": sections,
         "short_script": short_script,
         "short_lines": short_lines,
@@ -1605,7 +1607,7 @@ def _load_tutorial_cache():
             cached = json.load(handle)
     except (OSError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(cached, dict) or not 3 <= len(cached.get("sections") or []) <= 8:
+    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 3 <= len(cached.get("sections") or []) <= 8:
         return None
     print("[REUSE_SCRIPT] 使用 cache_last_tutorial_script.json，教學稿不呼叫 Gemini。")
     return cached
