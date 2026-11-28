@@ -382,7 +382,13 @@ def fetch_pixabay_broll_reel(
             remaining = target_duration - elapsed
             if remaining <= 0:
                 break
-            segment_duration = min(clip_seconds, remaining)
+            try:
+                source_duration = float(hit.get("duration") or clip_seconds)
+            except (TypeError, ValueError):
+                source_duration = clip_seconds
+            segment_duration = min(clip_seconds, remaining, source_duration)
+            if segment_duration < 1.5:
+                continue
             segment_path = os.path.join(work, f"segment_{index:02d}.mp4")
             command = [
                 "ffmpeg", "-y", "-i", source_path,
