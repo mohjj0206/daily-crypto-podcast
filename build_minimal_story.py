@@ -685,6 +685,31 @@ def _build_custom_prompt(material, prices, target_min_chars=None, target_max_cha
 """
 
 
+def _extract_source_section_blocks(material, section_titles):
+    """只擷取指定的一級篇章原文，供缺漏內容定向補寫，避免重送整份研究稿。"""
+    wanted = {str(title).strip() for title in (section_titles or [])}
+    blocks = []
+    current_title = None
+    current_lines = []
+
+    def flush():
+        if current_title and current_lines:
+            blocks.append("\\n".join(current_lines).strip())
+
+    for line in (material or "").splitlines():
+        heading = re.match(r"^#\\s+(.+?)\\s*$", line.strip())
+        if heading:
+            flush()
+            title = heading.group(1).strip()
+            current_title = title if title in wanted else None
+            current_lines = [line] if current_title else []
+        elif current_title:
+            current_lines.append(line)
+
+    flush()
+    return "\\n\\n".join(blocks)
+
+
 def _parse_story_json(raw_text):
     """解析模型 JSON；容忍 Markdown code fence 與 JSON 前後的說明文字。"""
     text = str(raw_text or "").strip().lstrip("\ufeff")
@@ -798,51 +823,68 @@ def build_custom_story(material, prices):
         # 若篇章覆蓋不足或口播確實過短，先做定向補強；不因頁數或字數本身卡住。
         repair_attempts = 2
         for repair_index in range(1, repair_attempts + 1):
-            if total >= target_min_chars and not missing_sections:
+            if not missing_sections:
                 break
-            missing_chars = max(0, target_min_chars - total)
             print(
-                f"[Minimal] 第 {repair_index}/{repair_attempts} 次內容補強："
-                f"口播 {total} 字、篇章待補 {len(missing_sections)} 個、"
-                f"字數參考差額 {missing_chars} 字。"
+                f"[Minimal] 第 {repair_index}/{repair_attempts} 次缺漏篇章補寫："
+                f"目前口播 {total} 字、待補篇章 {len(missing_sections)} 個。"
             )
-            repair_prompt = f"""你是《幣看深潛》的資深財經 Podcast 主筆。以下深度研究稿的口播需要補強，請優先修復內容遺漏，不要只增加字數。
+            missing_source = _extract_source_section_blocks(material, missing_sections)
+            existing_outline = [
+                {
+                    "big": slide.get("big", ""),
+                    "source_sections": slide.get("source_sections") or [],
+                    "dialogue": slide.get("dialogue") or [],
+                }
+                for slide in (raw_data.get("slides") or [])
+                if isinstance(slide, dict)
+            ]
+            repair_prompt = f"""你是《幣看深潛》的資深財經 Podcast 主筆。這不是重寫整集，而是為現有逐字稿補上確實遺漏的原稿篇章。
 
-【素材與稿件狀況】
-- 原始研究素材共 {len(material)} 個字元。
-- 目前口播共 {total} 字；參考範圍為 {target_min_chars}～{target_max_chars} 字，尚差 {missing_chars} 字（若已達參考下限，這個差額為零）。
-- 原文主要篇章：{json.dumps(required_sections, ensure_ascii=False)}
-- 程式檢查認為尚未充分呈現的篇章：{json.dumps(missing_sections, ensure_ascii=False)}
+【目前狀況】
+目前完整口播約 {total} 字。下列篇章尚未在口播中獲得充分呈現：
+{json.dumps(missing_sections, ensure_ascii=False)}
 
-【本輪補強任務】
-- 本集依原稿篇幅設定的口播參考範圍為 {target_min_chars}～{target_max_chars} 字；這不是硬性上限。若核心論證尚未完整，即使超過上限也不可刪掉必要內容；若核心論點已完整，不必為湊字擴寫。
-- 若內容確實過度濃縮，請逐一檢查原文一級章節，將尚未在口播中充分解釋的核心論點補進最適合的既有頁面；若核心論點已完整，不必為湊字擴寫。
-- 優先補充：技術如何運作、為何形成該結果、數據能證明與不能證明什麼、風險如何傳導、不同立場的反方論點、對一般使用者與投資人的實際影響。
-- 不要只加形容詞或重複結論；每段新增口播都必須提供新的解釋、推論或具體例子。
-- 保留原本 topic_title、topic_summary、yt_title、broll_keywords、頁面順序與 source_sections；必要時可在既有頁面內增加 dialogue 段落。
-- 頁數完全彈性，不得為湊頁數拆分、複製或重複內容。
-- 不得捏造數字、事件、來源或原素材沒有支持的結論；可用明確標示的假設例子解釋機制，但不可把假設說成真實數據。
-- 保持比特汪與以太喵自然交替對話；新增內容必須能直接口播。
-- 不要把 metrics、lines、chart 的文字計入口播字數；字數只計 opening[].text 與 slides[].dialogue[].text。
-- 僅輸出完整合法 JSON，不要 Markdown、說明或程式碼區塊。
+【補寫規則】
+1. 只處理下方提供的缺漏篇章，不得重複已完成的內容。
+2. 每個缺漏篇章都必須有對應的 source_sections，標題必須逐字使用原文一級篇章標題。
+3. 每個篇章至少提供一段 120～300 字的實質口播；若該章節論證複雜，可更長。不能只念標題、列數字或一句帶過。
+4. 保留原稿的重要數據、推理、案例、反方觀點、限制與作者原本結論；不可自行補造事實。
+5. 可以把緊密相關的篇章合併到同一張新投影片，但每個篇章都必須在該頁 dialogue 中真正解釋。
+6. **請新增補充投影片，不要把缺漏內容硬塞進既有 7 張投影片，也不要重寫或刪除既有投影片。** 頁數完全依內容需要決定。
+7. 新增口播要能自然接續整集論述，維持比特汪與以太喵的自然雙人對話。
+8. 投影片的 big、lines、metrics、chart 必須與新增口播一致；沒有原文證據的數據卡或圖表就留空或省略。
+9. 只輸出合法 JSON，格式為 {{"slides":[{{"big":"...","lines":[],"metrics":[],"chart":null,"source_sections":["原文篇章標題"],"dialogue":[{{"role":"男","text":"..."}}]}}]}}。只包含新增投影片，不要重送原有投影片。
 
-【原始素材】
-{material}
+【既有投影片摘要，避免重複】
+{json.dumps(existing_outline, ensure_ascii=False)}
 
-【目前完整 JSON 稿件】
-{json.dumps(raw_data, ensure_ascii=False)}
+【本輪必須補寫的原文篇章】
+{missing_source}
 """
-            repaired_raw = script_writer.call_gemini(
-                STORY_SYSTEM_PROMPT + "\n\n" + repair_prompt,
+            supplement_raw = script_writer.call_gemini(
+                STORY_SYSTEM_PROMPT + "\\n\\n" + repair_prompt,
                 max_output_tokens=16384,
                 timeout=300,
                 json_mode=True,
             )
-            raw_data = _parse_story_json(repaired_raw)
+            supplement_data = _parse_story_json(supplement_raw)
+            supplement_slides = [
+                slide for slide in (supplement_data.get("slides") or [])
+                if isinstance(slide, dict)
+                and set(slide.get("source_sections") or []).intersection(missing_sections)
+            ]
+            if not supplement_slides:
+                print("[Minimal] 本輪補寫沒有產生帶有正確篇章標記的新投影片。")
+                continue
+
+            raw_data = dict(raw_data)
+            raw_data["slides"] = list(raw_data.get("slides") or []) + supplement_slides
+            repaired_raw = json.dumps(raw_data, ensure_ascii=False)
             story, page_lengths, total, missing_sections = _validate_story_output(repaired_raw)
             print(
-                f"[Minimal] 第 {repair_index} 次補強後："
-                f"口播 {total} 字｜各頁字數 {page_lengths}"
+                f"[Minimal] 第 {repair_index} 次補寫後：新增 {len(supplement_slides)} 頁，"
+                f"口播 {total} 字｜剩餘缺漏篇章 {len(missing_sections)} 個。"
             )
 
         if missing_sections:
