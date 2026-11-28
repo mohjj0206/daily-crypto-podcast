@@ -356,7 +356,7 @@ def build_daily_short_title(sdata):
     return f"{topic}{suffix}"
 
 
-def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today_str, short_title=None):
+def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today_str, short_title=None, description_suffix=""):
     main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
     short_title = str(short_title or "").strip()
     if not short_title:
@@ -366,7 +366,8 @@ def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today
         "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
         f"▶️ 完整 15 分鐘市場解析：{main_video_url}\n\n"
         "本內容為公開資訊整理，不構成投資建議。加密貨幣波動劇烈，請審慎評估風險。\n"
-        "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
+        + (str(description_suffix or "").strip() + "\n" if description_suffix else "")
+        + "#Shorts #比特幣 #BTC #以太幣 #ETH #幣看趨勢"
     )
 
     _write_metadata("Shorts", short_title, short_description, "a")
@@ -452,7 +453,7 @@ def _insert_video(youtube, path, title, description, tags, asset="影片"):
     return _confirm_upload_status(youtube, video_id, asset)
 
 
-def upload_tutorial_video(youtube, rendered, tutorial, is_test):
+def upload_tutorial_video(youtube, rendered, tutorial, is_test, broll_credits=""):
     """上傳教學長片與精華 Shorts，並放進幣看深潛播放清單。"""
     title = f"{presentation.tutorial_badge(tutorial.get('ep_id', 'EP'))}｜{tutorial.get('title', '系統教學')}"
     description = (
@@ -462,6 +463,7 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
         "本集圖表是教學結構示意，不是即時持倉普查，也不構成投資建議。\n"
         "模擬定期定額不是真實成交。加密貨幣波動劇烈，請自行研究。\n\n"
         "⏱️ 章節\n" + "\n".join(rendered.get("chapters") or [])
+        + (("\n\n" + str(broll_credits).strip()) if broll_credits else "")
     )
     _write_metadata("教學長片", title, description, "w")
     if is_test or youtube is None:
@@ -488,7 +490,9 @@ def upload_tutorial_video(youtube, rendered, tutorial, is_test):
     short_description = (
         f"完整教學：https://www.youtube.com/watch?v={video_id}\n"
         f"📊 公開帳本：{LEDGER_URL}\n\n"
-        "結構示意，不構成投資建議。\n#Shorts #幣看深潛 #比特幣"
+        "結構示意，不構成投資建議。"
+        + (("\n\n" + str(broll_credits).strip()) if broll_credits else "")
+        + "\n#Shorts #幣看深潛 #比特幣"
     )
     short_id = _insert_video(
         youtube, rendered["short_path"], short_title, short_description, ["Shorts", "幣看深潛"],
