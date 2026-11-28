@@ -1,4 +1,6 @@
+import json
 import os
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,6 +11,50 @@ import script_writer
 import media_engine
 import youtube_uploader
 import daily_learner
+
+
+def _validate_video_output(path, label):
+    """上傳前確認檔案存在，且同時包含可解碼的影音串流。"""
+    if not path or not os.path.isfile(path):
+        raise RuntimeError(f"{label} 渲染失敗：找不到輸出檔案 {path!r}")
+    size_bytes = os.path.getsize(path)
+    if size_bytes <= 0:
+        raise RuntimeError(f"{label} 渲染失敗：輸出檔案是空檔。")
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration:stream=codec_type",
+            "-of", "json", path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    metadata = json.loads(probe.stdout or "{}")
+    stream_types = {
+        str(stream.get("codec_type") or "")
+        for stream in metadata.get("streams") or []
+    }
+    try:
+        duration = float((metadata.get("format") or {}).get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0 or not {"video", "audio"}.issubset(stream_types):
+        raise RuntimeError(
+            f"{label} 渲染檔不完整：duration={duration:.3f}s，"
+            f"streams={sorted(stream_types)}。拒絕上傳不完整影片。"
+        )
+    result = {
+        "path": os.path.basename(path),
+        "duration_seconds": round(duration, 3),
+        "size_bytes": size_bytes,
+    }
+    print(
+        f"[Render QA] {label} 通過：{result['duration_seconds']:.2f}s，"
+        f"{size_bytes:,} bytes，影音串流完整。"
+    )
+    return result
 
 
 def main():
@@ -76,7 +122,16 @@ def main():
         )
     finally:
         tech_chart_dir.cleanup()
+
+    # 上傳前先確認主片與 Shorts 的影音檔案完整性；技術檔案不合格時禁止上傳。
+    render_validation = {
+        "main": _validate_video_output(main_render.get("output_path"), "每日主片"),
+        "short": _validate_video_output(short_video_path, "每日 Shorts"),
+    }
     audit = daily_learner.audit_episode(sdata.get("full_script", ""), "subs.ass", is_test, sdata)
+    # 內容品質警告與渲染完整性分開記錄；編輯警告不會阻擋已完整的影片產製。
+    audit["render_status"] = "passed"
+    audit["rendered_assets"] = render_validation
 
     # ── 5. 上傳 YouTube、發布留言與播放清單歸類 ───────────────
     yt_title = sdata.get("yt_title") or main_render["video_title"]
