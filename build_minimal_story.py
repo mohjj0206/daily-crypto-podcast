@@ -773,8 +773,8 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   object-fit: cover; z-index: 2; opacity: 0;
   animation: storyBrollInterlude var(--broll-cycle, 18s) linear infinite; }}
 .dark-mask {{ display: none; }}
- .content {{ position: relative; z-index: 3; width: 100%; height: calc(100% - 150px); display: flex; flex-direction: column;
-  animation: storySlideInterlude var(--broll-cycle, 18s) linear infinite; }}
+ .content {{ position: relative; z-index: 3; width: 100%; height: calc(100% - 150px); display: flex; flex-direction: column; }}
+.stage.has-broll .content {{ animation: storySlideInterlude var(--broll-cycle, 18s) linear infinite; }}
 @keyframes storyBrollInterlude {{
   0%, 68%, 94%, 100% {{ opacity: 0; }}
   72%, 90% {{ opacity: 1; }}
@@ -824,7 +824,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
 </style></head>
 <body>
-<div class="stage" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">
+<div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">
   {_broll_background_html(broll_path)}
   <div class="content">
     <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
@@ -1424,8 +1424,8 @@ background:radial-gradient(120% 90% at 50% 20%,#0d1830 0%,#0a1122 45%,#05070f 10
 .broll{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;opacity:0;
 animation:storyShortBroll var(--broll-cycle,18s) linear infinite;}}
 .dark-mask{{display:none;}}
-.center{{position:absolute;left:4%;top:46%;transform:translateY(-50%);width:92%;text-align:center;z-index:3;
-animation:storyShortSlide var(--broll-cycle,18s) linear infinite;}}
+.center{{position:absolute;left:4%;top:46%;transform:translateY(-50%);width:92%;text-align:center;z-index:3;}}
+.stage.has-broll .center{{animation:storyShortSlide var(--broll-cycle,18s) linear infinite;}}
 @keyframes storyShortBroll{{0%,68%,94%,100%{{opacity:0;}}72%,90%{{opacity:1;}}}}
 @keyframes storyShortSlide{{0%,68%,94%,100%{{opacity:1;}}72%,90%{{opacity:0;}}}}
 .big{{color:#fbbf24;font-size:88px;font-weight:900;line-height:1.12;margin-bottom:70px;
@@ -1436,7 +1436,7 @@ transition:color .5s,opacity .5s,text-shadow .5s,transform .5s;}}
 .line.active{{color:#fff;opacity:1;transform:scale(1.05);
 text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
 .line.done{{color:#3b4656;opacity:.5;}}
-</style></head><body><div class="stage" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">{broll_markup}<div class="center">
+</style></head><body><div class="stage{' has-broll' if broll_path and os.path.exists(broll_path) else ''}" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">{broll_markup}<div class="center">
 <div class="big">{big}</div><div class="lines">{line_markup}</div></div></div>
 <script>(function(){{
 const nodes=[].slice.call(document.querySelectorAll(".line"));const times={reveal_json};
