@@ -596,8 +596,9 @@ def _section_covered_by_content(title, slides):
             spoken_chars += len(spoken)
     content = " ".join(str(value) for value in fragments).lower()
     matched = sorted(keyword for keyword in keywords if keyword in content)
-    # 章節至少要有實際口播篇幅，且出現多個主題詞；只有標題標籤不算講過。
-    return spoken_chars >= 100 and len(matched) >= min(3, len(keywords)), matched
+    # 章節必須有實際口播篇幅，且至少命中一個章節主題詞；中文標題常由少數複合詞構成，
+    # 要求 3 個重疊雙字詞會把真正講到的章節誤判為缺漏。source_sections 仍須逐字標記。
+    return spoken_chars >= 120 and len(matched) >= 1, matched
 
 
 def _custom_target_range(material):
