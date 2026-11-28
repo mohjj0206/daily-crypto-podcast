@@ -1498,20 +1498,7 @@ def generate_script(mdata, dca_data, config):
     if not is_test:
         _log_length_gate(_spoken_chars(full_script), "每日動態主題逐字稿")
 
-    # ── 後處理與整合 ──────────────────────────────────────────────────────
-    act1_raw = silence_gap_leaks(normalize_long_term_terms(act1_text))
-    act2_raw = silence_gap_leaks(normalize_long_term_terms(act2_text))
-    act3_raw = silence_gap_leaks(normalize_long_term_terms(act3_text))
-
-    full_script = f"{act1_raw}\n{act2_raw}\n{act3_raw}"
-    full_script = _ensure_slide_anchors(full_script, slide_count)
-
-    total_chars = _spoken_chars(full_script)
-    print(f"=== 三幕式深度逐字稿生成完成！總字數：{total_chars} 繁中字 ===")
-    print(f"（第一幕：{_spoken_chars(act1_raw)} 字，第二幕：{_spoken_chars(act2_raw)} 字，第三幕：{_spoken_chars(act3_raw)} 字）")
-    if not is_test:
-        _log_length_gate(total_chars, "每日三幕深度逐字稿")
-
+    # ── 後處理與整合：沿用上方已完成錨點驗收的完整逐字稿 ────────────────
     slide_news_details = _pad_slide_news(editorial_brief.get("slide_news"), mdata)
     for item in slide_news_details:
         item["slide_title"] = silence_gap_leaks(item.get("slide_title"))
