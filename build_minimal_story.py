@@ -965,12 +965,50 @@ def concat_audio(files, out_name):
     return out_name
 
 
-def distribute_reveal(n_lines, total_dur):
-    """把整頁音檔秒數依序分配給每一行，回傳每行揭示的累積秒數。"""
+def distribute_reveal(n_lines, total_dur, dialogue_segments=None):
+    """依實際 TTS 句長與文字長度安排重點揭示，不再把整頁秒數平均切分。
+
+    dialogue_segments: [(spoken_text, actual_tts_duration), ...]。
+    視覺重點仍依序呈現，但揭示點會落在相應口播進度附近。
+    """
     if n_lines <= 0:
         return []
-    per = total_dur / n_lines
-    return [round(per * (i + 1), 3) for i in range(n_lines)]
+    total = max(0.0, float(total_dur))
+    if total <= 0:
+        return []
+    segments = []
+    for item in dialogue_segments or []:
+        try:
+            spoken = str(item[0] or "").strip()
+            duration = max(0.0, float(item[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if spoken and duration > 0:
+            segments.append((len(spoken), duration))
+    if not segments:
+        # 缺少逐句資料時保留安全退化路徑，並明確標示不是語意級同步。
+        return [round(total * (i + 1) / n_lines, 3) for i in range(n_lines)]
+
+    total_chars = sum(chars for chars, _duration in segments)
+    anchors = []
+    for i in range(n_lines):
+        target = total_chars * (i + 1) / n_lines
+        consumed_chars = 0
+        elapsed = 0.0
+        anchor = total
+        for chars, duration in segments:
+            if consumed_chars + chars >= target:
+                fraction = (target - consumed_chars) / max(1, chars)
+                anchor = elapsed + duration * max(0.0, min(1.0, fraction))
+                break
+            consumed_chars += chars
+            elapsed += duration
+        anchors.append(round(max(0.05, min(total, anchor)), 3))
+
+    # 確保時間嚴格遞增，避免多個短重點在同一影格同時觸發。
+    for i in range(1, len(anchors)):
+        anchors[i] = max(anchors[i], round(anchors[i - 1] + 0.08, 3))
+    return [min(total, value) for value in anchors]
 # ── 底部 54pt 自動換行字幕（ASS） ────────────────────────
 def _fmt_ass(seconds):
     seconds = max(0.0, seconds)
@@ -1252,7 +1290,13 @@ def render_main_story(story):
             speaker_intervals["F" if role == "女" else "M"].append((segment_start, segment_end))
             page_audio.append(fn)
         page_audio_path = concat_audio(page_audio, f"story_page_{len(page_data)}.mp3")
-        reveal = distribute_reveal(len(page["lines"]), page_dur)
+        reveal_segments = [
+            (groups[idx][1] if idx < len(groups) else display, dur)
+            for idx, _fn, display, dur in synth
+        ]
+        reveal = distribute_reveal(
+            len(page["lines"]), page_dur, reveal_segments
+        )
         page_data.append(
             {
                 "page": page,
