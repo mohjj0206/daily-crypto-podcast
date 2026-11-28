@@ -1181,8 +1181,8 @@ def create_thumbnail(coin_code, topic_title, market, topic_icon):
 
 
 def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slides, market):
-    if os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() != "true":
-        print("[ENABLE_YOUTUBE_UPLOAD=false] 跳過 YouTube 上傳，保留 output_topic.mp4 與 thumb_topic.jpg。")
+    if IS_TEST or os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() != "true":
+        print("[TEST_MODE 或停用上傳] 跳過 YouTube 上傳，保留 output_topic.mp4 與 thumb_topic.jpg。")
         return
     credentials = Credentials(
         None,
@@ -1240,7 +1240,7 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
 
 
 def run_coin_special():
-    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    enable_yt = (not IS_TEST) and os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() == "true"
     required = ["GEMINI_API_KEY", "GOOGLE_TTS_KEY"]
     if enable_yt:
         required.extend(["YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"])
@@ -1449,7 +1449,7 @@ def main():
     rendered = media_engine.render_tutorial_episode(
         tutorial, chart_path, intro_seconds=15, outro_seconds=12, outro_pause=1.5,
     )
-    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    enable_yt = (not is_test) and os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() == "true"
     # 輸出完整逐字稿到 transcript.txt 供 Releases 與預覽
     try:
         with open("transcript.txt", "w", encoding="utf-8") as f:
