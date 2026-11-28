@@ -91,7 +91,8 @@ def main():
         + f"{main_render['v_desc']}"
     )
     short_title = youtube_uploader.build_daily_short_title(sdata)
-    enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
+    # 正式製片預設上傳；TEST_MODE 永遠只產生預覽，不觸發 YouTube OAuth 或上傳。
+    enable_yt = (not is_test) and os.environ.get("ENABLE_YOUTUBE_UPLOAD", "true").strip().lower() == "true"
     if enable_yt:
         print("[5/5] 上傳至 YouTube 並發布頻道互動...")
         youtube = youtube_uploader.build_youtube_client()
