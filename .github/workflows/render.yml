@@ -14,9 +14,9 @@ on:
         default: false
         type: boolean
       enable_youtube_upload:
-        description: '是否上傳至 YouTube（預設關閉，僅發布至 GitHub Releases latest-preview）'
+        description: '是否上傳至 YouTube（預設開啟；測試模式仍不會上傳）'
         required: false
-        default: false
+        default: true
         type: boolean
 
 jobs:
@@ -46,8 +46,8 @@ jobs:
       - name: Run render and upload script
         env:
           TEST_MODE: ${{ inputs.test_mode || 'false' }}
-          # 手動執行時嚴格遵守 input，false 不得被 Repository Variable 的 true 覆蓋；排程仍沿用 Repository Variable。
-          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_youtube_upload || (github.event_name != 'workflow_dispatch' && vars.ENABLE_YOUTUBE_UPLOAD == 'true') }}
+          # 正式渲染預設自動上傳；手動可明確關閉。測試模式由 Python 端強制跳過上傳。
+          ENABLE_YOUTUBE_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_youtube_upload || 'true' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
@@ -115,7 +115,7 @@ jobs:
           fi
 
       - name: Commit and push DCA ledger
-        # DCA 帳本仍只在正式 YouTube 發布時更新，預覽不寫回帳本。
+        # DCA 帳本只在正式 YouTube 發布時更新，測試或手動關閉上傳時不寫回帳本。
         if: ${{ inputs.test_mode != true && (github.event_name != 'workflow_dispatch' || inputs.enable_youtube_upload == true) }}
         run: |
           git config user.name "github-actions[bot]"
