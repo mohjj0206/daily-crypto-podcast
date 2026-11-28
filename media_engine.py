@@ -2408,9 +2408,12 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                             f"{os.path.basename(broll_path)}"
                         )
                     else:
-                        raise RuntimeError(
-                            f"第 {idx} 頁未取得新的唯一 Pixabay 素材；"
-                            "為避免成片缺少實景或重複使用舊素材，停止主片製作。"
+                        # Pixabay 是畫面加值素材，不是主片必要依賴。
+                        # API 暫時故障、搜尋無結果或下載失敗時，保留本頁原生動態簡報，
+                        # 不重複套用舊素材，也不因此中止整支影片。
+                        print(
+                            f"[Pixabay B-Roll] 第 {idx} 頁未取得素材；"
+                            "本頁改用原生動態簡報繼續渲染，不重複舊素材。"
                         )
 
                 if layout == "versus_clash":
