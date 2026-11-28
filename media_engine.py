@@ -2474,17 +2474,22 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
         f"{broll_stats['requested']}｜失敗 {broll_stats['failed']}｜"
         f"缺少金鑰 {broll_stats['missing_key']}｜覆蓋率 {coverage:.0%}"
     )
+    # 覆蓋率只作為品質觀察，不作為製片阻擋條件。
+    # Pixabay API/金鑰/配額屬外部依賴；失敗時已由每頁原生動態簡報接手。
     if os.environ.get("PIXABAY_API_KEY", "").strip():
-        min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
+        try:
+            min_coverage = float(os.environ.get("PIXABAY_MIN_COVERAGE", "0.5"))
+        except (TypeError, ValueError):
+            min_coverage = 0.5
         if broll_stats["requested"] and coverage < min_coverage:
-            raise RuntimeError(
-                f"主片 Pixabay B-Roll 覆蓋率 {coverage:.0%}，低於最低要求 "
-                f"{min_coverage:.0%}；停止輸出，請檢查 API Key、Pixabay 配額與下載日誌。"
+            print(
+                f"[Pixabay B-Roll] 品質警告：覆蓋率 {coverage:.0%}，"
+                f"低於參考值 {min_coverage:.0%}；不阻擋主片輸出。"
             )
     elif broll_stats["requested"]:
-        raise RuntimeError(
-            "主片有需要實景底片的頁面，但未設定 PIXABAY_API_KEY；"
-            "停止輸出，避免再次產生沒有 Pixabay 畫面的影片。"
+        print(
+            "[Pixabay B-Roll] 品質警告：未設定 PIXABAY_API_KEY；"
+            "本集使用原生動態簡報備援，繼續輸出主片。"
         )
 
     create_outro_frame()
