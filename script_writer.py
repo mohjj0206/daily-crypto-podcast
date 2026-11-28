@@ -1242,7 +1242,7 @@ def generate_script(mdata, dca_data, config):
   "bear_case": "有證據才提出空方論點，否則留空",
   "opening_hook": "若適合才提供開場鉤子，不適合可留空",
   "narrative_flow": "本集動態敘事流程與篇幅分配",
-  "slide_plan": [{"source_slot": 1, "title": "具體標題"}],
+  "slide_plan": [{{"source_slot": 1, "title": "具體標題"}}],
   "slide_news": [],
   "slide_week": []
 }}"""
