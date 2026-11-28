@@ -80,6 +80,7 @@ IS_TEST = os.environ.get("TEST_MODE", "").strip().lower() == "true"
 OUTRO_DURATION = 12.0
 OUTRO_PAUSE = 1.5
 SPECIAL_SLIDE_ANCHOR_INDEXES = {}
+SPECIAL_SLIDE_ANCHOR_TITLES = {}
 SPECIAL_SLIDE_START_TIMES = {}
 GEMINI_MODELS = [
     "gemini-3.8-flash",
@@ -567,14 +568,8 @@ def build_prompts(coin_code, market, trigger, articles):
 【雙人角色與互動】{host_persona_guidance}
 【研究任務】先確認本集真正要回答的研究問題，再依主題選擇必要內容。可視資料與題目相關性分析協議設計、共識與擴容、代幣用途、供給與解鎖、排放與銷毀、質押收益與稀釋、協議費用與收入、價值捕獲、鏈上使用與留存、生態競爭、安全與治理、流動性及宏觀因素；不相關或沒有可靠資料的項目不要硬塞。
 【敘事方式】第一行輸出「標題：」及 32 字內繁體中文標題；之後逐字稿每行只用「女：」或「男：」開頭。自行決定最有說服力的開場、分析順序、篇幅與收束，不必按固定章節或平均分配內容。開場以具體矛盾、反直覺數據或觀眾真正想知道的問題切入；免除冗長制式免責聲明，必要時自然提醒公開資訊分享、不構成投資建議。
-【畫面同步錨點】為讓背景影片上的資料卡精準跟隨口播，請在逐字稿中依序插入以下 6 個獨立標記，每個標記放在第一次開始講述該主題的台詞之前，標記必須獨立成行且不屬於口播：
-[SLIDE_1] 導火線新聞與核心事件
-[SLIDE_2] 幣種定位與代幣用途
-[SLIDE_3] 發展脈絡與歷史時間線
-[SLIDE_4] 技術特性與協議機制
-[SLIDE_5] 生態應用與實際使用
-[SLIDE_6] 當前市場數據（只在本段確實談到時）
-不可為了配合圖卡而改變研究敘事；若某張圖卡內容未在口播中討論，將標記放在最接近且真正相關的解說之前。
+【動態畫面同步錨點】背景影片全程持續播放，資料卡只在口播進入相關主題時浮現。請依本段實際內容自行決定需要幾張資料卡，不套用固定章節、固定順序或固定張數；沒有必要的主題不要做卡。每張卡第一次被口播解說前，插入一行獨立標記，格式為「[SLIDE_1]｜具體短標題」，編號從 1 開始連續遞增。標題必須描述接下來真正要講的事件、機制、數據或問題，不可使用泛稱。
+每張卡的口播區間從該標記後第一句開始，到下一個標記前結束；同一主題持續解說時不要重複插入標記。資料卡內容必須能直接從該區間口播提取，不可為了畫面新增未被講述的數字或結論。
 【專業事實規範】只以提供的新聞、行情與資料為依據；清楚區分已確認事實、合理解釋及未證實推論。重要數字需交代日期、單位、比較基準與統計口徑。鏈上地址不等於真實身份，交易所流出不必然等於累積，TVL 不等於收入，協議收入不必然歸代幣持有人。至少檢查一個有力的替代解釋或反方論據；不得為平衡而捏造反方。沒有資料就縮小結論，不虛構升級、採用、合作或價格預測。禁止朗讀媒體名稱、網址、Markdown、括號舞台指示與時間問候；不得用「休息一下」「下一段」等分段字眼。所有金額使用美元，不出現台幣金額。"""
     p2_prompt = f"""請接續【幣看深潛】專題逐字稿，主角仍是{metadata['name']}（{coin_code}）。
 【篇幅】{target_length}
@@ -584,15 +579,8 @@ def build_prompts(coin_code, market, trigger, articles):
 {context}
 【雙人角色與互動】{host_persona_guidance}
 【接續研究】請先檢查前段已回答的問題與已使用證據，再選擇尚未回答、且對核心結論真正重要的內容深入分析。依主題需要，可討論代幣經濟模型、實際需求、協議收入、價值捕獲、競爭優勢、技術限制、治理、安全、流動性、估值與市場預期；技術指標只在有可靠數據且對本題有解釋力時才納入，不得把 100/200 日均線、RSI 或恐慌指數當成每集必備項目。提出多方與空方最強論據，並說明哪些證據可能推翻目前判斷。
-【畫面同步錨點】在接續逐字稿中依序插入以下 6 個獨立標記，每個標記放在第一次開始講述該主題的台詞之前，標記必須獨立成行且不屬於口播：
-[SLIDE_7] 走勢圖與市場結構（僅在口播實際討論時）
-[SLIDE_8] 多空論據與反方檢驗
-[SLIDE_9] 前景、估值或風險情境
-[SLIDE_10] 第一項可驗證觀察條件
-[SLIDE_11] 第二項可驗證觀察條件
-[SLIDE_12] 第三項可驗證觀察條件
-不可為了配合圖卡而改變研究敘事；標記必須貼近相關口播，沒有資料支持的圖卡不得假裝已被講解。
-逐字稿每行只用「女：」或「男：」開頭。為維持既有圖卡資料介面，結尾仍輸出三行「SLIDE_CONDITION1: ...」「SLIDE_CONDITION2: ...」「SLIDE_CONDITION3: ...」；每一行都必須是本集研究內容可驗證的觀察條件，若某類條件不適用，改寫成真正相關的觀察事項，不得套用預設均線、量價或情緒指標。這三行不是口播內容。不得重複前段新聞與開場，不說分段字眼或時間問候。"""
+【動態畫面同步錨點】先檢查前段已使用的最大錨點編號，從下一個連續編號開始。只在接續研究出現新的、值得獨立視覺呈現的主題時才新增標記；可以新增多張，也可以完全不新增，不得為了達到固定張數而拆分或重複內容。標記格式為「[SLIDE_n]｜具體短標題」，每張卡都必須放在該主題第一次開始解說之前。前後段相同主題必須沿用原卡，不得重複開卡。整集最多 12 張只是程式安全上限，不是目標或最低要求。
+逐字稿每行只用「女：」或「男：」開頭。接續內容要帶來新的證據、機制、反方或結論，不得重複前段新聞與開場；不說分段字眼或時間問候。"""
     return p1_prompt, p2_prompt
 
 
@@ -619,19 +607,27 @@ def default_conditions(coin_code, market):
 
 
 def make_dialogues(part1, part2):
-    global SPECIAL_SLIDE_ANCHOR_INDEXES
+    global SPECIAL_SLIDE_ANCHOR_INDEXES, SPECIAL_SLIDE_ANCHOR_TITLES
     title_match = re.search(r"^標題[：:]\s*(.+)$", part1, re.M)
     title = clean_txt(title_match.group(1)) if title_match else "單一幣種深度專題"
     part1 = re.sub(r"^標題[：:].*(?:\r?\n|$)", "", part1, count=1, flags=re.M)
     full_text = part1.rstrip() + "\n" + part2
     dialogues = []
     SPECIAL_SLIDE_ANCHOR_INDEXES = {}
+    SPECIAL_SLIDE_ANCHOR_TITLES = {}
     for line in full_text.splitlines():
-        anchor = re.match(r"^\[SLIDE_(\d+)\]$", line.strip(), re.I)
+        anchor = re.match(r"^\[SLIDE_(\d+)\](?:\s*[｜|:：-]\s*|\s+)?(.*)$", line.strip(), re.I)
         if anchor:
-            slide_number = int(anchor.group(1))
-            if 1 <= slide_number <= 12:
-                SPECIAL_SLIDE_ANCHOR_INDEXES.setdefault(slide_number, len(dialogues))
+            raw_number = int(anchor.group(1))
+            if len(SPECIAL_SLIDE_ANCHOR_INDEXES) >= 12:
+                print("[Slide Sync] 超過 12 張卡片安全上限，忽略多餘標記。")
+                continue
+            slide_number = len(SPECIAL_SLIDE_ANCHOR_INDEXES) + 1
+            if slide_number not in SPECIAL_SLIDE_ANCHOR_INDEXES:
+                SPECIAL_SLIDE_ANCHOR_INDEXES[slide_number] = len(dialogues)
+                SPECIAL_SLIDE_ANCHOR_TITLES[slide_number] = clean_txt(anchor.group(2))[:42]
+            if raw_number != slide_number:
+                print(f"[Slide Sync] 模型標記編號 {raw_number} 已依實際出現順序校正為 {slide_number}。")
             continue
         match = re.match(r"^(女|男)[：:]\s*(.+)$", line.strip())
         if match:
@@ -640,11 +636,14 @@ def make_dialogues(part1, part2):
                 dialogues.append((match.group(1), spoken))
     if not dialogues:
         raise RuntimeError("Gemini 沒有輸出可供語音合成的對話。")
-    missing = sorted(set(range(1, 13)) - set(SPECIAL_SLIDE_ANCHOR_INDEXES))
-    if missing:
-        print(f"[Slide Sync] 專題稿缺少畫面錨點 {missing}；將使用保守的分段備援時間。")
-    else:
-        print("[Slide Sync] 專題稿 12 個畫面錨點已取得，將依實際口播起點安排資料卡。")
+    if not SPECIAL_SLIDE_ANCHOR_INDEXES:
+        print("[Slide Sync] 專題稿未提供畫面錨點，建立單一全篇主題卡作為安全備援。")
+        SPECIAL_SLIDE_ANCHOR_INDEXES = {1: 0}
+        SPECIAL_SLIDE_ANCHOR_TITLES = {1: title or "本集核心研究問題"}
+    print(
+        f"[Slide Sync] 本集依口播建立 {len(SPECIAL_SLIDE_ANCHOR_INDEXES)} 張動態資料卡；"
+        "不再要求固定 12 張或固定章節。"
+    )
     return title, dialogues
 
 
@@ -653,16 +652,18 @@ def _dialogue_count(dialogues):
 
 
 def _expand_dialogues(dialogues):
-    global SPECIAL_SLIDE_ANCHOR_INDEXES
+    global SPECIAL_SLIDE_ANCHOR_INDEXES, SPECIAL_SLIDE_ANCHOR_TITLES
     original_anchors = dict(SPECIAL_SLIDE_ANCHOR_INDEXES)
-    # 擴寫前把畫面錨點放回逐字稿，避免補稿後資料卡失去與口播的同步位置。
+    original_titles = dict(SPECIAL_SLIDE_ANCHOR_TITLES)
+    # 擴寫前把每張資料卡的標記與標題放回逐字稿，確保補稿後仍能精準同步。
     anchor_by_index = {}
     for slide_number, dialogue_index in SPECIAL_SLIDE_ANCHOR_INDEXES.items():
         anchor_by_index.setdefault(dialogue_index, []).append(slide_number)
     lines = []
     for index, (role, text) in enumerate(dialogues):
         for slide_number in sorted(anchor_by_index.get(index, [])):
-            lines.append(f"[SLIDE_{slide_number}]")
+            slide_title = SPECIAL_SLIDE_ANCHOR_TITLES.get(slide_number, "")
+            lines.append(f"[SLIDE_{slide_number}]｜{slide_title}")
         lines.append(f"{role}：{text}")
     script = "\n".join(lines)
     expanded = call_gemini(
@@ -673,9 +674,10 @@ def _expand_dialogues(dialogues):
         + script
     )
     _, expanded_dialogues = make_dialogues("標題：擴寫\n" + expanded, "")
-    if expanded_dialogues:
+    if expanded_dialogues and len(SPECIAL_SLIDE_ANCHOR_INDEXES) == len(original_anchors):
         return expanded_dialogues
     SPECIAL_SLIDE_ANCHOR_INDEXES = original_anchors
+    SPECIAL_SLIDE_ANCHOR_TITLES = original_titles
     return dialogues
 
 
