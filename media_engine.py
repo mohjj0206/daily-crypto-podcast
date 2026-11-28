@@ -2739,12 +2739,17 @@ def render_short_video(sdata, mdata, config):
         if sdata.get("slide_news_details")
         else "今日市場焦點"
     )
-    today_fng = mdata["today_fng"]
-    fng_num = mdata["fng_num"]
+    today_fng = mdata.get("today_fng")
+    fng_num = mdata.get("fng_num")
+    slide_news_items = sdata.get("slide_news") or []
+    short_summary = next(
+        (str(item).strip() for item in slide_news_items if item and str(item).strip()),
+        "今日市場資料以價格、趨勢與風險指標為主；缺乏新聞摘要時不自行推測事件。",
+    )
     short_news = (
         f"資料抓取時間：{mdata['data_fetched_at']}\n"
         f"頭條：{headline_for_short}\n"
-        f"多空打折摘要：{sdata['slide_news'][0]}\n"
+        f"多空打折摘要：{short_summary}\n"
         f"BTC：{presentation.format_usd(mdata['cur_p'])}，24H {'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%，"
         f"100日均線 {presentation.format_usd(mdata['ma100d'])}，200日均線 {presentation.format_usd(mdata['ma200d'])}，RSI {mdata['btc_rsi']}\n"
         f"ETH：{presentation.format_usd(mdata['spot_prices']['ETH'])}，24H {'+' if mdata['eth_pct'] >= 0 else ''}{mdata['eth_pct']:.2f}%，"
@@ -2876,7 +2881,7 @@ def render_short_video(sdata, mdata, config):
     short_highlight_state = {"remaining": 3}
     short_highlights = [
         highlight_key_numbers(headline_for_short[:34], short_highlight_state),
-        highlight_key_numbers(script_writer.clean_slide_text(sdata["slide_news"][0])[:42], short_highlight_state),
+        highlight_key_numbers(script_writer.clean_slide_text(short_summary)[:42], short_highlight_state),
         "完整市場解析，點擊頻道觀看",
     ]
     highlights_markup = "".join(
@@ -2898,7 +2903,7 @@ def render_short_video(sdata, mdata, config):
         orientation=broll_engine.VERTICAL,
     )
     if not short_broll_path:
-        raise RuntimeError("Main Shorts could not obtain a new unique vertical Pixabay clip.")
+        print("[Pixabay B-Roll] Shorts 未取得直式素材，改用既有動態科技背景繼續製作，不中斷成片。")
     short_broll_markup = ""
     if short_broll_path and os.path.exists(short_broll_path):
         try:
