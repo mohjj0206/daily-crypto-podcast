@@ -1415,7 +1415,8 @@ def run_coin_special():
         subprocess.run(
             [
                 "ffmpeg", "-y", *lead_input,
-                "-vf", lead_filter, "-an", "-t", f"{lead_duration:.4f}",
+                "-filter_complex", lead_filter, "-map", "[v]",
+                "-an", "-t", f"{lead_duration:.4f}",
                 "-r", "24", "-c:v", "libx264", "-preset", "ultrafast",
                 "-crf", "26", "-pix_fmt", "yuv420p", "topic_lead.mp4",
             ],
