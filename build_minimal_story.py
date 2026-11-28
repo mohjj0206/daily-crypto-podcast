@@ -694,10 +694,10 @@ def _extract_source_section_blocks(material, section_titles):
 
     def flush():
         if current_title and current_lines:
-            blocks.append("\\n".join(current_lines).strip())
+            blocks.append("\n".join(current_lines).strip())
 
     for line in (material or "").splitlines():
-        heading = re.match(r"^#\\s+(.+?)\\s*$", line.strip())
+        heading = re.match(r"^#\s+(.+?)\s*$", line.strip())
         if heading:
             flush()
             title = heading.group(1).strip()
@@ -707,7 +707,7 @@ def _extract_source_section_blocks(material, section_titles):
             current_lines.append(line)
 
     flush()
-    return "\\n\\n".join(blocks)
+    return "\n\n".join(blocks)
 
 
 def _parse_story_json(raw_text):
@@ -863,7 +863,7 @@ def build_custom_story(material, prices):
 {missing_source}
 """
             supplement_raw = script_writer.call_gemini(
-                STORY_SYSTEM_PROMPT + "\\n\\n" + repair_prompt,
+                STORY_SYSTEM_PROMPT + "\n\n" + repair_prompt,
                 max_output_tokens=16384,
                 timeout=300,
                 json_mode=True,
