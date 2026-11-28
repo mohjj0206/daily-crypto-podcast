@@ -344,8 +344,8 @@ def build_daily_short_title(sdata):
 
     topic = presentation.sanitize_text(topic)
     topic = re.sub(r"^【幣看趨勢】\\s*", "", topic)
-    topic = re.sub(r"\\s*[（(]\\d{4}年?\\d{1,2}月?\\d{1,2}日?[）)]\\s*$", "", topic)
-    topic = re.sub(r"\\s+", " ", topic).strip(" ｜|：:，,。")
+    topic = re.sub(r"\s*[（(]\d{4}年?\d{1,2}月?\d{1,2}日?[）)]\s*$", "", topic)
+    topic = re.sub(r"\s+", " ", topic).strip(" ｜|：:，,。")
     if not topic:
         raise RuntimeError("無法從當日短片主題產生 Shorts 標題，停止使用無關的行情通用標題。")
 
