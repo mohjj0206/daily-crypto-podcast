@@ -1482,10 +1482,40 @@ def render_main_story(story):
                             validated_broll.add(broll_path)
                 else:
                     print(f"[Minimal] 第 {i + 1} 段未取得 Pixabay 新素材，改用原生動態背景，不重複舊素材。")
-                out = render_slide_video(
-                    i, item["page"], item["dur"], item["reveal"],
-                    broll_path, browser, label,
-                )
+                try:
+                    out = render_slide_video(
+                        i, item["page"], item["dur"], item["reveal"],
+                        broll_path, browser, label,
+                    )
+                except RuntimeError as render_error:
+                    # GitHub runner 偶發在連續錄製多頁後讓 Chromium 整個程序提前退出。
+                    # 只在 Playwright 明確回報 target/browser closed 時重啟並重試當頁一次；
+                    # 一般 HTML、素材或 FFmpeg 錯誤仍直接失敗，避免掩蓋真正問題。
+                    error_text = str(render_error).lower()
+                    if not any(token in error_text for token in (
+                        "targetclosederror", "target page", "browser has been closed",
+                    )):
+                        raise
+                    print(
+                        f"[Minimal] 第 {i + 1} 頁偵測到 Chromium 提前關閉，"
+                        "重新啟動瀏覽器並重試一次。"
+                    )
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+                    browser = playwright.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--autoplay-policy=no-user-gesture-required",
+                        ],
+                    )
+                    out = render_slide_video(
+                        i, item["page"], item["dur"], item["reveal"],
+                        broll_path, browser, label,
+                    )
                 slide_videos.append(out)
                 broll_manifest.append({
                     "slide": i + 1,
@@ -1514,7 +1544,13 @@ def render_main_story(story):
                 f"使用 {len(validated_broll)} 支已驗證影片；各頁資訊卡依口播時段顯示。"
             )
         finally:
-            browser.close()
+            try:
+                browser.close()
+            except Exception as close_error:
+                print(
+                    "[Minimal] Chromium 結束時已關閉，略過重複 close："
+                    f"{type(close_error).__name__}: {close_error}"
+                )
 
     # 3. 拼接語音 + 片尾停頓 + 片尾音樂。
     media_engine.create_outro_audio(OUTRO_DURATION, OUTRO_PAUSE)
