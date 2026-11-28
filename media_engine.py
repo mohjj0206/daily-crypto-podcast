@@ -2791,18 +2791,25 @@ def render_short_video(sdata, mdata, config):
     short_target_chars = 45 if is_test else 230
     short_duration_limit = 15.0 if is_test else 60.0
 
-    headline_for_short = (
-        script_writer.clean_slide_title(sdata["slide_news_details"][0]["slide_title"])
-        if sdata.get("slide_news_details")
-        else "今日市場焦點"
-    )
+    headline_for_short = script_writer.clean_slide_title(
+        sdata.get("editorial_lead")
+        or sdata.get("core_conflict")
+        or (
+            sdata["slide_news_details"][0]["slide_title"]
+            if sdata.get("slide_news_details")
+            else "今日市場焦點"
+        )
+    )[:34]
     today_fng = mdata.get("today_fng")
     fng_num = mdata.get("fng_num")
     slide_news_items = sdata.get("slide_news") or []
     short_summary = next(
         (str(item).strip() for item in slide_news_items if item and str(item).strip()),
-        "今日市場資料以價格、趨勢與風險指標為主；缺乏新聞摘要時不自行推測事件。",
+        "本集依核心主軸與已提供數據進行分析，不自行補入未證實事件。",
     )
+    short_core_conflict = str(
+        sdata.get("core_conflict") or sdata.get("editorial_lead") or short_summary
+    ).strip()
     short_news = (
         f"資料抓取時間：{mdata['data_fetched_at']}\n"
         f"頭條：{headline_for_short}\n"
@@ -2939,7 +2946,7 @@ def render_short_video(sdata, mdata, config):
     short_highlight_state = {"remaining": 3}
     short_highlights = [
         highlight_key_numbers(headline_for_short[:34], short_highlight_state),
-        highlight_key_numbers(script_writer.clean_slide_text(short_summary)[:42], short_highlight_state),
+        highlight_key_numbers(script_writer.clean_slide_text(short_core_conflict)[:42], short_highlight_state),
         "完整市場解析，點擊頻道觀看",
     ]
     highlights_markup = "".join(
@@ -3097,15 +3104,9 @@ body {{
 <header class="brand">【幣看趨勢】｜每日市場快訊</header>
 {avatar_markup}
 <main class="panel">
-  <div class="eyebrow">BTC 即時價格</div>
-  <div class="symbol">BITCOIN　BTC</div>
-  <div class="price">{presentation.format_usd(mdata['cur_p'])}</div>
-  <section class="stats">
-    <div class="stat"><strong>{mdata['btc_pct']:+.2f}%</strong><small>BTC 24H</small></div>
-    <div class="stat"><strong>{presentation.format_usd(mdata['spot_prices']['ETH'])}</strong><small>ETH 現價</small></div>
-    <div class="stat"><strong>{mdata['eth_pct']:+.2f}%</strong><small>ETH 24H</small></div>
-    {fear_stat}
-  </section>
+  <div class="eyebrow">本集核心主題</div>
+  <div class="symbol">{html.escape(headline_for_short)}</div>
+  <div class="price" style="font-size:46px;line-height:1.2;">{html.escape(short_core_conflict[:38])}</div>
   <ul class="points">{highlights_markup}</ul>
 </main>
 </div>
