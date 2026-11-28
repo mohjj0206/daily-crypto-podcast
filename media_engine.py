@@ -3125,7 +3125,7 @@ def _tutorial_intro_and_outro(intro_seconds, outro_seconds, outro_pause):
     return intro_dur, has_intro
 
 
-def _tutorial_card_html(card, chart_markup):
+def _tutorial_card_html(card, chart_markup, broll_path=None):
     layout = card.get("layout") or "impact"
     title = html.escape(str(card.get("title") or ""))
     headline = html.escape(str(card.get("headline") or ""))
@@ -3147,11 +3147,22 @@ def _tutorial_card_html(card, chart_markup):
         body = f'<div class="chart-row">{chart_markup}<aside><p>{truth}</p></aside></div>'
     else:
         body = f'<p class="giant">{headline}</p><p class="sub">{truth}</p>'
+    broll_markup = ""
+    if broll_path and os.path.isfile(broll_path):
+        with open(broll_path, "rb") as handle:
+            encoded = base64.b64encode(handle.read()).decode("ascii")
+        broll_markup = (
+            '<video autoplay muted loop playsinline '
+            f'src="data:video/mp4;base64,{encoded}"></video>'
+        )
     return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
 <style>
 html,body {{ margin:0; width:1920px; height:1080px; overflow:hidden; background:#070b14; color:#f8fafc;
   font-family:'Noto Sans CJK TC',sans-serif; }}
-.safe {{ position:absolute; left:300px; right:300px; top:70px; bottom:290px; }}
+video {{ position:absolute; right:70px; top:150px; bottom:300px; width:30%; height:auto;
+  object-fit:cover; border:2px solid rgba(56,189,248,.72); border-radius:18px;
+  box-shadow:0 0 34px rgba(56,189,248,.22); }}
+.safe {{ position:absolute; left:180px; right:35%; top:70px; bottom:290px; }}
 .kicker {{ color:#f59e0b; font-size:34px; font-weight:800; }}
 h1 {{ margin:12px 0 24px; font-size:54px; line-height:1.25; }}
 .giant {{ margin:20px 0; font-size:92px; font-weight:900; line-height:1.15; color:#fff7ed;
@@ -3176,10 +3187,10 @@ p {{ font-size:40px; line-height:1.35; }}
 aside {{ border:4px solid #38bdf8; border-radius:24px; padding:28px; background:#0f172a; }}
 @keyframes glow {{ 50% {{ text-shadow:0 0 42px rgba(245,158,11,.8); }} }}
 @keyframes pop {{ from {{ opacity:0; transform:translateY(16px); }} to {{ opacity:1; transform:none; }} }}
-</style></head><body><div class="safe"><div class="kicker">{title}</div><h1>{headline}</h1>{body}</div></body></html>"""
+</style></head><body>{broll_markup}<div class="safe"><div class="kicker">{title}</div><h1>{headline}</h1>{body}</div></body></html>"""
 
 
-def _record_tutorial_card(browser, index, card, duration, chart_markup):
+def _record_tutorial_card(browser, index, card, duration, chart_markup, broll_path=None):
     record_seconds = min(float(duration), 4.0)
     remaining = max(0.0, float(duration) - record_seconds)
     tpad = f",tpad=stop_mode=clone:stop_duration={remaining:.6f}" if remaining else ""
@@ -3192,7 +3203,7 @@ def _record_tutorial_card(browser, index, card, duration, chart_markup):
         page = context.new_page()
         video = page.video
         try:
-            page.set_content(_tutorial_card_html(card, chart_markup), wait_until="load")
+            page.set_content(_tutorial_card_html(card, chart_markup, broll_path), wait_until="load")
             page.wait_for_timeout(max(1, round(record_seconds * 1000)))
         finally:
             context.close()
@@ -3534,12 +3545,27 @@ def render_tutorial_episode(tutorial, chart_path, intro_seconds=15, outro_second
         with open(chart_path, "rb") as chart_file:
             encoded = base64.b64encode(chart_file.read()).decode("ascii")
         chart_markup = f'<img alt="" src="data:image/png;base64,{encoded}">'
+    broll_engine.reset_episode_rotation()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
+            if not broll_engine._api_key():
+                raise RuntimeError("Tutorial video requires PIXABAY_API_KEY.")
             for index, card in enumerate(cards, 1):
                 markup = chart_markup if card.get("layout") == "chart" else ""
-                _record_tutorial_card(browser, index, card, card_durations[index - 1], markup)
+                query = presentation.assign_broll_query({
+                    "title": card.get("title", ""),
+                    "body": " ".join(str(card.get(key) or "") for key in ("headline", "myth", "truth")),
+                    "layout": "",
+                })
+                broll_path = broll_engine.fetch_pixabay_broll(query, broll_engine.HORIZONTAL)
+                if not broll_path:
+                    raise RuntimeError(
+                        f"Tutorial card {index} has no new unique Pixabay footage; stopping to prevent reuse."
+                    )
+                _record_tutorial_card(
+                    browser, index, card, card_durations[index - 1], markup, broll_path
+                )
         finally:
             browser.close()
     with open("tutorial_video.txt", "w", encoding="utf-8") as handle:
