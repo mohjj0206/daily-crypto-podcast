@@ -880,7 +880,7 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
         except json.JSONDecodeError:
             pass
 
-    title = str(payload.get("title") or "").strip() or "主流幣均線攻防與深度籌碼拆解"
+    title = str(payload.get("title") or "").strip() or str(payload.get("editorial_lead") or "").strip()[:32] or "加密市場焦點調查"
     editorial_lead = silence_gap_leaks(sanitize_text(payload.get("editorial_lead") or "")).strip() or "多空博弈白熱化，從結構看清表面雜訊"
     core_conflict = silence_gap_leaks(sanitize_text(payload.get("core_conflict") or "")).strip()
     smart_money_intent = silence_gap_leaks(sanitize_text(payload.get("smart_money_intent") or "")).strip()
@@ -993,18 +993,21 @@ def _generate_yt_title(mdata, editorial_brief, full_script, is_test):
 
 
 def _generate_yt_highlights(mdata, editorial_brief, slide_titles, is_test):
-    """生成 3 個核心懸念看點，作為說明欄前 3 行。"""
+    """依本集核心主軸與實際分鏡生成說明欄看點，不強制塞入行情或預測。"""
     highlights = []
     core_conflict = editorial_brief.get("core_conflict", "")
+    editorial_lead = editorial_brief.get("editorial_lead", "")
     if core_conflict:
-        highlights.append(f"核心矛盾：{core_conflict[:60]}")
-    cur_p = mdata.get("cur_p", 0)
-    btc_pct = mdata.get("btc_pct", 0)
-    highlights.append(f"BTC {format_usd(cur_p)}（24H {btc_pct:+.2f}%），{'撐住' if btc_pct >= 0 else '失守'}關鍵均線")
-    if slide_titles and len(slide_titles) > 3:
-        highlights.append(f"本集重點：{slide_titles[3][:50]}")
-    elif len(highlights) < 3:
-        highlights.append("未來 24 小時關鍵條件推演與風險提示")
+        highlights.append(f"核心問題：{core_conflict[:60]}")
+    elif editorial_lead:
+        highlights.append(f"本集主軸：{editorial_lead[:60]}")
+
+    for title in slide_titles or []:
+        if title and not any(title[:18] in item for item in highlights):
+            highlights.append(f"本集拆解：{title[:50]}")
+        if len(highlights) == 3:
+            break
+
     return highlights[:3]
 
 
@@ -1356,9 +1359,9 @@ def generate_script(mdata, dca_data, config):
         for item in slide_news_details
     ]
 
-    ai_title = silence_gap_leaks(sanitize_text(editorial_brief.get("title") or f"BTC {format_usd(cur_p)}｜主流幣均線攻防與深度籌碼拆解"))
+    ai_title = silence_gap_leaks(sanitize_text(editorial_brief.get("title") or editorial_lead or "加密市場焦點調查"))
     if not ai_title:
-        ai_title = f"BTC {format_usd(cur_p)}｜主流幣均線攻防與深度籌碼拆解"
+        ai_title = editorial_lead or "加密市場焦點調查"
     video_title = f"【幣看趨勢】{ai_title} ({today_str})"
 
     slide_24h_conditions = _pad_slide_week(editorial_brief.get("slide_week"), mdata)
