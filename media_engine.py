@@ -888,16 +888,15 @@ body {{
   animation: gridFlow 16s linear infinite;
 }}
 .broll-bg {{
-  position: absolute; inset: 0; z-index: 0;
-  width: 100%; height: 100%; object-fit: cover;
-  transform: scale(1.06);
+  /* Pixabay 獨立展示區：與簡報左右分欄，禁止被簡報卡片覆蓋。 */
+  position: absolute; right: 48px; top: 110px; bottom: 350px; z-index: 4;
+  width: 30%; height: auto; object-fit: cover;
+  border: 2px solid rgba(56,189,248,.72); border-radius: 18px;
+  box-shadow: 0 0 34px rgba(56,189,248,.22);
+  background: #050914;
 }}
 .broll-veil {{
-  position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  /* 保留暗色文字可讀性，但不可把 Pixabay 影像幾乎整層蓋掉。 */
-  background:
-    radial-gradient(ellipse at 50% 42%, rgba(7,11,20,.22), rgba(7,11,20,.48) 78%),
-    rgba(7, 11, 20, .30);
+  display: none;
 }}
 .ticker {{
   position: absolute; inset: 0 0 auto; z-index: 2; height: 84px;
@@ -927,7 +926,7 @@ body {{
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }}
 .frame {{
-  position: absolute; left: 48px; right: 48px; top: 110px; bottom: 350px;
+  position: absolute; left: 48px; right: 34%; top: 110px; bottom: 350px;
   z-index: 3;
   padding: 24px 36px; border: 2px solid rgba(251,191,36,.72);
   border-radius: 18px; background: rgba(11,17,32,.9);
@@ -2347,7 +2346,7 @@ def render_main_video(sdata, mdata, dca_data, chart_paths, config):
                     or planned_item.get("broll_query", "")
                 )
                 broll_path = None
-                if broll_query and layout != "chart_spotlight":
+                if broll_query:
                     print(f"[Pixabay B-Roll] 第 {idx} 頁依口播內容搜尋：{broll_query}")
                     broll_path = broll_engine.fetch_pixabay_broll(
                         broll_query, orientation=broll_engine.HORIZONTAL
