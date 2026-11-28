@@ -2980,7 +2980,7 @@ body {{
 @keyframes fadeInUp {{ from {{ opacity:0; transform:translateY(20px); }} to {{ opacity:1; transform:translateY(0); }} }}
 </style></head>
 <body>
-<div class="short-stage" style="--broll-cycle:{max(12.0, float(render_duration)):.3f}s;">
+<div class="short-stage" style="--broll-cycle:{max(12.0, float(15.0 if is_test else short_audio_duration)):.3f}s;">
 {short_broll_markup}
 <header class="brand">【幣看趨勢】｜每日市場快訊</header>
 {avatar_markup}
