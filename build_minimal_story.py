@@ -974,6 +974,7 @@ def render_slide_video(idx, slide, dur_sec, reveal_seconds, broll_path, browser,
         )
         page = context.new_page()
         video = page.video
+        render_error = None
         try:
             page.set_content(html_doc, wait_until="load")
             page.evaluate("() => document.fonts.ready.then(() => true)")
@@ -990,9 +991,34 @@ def render_slide_video(idx, slide, dur_sec, reveal_seconds, broll_path, browser,
                 )
                 print(f"[Minimal] 已確認 Pixabay 影片正在播放：{os.path.basename(broll_path)}")
             page.wait_for_timeout(max(1, round(record_seconds * 1000)))
+        except Exception as error:
+            render_error = error
         finally:
-            context.close()
-        recording_path = video.path()
+            # Chromium 偶發自行關閉 page/context 時，close() 會拋出
+            # TargetClosedError；不可讓清理例外覆蓋真正的錄影結果或原始錯誤。
+            try:
+                context.close()
+            except Exception as close_error:
+                print(
+                    f"[Minimal] Playwright Context 已先行關閉，略過重複 close："
+                    f"{type(close_error).__name__}: {close_error}"
+                )
+        if render_error is not None:
+            raise RuntimeError(
+                f"[Minimal] 第 {idx + 1} 頁瀏覽器錄影失敗："
+                f"{type(render_error).__name__}: {render_error}"
+            ) from render_error
+        try:
+            recording_path = video.path()
+        except Exception as error:
+            raise RuntimeError(
+                f"[Minimal] 第 {idx + 1} 頁錄影檔無法完成："
+                f"{type(error).__name__}: {error}"
+            ) from error
+        if not os.path.isfile(recording_path) or os.path.getsize(recording_path) <= 0:
+            raise RuntimeError(
+                f"[Minimal] 第 {idx + 1} 頁錄影檔不存在或為空：{recording_path}"
+            )
         filters = (
             f"fps={FPS},scale={MAIN_W}:{MAIN_H}:flags=lanczos,"
             f"trim=duration={record_seconds:.6f},setpts=PTS-STARTPTS{tpad},format=yuv420p"
