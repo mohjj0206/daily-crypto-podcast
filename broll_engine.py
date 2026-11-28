@@ -449,28 +449,32 @@ def fetch_pixabay_broll_reel(
         if elapsed + 0.05 < target_duration:
             fallback_path = os.path.join(work, "motion_fallback.mp4")
             remainder = target_duration - elapsed
-            subprocess.run(
-                [
-                    "ffmpeg", "-y", "-f", "lavfi", "-i",
-                    f"color=c=#07101f:s={width}x{height}:r=24:d={remainder:.3f}",
-                    "-vf",
-                    "drawgrid=width=72:height=72:thickness=1:color=0x355070@0.42,"
-                    "zoompan=z='min(zoom+0.00035,1.04)':d=1:"
-                    f"s={width}x{height}:fps=24,format=yuv420p",
-                    "-an", "-c:v", "libx264", "-preset", "ultrafast",
-                    "-crf", "27", "-pix_fmt", "yuv420p", fallback_path,
-                ],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            with open(list_path, "w", encoding="utf-8") as handle:
-                handle.write(f"file '{concat_path}'\n")
-                handle.write(f"file '{fallback_path}'\n")
-            subprocess.run(
-                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
-                 "-pix_fmt", "yuv420p", reel_path],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-f", "lavfi", "-i",
+                        f"color=c=#07101f:s={width}x{height}:r=24:d={remainder:.3f}",
+                        "-vf",
+                        "drawgrid=width=72:height=72:thickness=1:color=0x355070@0.42,"
+                        "zoompan=z='min(zoom+0.00035,1.04)':d=1:"
+                        f"s={width}x{height}:fps=24,format=yuv420p",
+                        "-an", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-crf", "27", "-pix_fmt", "yuv420p", fallback_path,
+                    ],
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                with open(list_path, "w", encoding="utf-8") as handle:
+                    handle.write(f"file '{concat_path}'\\n")
+                    handle.write(f"file '{fallback_path}'\\n")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+                     "-pix_fmt", "yuv420p", reel_path],
+                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except (OSError, subprocess.CalledProcessError) as error:
+                print(f"[Pixabay B-Roll] 原生動態補尾失敗，保留已取得素材：{error}")
+                os.replace(concat_path, reel_path)
         else:
             os.replace(concat_path, reel_path)
 
