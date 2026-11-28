@@ -90,6 +90,7 @@ def main():
         + (f"⏱️ 章節\n{chapters_block}\n\n" if chapters_block else "")
         + f"{main_render['v_desc']}"
     )
+    short_title = youtube_uploader.build_daily_short_title(sdata)
     enable_yt = os.environ.get("ENABLE_YOUTUBE_UPLOAD", "false").strip().lower() == "true"
     if enable_yt:
         print("[5/5] 上傳至 YouTube 並發布頻道互動...")
@@ -124,7 +125,6 @@ def main():
 
     # 輸出標準化發佈清單，供雲端一鍵發佈腳本（publish_preview_to_youtube.py）使用。
     main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
-    short_title = youtube_uploader.build_daily_short_title(sdata)
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
         "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
