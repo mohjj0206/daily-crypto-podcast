@@ -53,6 +53,7 @@ _MAX_RETRIES = 2
 # 同集輪換狀態：記錄每個版型已用過的清單，避免重複。
 _episode_used = {HORIZONTAL: [], VERTICAL: []}
 _episode_used_ids = set()
+_episode_manifest = []
 
 # 英文保底關鍵字輪替序位（每呼叫一次取下一個，讓每頁底片畫面有變化）。
 _keyword_rotation = {"index": 0}
@@ -78,6 +79,7 @@ def reset_episode_rotation():
     _episode_used[HORIZONTAL] = []
     _episode_used[VERTICAL] = []
     _episode_used_ids.clear()
+    _episode_manifest.clear()
     _keyword_rotation["index"] = 0
     _query_rotation["index"] = 0
     for stats in _episode_stats.values():
@@ -88,6 +90,12 @@ def reset_episode_rotation():
 def get_episode_stats():
     """回傳本集 Pixabay 使用統計，供製片流程檢查實際覆蓋率。"""
     return {orientation: dict(stats) for orientation, stats in _episode_stats.items()}
+
+
+
+def get_episode_manifest():
+    """回傳本集實際採用素材的來源與授權稽核資料。"""
+    return [dict(item) for item in _episode_manifest]
 
 
 def _next_fallback_keyword():
@@ -254,6 +262,23 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
             used.append(video_id)
             _episode_used_ids.add(video_id)
             _episode_stats[orient]["success"] += 1
+            # 保留 Pixabay API 回傳的原始來源資訊，供 YouTube 說明欄與稽核檔使用。
+            _episode_manifest.append({
+                "provider": "Pixabay",
+                "asset_id": str(video_id),
+                "title": str(hit.get("tags") or query).strip(),
+                "creator": str(hit.get("user") or "").strip(),
+                "creator_url": str(hit.get("userImageURL") or "").strip(),
+                "source_url": str(hit.get("pageURL") or "").strip(),
+                "search_query": query,
+                "orientation": orient,
+                "duration_seconds": hit.get("duration"),
+                "tags": str(hit.get("tags") or "").strip(),
+                "local_file": os.path.basename(local),
+                "license": "Pixabay Content License",
+                "license_url": "https://pixabay.com/service/license/",
+                "attribution_required_by_provider": False,
+            })
             print(
                 f"[Pixabay B-Roll] 成功套用實景動態影片：{query} -> "
                 f"{os.path.basename(local)}"
