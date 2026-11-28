@@ -292,6 +292,17 @@ def audit_episode(script, subtitle_path, is_test, sdata=None):
         if splits:
             warnings.append("字幕切斷數字：" + splits[0])
     if isinstance(sdata, dict):
+        yt_title = str(sdata.get("yt_title") or "").strip()
+        if yt_title and not 24 <= len(yt_title) <= 42:
+            warnings.append(f"YouTube 標題長度 {len(yt_title)}，建議控制在 24～42 字")
+        if yt_title and not yt_title.endswith("｜幣看趨勢"):
+            warnings.append("YouTube 標題缺少頻道尾綴")
+        expected_slide_count = sdata.get("slide_count")
+        if isinstance(expected_slide_count, int) and expected_slide_count > 0:
+            anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", text)]
+            expected_anchors = list(range(1, expected_slide_count + 1))
+            if anchors != expected_anchors:
+                warnings.append("逐字稿簡報錨點與實際投影片數量不一致")
         today = _today()
         recent = [row for row in _read_history(today) if _today_delta(today, row["date"]) < 7]
         lead = str(sdata.get("editorial_lead") or "")
@@ -316,10 +327,17 @@ def audit_episode(script, subtitle_path, is_test, sdata=None):
             score -= 20
         elif warning.startswith("找不到字幕"):
             score -= 5
+        elif warning.startswith("YouTube 標題"):
+            score -= 8
         else:
             score -= 15
     score = max(0, min(100, score))
-    audit = {"score": score, "warnings": warnings, "char_count": length}
+    audit = {
+        "score": score,
+        "content_status": "needs_review" if warnings else "passed",
+        "warnings": warnings,
+        "char_count": length,
+    }
     print(f"[daily_learner] 品質自檢 {score}/100" + (f"：{'；'.join(warnings)}" if warnings else ""))
     return audit
 
