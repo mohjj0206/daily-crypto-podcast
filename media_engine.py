@@ -3066,6 +3066,10 @@ body {{
 .short-stage.has-broll .avatar,
 .short-stage.has-broll .avatar-placeholder,
 .short-stage.has-broll .panel {{ animation:none !important; }}
+.short-stage.has-broll .panel {{
+  background:rgba(15,23,42,.46) !important;
+  backdrop-filter:blur(6px);
+}}
 .broll-veil {{ display:none; }}
 .brand {{
   position:absolute; top:24px; width:100%; text-align:center; z-index:3;
