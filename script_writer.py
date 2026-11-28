@@ -1403,6 +1403,15 @@ def generate_script(mdata, dca_data, config):
 
     brief_raw = call_gemini(brief_prompt, max_output_tokens=8192, timeout=120, json_mode=True)
     editorial_brief = _parse_editorial_brief(brief_raw, mdata, slide_count)
+    script_slide_titles = align_slide_titles(
+        editorial_brief.get("slide_titles"),
+        [slide["title"] for slide in visual_plan],
+    )
+    for slide, title in zip(visual_plan, script_slide_titles):
+        slide["title"] = title
+    slide_anchors = "；".join(
+        f"[SLIDE_{index}]{slide['title']}" for index, slide in enumerate(visual_plan, 1)
+    )
     print(f"[總編輯定調完成] 標題：{editorial_brief['title']} ｜ 核心主軸：{editorial_brief['editorial_lead']}")
     print(f"[核心矛盾] {editorial_brief['core_conflict']}")
     print(f"[動態敘事地圖] {editorial_brief.get('narrative_flow') or '依投影片主題順序自由展開'}")
@@ -1587,15 +1596,6 @@ def generate_script(mdata, dca_data, config):
 
 
 TUTORIAL_CACHE_PATH = "cache_last_tutorial_script.json"
-TUTORIAL_SECTION_TITLES = (
-    "好奇提問與痛點鉤子",
-    "生活化白話比喻",
-    "鏈上原理與籌碼結構拆解",
-    "歷史週期換手實證",
-    "投資人實戰啟示與三大誤區",
-)
-
-
 def _json_object(raw):
     text = str(raw or "").strip()
     text = re.sub(r"^```(?:json)?", "", text).strip()
@@ -1662,12 +1662,16 @@ def _structured_tutorial_cards(payload, sections, lesson):
 
 def _normalize_tutorial(payload, lesson):
     raw_sections = payload.get("sections") if isinstance(payload.get("sections"), list) else []
-    if len(raw_sections) != 5:
-        print(f"教學 sections 有 {len(raw_sections)} 段，補齊到 5 段後放行。")
+    raw_sections = [item for item in raw_sections if isinstance(item, dict)][:8]
+    fallback_titles = [str(item).strip() for item in (lesson.get("core_concepts") or []) if str(item).strip()]
+    if not fallback_titles:
+        fallback_titles = [str(lesson.get("title") or "核心概念")]
+    while len(raw_sections) < 3:
+        index = len(raw_sections)
+        raw_sections.append({"title": fallback_titles[index % len(fallback_titles)], "narration": "", "bullets": []})
     sections = []
-    for index in range(5):
-        item = raw_sections[index] if index < len(raw_sections) and isinstance(raw_sections[index], dict) else {}
-        title = str(item.get("title") or TUTORIAL_SECTION_TITLES[index]).strip()
+    for index, item in enumerate(raw_sections):
+        title = str(item.get("title") or fallback_titles[index % len(fallback_titles)]).strip()
         narration = silence_gap_leaks(normalize_long_term_terms(str(item.get("narration") or "")))
         bullets = [
             silence_gap_leaks(str(bullet).strip())
@@ -1683,7 +1687,7 @@ def _normalize_tutorial(payload, lesson):
             lines = _dialogue_lines(narration)
         sections.append({
             "title": title,
-            "bullets": bullets[:4] or [TUTORIAL_SECTION_TITLES[index]],
+            "bullets": bullets[:4] or [title],
             "narration": narration,
             "lines": lines,
         })
@@ -1723,14 +1727,14 @@ def _load_tutorial_cache():
             cached = json.load(handle)
     except (OSError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(cached, dict) or len(cached.get("sections") or []) != 5:
+    if not isinstance(cached, dict) or not 3 <= len(cached.get("sections") or []) <= 8:
         return None
     print("[REUSE_SCRIPT] 使用 cache_last_tutorial_script.json，教學稿不呼叫 Gemini。")
     return cached
 
 
 def generate_tutorial_script(lesson, reference_note, config):
-    """五段式常青教學稿。快取命中時不呼叫 Gemini。"""
+    """依題目複雜度動態規劃段落的常青教學稿。快取命中時不呼叫 Gemini。"""
     cached = _load_tutorial_cache()
     if cached is not None:
         if not bool(config.get("is_test")):
@@ -1743,7 +1747,7 @@ def generate_tutorial_script(lesson, reference_note, config):
     length_rule = (
         "測試模式：五段各兩句以內，總長約 200 字。"
         if is_test else
-        "正式版五段口播合計 5,800 到 6,500 字，約 16 到 20 分鐘。Shorts 口播 45 到 55 秒，約 180 到 230 字。"
+        "正式版口播合計 5,800 到 6,500 字，段落數由題目複雜度決定。Shorts 口播 45 到 55 秒，約 180 到 230 字。"
     )
     catchphrase_line, catchphrases = sample_host_catchphrases()
     prompt = f"""你是【幣看深潛｜系統教學】主編。請為比特汪與以太喵寫一集常青教學，不要寫成每日新聞。
@@ -1755,15 +1759,14 @@ def generate_tutorial_script(lesson, reference_note, config):
 常見誤區：{myths}
 資料邊界：{reference_note}
 {length_rule}
-五段順序必須是：1 好奇提問與痛點鉤子；2 生活化白話比喻；3 鏈上或指標原理拆解；4 歷史週期實證；5 實戰啟示與三大誤區。
-每段寫成很多短對白，正式版每段 16 到 22 句。另外獨立輸出 25 到 30 張圖卡，每張 2 到 4 句口播。
+請先依題目知識範圍與複雜度自行決定 3 到 8 個段落，段落標題、順序、深度與篇幅皆由內容決定；不得套用固定五段順序，也不得要求每段相同句數。另外獨立輸出 18 到 30 張圖卡，每張 2 到 4 句口播，張數依知識點數量決定。
 每一張圖卡必須自帶完整欄位，禁止拿口播半句當標題：card_title 是 8 到 16 字的完整知識標題；hero_stat 是本頁核心數據或 4 到 10 字金句，例如「170 萬顆遠古沉睡幣」「UTXO 帳本機制」；bullet_points 是 2 到 3 條、每條 4 到 15 字的極簡短詞（1 個視覺符號 ＋ 4～8 字短詞 ＋ 1 個核心數字或對比箭頭，如 15 分鐘 ➔ 6 秒），禁止超過 15 字。三個欄位都要是完整語意，不能停在「也就是說」這類半截句。
-第 1 段第一句就要丟出這集最反直覺的問題，前兩句不要客套，也不要先講免責。一句「本集是公開資訊整理，不構成投資建議」放在鉤子之後、開始拆原理之前。
+開頭可依題目特性選擇問題、案例或反直覺事實，不強制使用鉤子。免責聲明「本集是公開資訊整理，不構成投資建議」自然放在適當位置。
 【知識密度】禁止空泛重複。每一段都要同時有四種內容：具體技術機制，例如 UTXO 的輸入與輸出、公私鑰如何簽名；真實歷史里程碑與年代，例如 2009 年創世區塊、2010 年一萬枚比特幣買披薩、2011 年首度突破 1 美元、歷次減半後的籌碼換手；深度對比，把遺失私鑰的遠古化石幣和現代機構的高成本活躍籌碼分開，說明它們怎麼改變真實流通供給；雙人交鋒，比特汪追問實戰痛點，以太喵用硬核數據回答，並自然用上本次口頭禪。
 鐵律：繁體中文。角色只有比特汪與以太喵，男主播唯一名稱就是「比特汪」，嚴禁寫成「位元汪」「位元犬」或把 Bitcoin 譯成「位元」；台詞以「男：」或「女：」開頭。美元金額一律整數加千分位，例如 $1、$35,000、$95,000。禁止小數金額、台幣、NT$、TWD。禁止 HODL、媒體名、交易所名，以及把 AI 當主題或字眼。可在角色名後加 [excited]、[serious]、[analytical]、[debate]，標籤只供配音，不要出現在 card_title、hero_stat、bullet_points。不承諾獲利，不鼓勵槓桿或借貸。禁止編造今日即時價格；價格帶若出現，必須說是早期週期區間示意或結構示意，不是即時普查。禁止說抓不到資料、無法取得數據、資料缺失或連線失敗。
 只輸出一個 JSON，不要 Markdown。格式：
 {{"title":"32字內標題","sections":[{{"title":"段名","bullets":["重點1","重點2","重點3"],"narration":"男：[analytical]...\\n女：[serious]..."}}],"cards":[{{"card_title":"完整標題","hero_stat":"核心金句","bullet_points":["完整要點一","完整要點二"],"lines":[{{"role":"男","text":"不含半截句的口播"}}]}}],"short_script":"男：...\\n女：..."}}
-sections 必須恰好 5 段，cards 必須 25 到 30 張。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
+sections 必須 3 到 8 段，cards 必須 18 到 30 張。short_script 要引導觀眾去看完整教學，並提到公開帳本網站可追蹤模擬定期定額，但不要把帳本說成真實成交。"""
     raw = call_gemini(
         prompt, max_output_tokens=65536, timeout=300, json_mode=True, models=PRODUCTION_MODELS,
     )
@@ -1790,10 +1793,10 @@ sections 必須恰好 5 段，cards 必須 25 到 30 張。short_script 要引�
         print(f"教學稿 {tutorial['char_count']} 字，低於 4800，深度擴寫一次。")
         try:
             expanded = call_gemini(
-                "以下教學 JSON 偏短。請加深五段 narration 與 25 到 30 張 cards："
+                "以下教學 JSON 偏短。請依動態段落加深 narration 與 18 到 30 張 cards："
                 "補上 UTXO 或指標機制、有年代的歷史事件、遠古籌碼與現代活躍籌碼的對比，以及雙人追問。"
                 "card_title、hero_stat、bullet_points 必須是完整短語，不能是口播半句，也不能含括號標籤。"
-                "維持恰好 5 段、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
+                "維持原有 3 到 8 段動態結構、short_script，以及整數美元。不要承諾獲利。只回傳 JSON。\n\n"
                 + raw[:12000],
                 max_output_tokens=65536,
                 timeout=300,
