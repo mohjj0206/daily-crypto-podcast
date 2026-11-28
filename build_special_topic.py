@@ -1238,13 +1238,13 @@ def upload_video(coin_code, title, dialogue_end, intro_duration, has_intro, slid
     youtube = build("youtube", "v3", credentials=credentials)
     chapters = []
     slide_duration = (dialogue_end - intro_duration) / len(slides)
-    offset = 15.0 if has_intro else 0.0
+    offset = float(intro_duration) if has_intro else 0.0
     if offset:
         chapters.append("00:00 主題動畫片頭")
-    for index, (slide_title, _, _) in enumerate(slides):
-        seconds = int(offset + slide_duration * index)
+    for index, (slide_title, _, _) in enumerate(slides, 1):
+        seconds = int(SPECIAL_SLIDE_START_TIMES.get(index, offset + slide_duration * (index - 1)))
         chapters.append(f"{seconds // 60:02d}:{seconds % 60:02d} {slide_title}")
-    outro_start = int(offset + slide_duration * len(slides) + OUTRO_PAUSE)
+    outro_start = int(dialogue_end + OUTRO_PAUSE)
     chapters.append(f"{outro_start // 60:02d}:{outro_start % 60:02d} 片尾互動與推薦影片")
     description = (
         f"本集【幣看深潛】聚焦 {SUPPORTED_COINS[coin_code]['name']}（{coin_code}），"
