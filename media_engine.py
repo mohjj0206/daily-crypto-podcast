@@ -2845,6 +2845,8 @@ def render_short_video(sdata, mdata, config):
         "cryptocurrency, stock market, abstract technology",
         orientation=broll_engine.VERTICAL,
     )
+    if not short_broll_path:
+        raise RuntimeError("Main Shorts could not obtain a new unique vertical Pixabay clip.")
     short_broll_markup = ""
     if short_broll_path and os.path.exists(short_broll_path):
         try:
@@ -2887,15 +2889,12 @@ body {{
 }}
 @keyframes gridFlow {{ to {{ transform:translate3d(42px,21px,0); }} }}
 .broll-bg {{
-  position:absolute; inset:0; z-index:0;
-  width:100%; height:100%; object-fit:cover; transform:scale(1.06);
+  /* 直式 B-Roll 獨立置於字幕卡下方，不作背景、不被簡報覆蓋。 */
+  position:absolute; left:34px; right:34px; bottom:20px; z-index:2;
+  width:calc(100% - 68px); height:220px; object-fit:cover;
+  border:2px solid rgba(56,189,248,.72); border-radius:18px;
 }}
-.broll-veil {{
-  position:absolute; inset:0; z-index:1; pointer-events:none;
-  background:
-    radial-gradient(ellipse at 50% 42%,rgba(7,11,20,.58),rgba(7,11,20,.88) 78%),
-    rgba(7,11,20,.82);
-}}
+.broll-veil {{ display:none; }}
 .brand {{
   position:absolute; top:24px; width:100%; text-align:center; z-index:3;
   color:#fbbf24; font-size:29px; font-weight:800; letter-spacing:2px;
@@ -2919,7 +2918,7 @@ body {{
   to {{ opacity:1; transform:scale(1); }}
 }}
 .panel {{
-  position:absolute; top:348px; left:34px; right:34px; bottom:310px; z-index:3;
+  position:absolute; top:348px; left:34px; right:34px; bottom:260px; z-index:3;
   padding:28px 26px; border:2px solid rgba(251,191,36,.78); border-radius:24px;
   background:rgba(15,23,42,.9); box-shadow:0 0 35px rgba(56,189,248,.14);
   overflow:hidden; text-align:center;
