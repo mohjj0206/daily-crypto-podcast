@@ -268,7 +268,6 @@ def fetch_pixabay_broll(keywords, orientation=HORIZONTAL, cache_dir="assets/brol
                 "asset_id": str(video_id),
                 "title": str(hit.get("tags") or query).strip(),
                 "creator": str(hit.get("user") or "").strip(),
-                "creator_url": str(hit.get("userImageURL") or "").strip(),
                 "source_url": str(hit.get("pageURL") or "").strip(),
                 "search_query": query,
                 "orientation": orient,
