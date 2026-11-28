@@ -115,6 +115,7 @@ def main():
             cur_p=mdata["cur_p"],
             fng_num=mdata["fng_num"],
             today_str=today_str,
+            short_title=short_title,
         )
     else:
         print("[5/5] ENABLE_YOUTUBE_UPLOAD!=true，完全跳過 YouTube 授權與上傳，保留成片供 GitHub Releases 預覽。")
@@ -123,11 +124,7 @@ def main():
 
     # 輸出標準化發佈清單，供雲端一鍵發佈腳本（publish_preview_to_youtube.py）使用。
     main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
-    short_title = (
-        f"BTC {presentation.format_usd(mdata['cur_p'])}｜恐慌指數 {mdata['fng_num']} 點，這個訊號別忽略！ #Shorts"
-        if mdata.get("fng_num") is not None else
-        f"BTC {presentation.format_usd(mdata['cur_p'])}｜幣圈最新市場焦點與風險解析 #Shorts"
-    )
+    short_title = youtube_uploader.build_daily_short_title(sdata)
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
         "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
