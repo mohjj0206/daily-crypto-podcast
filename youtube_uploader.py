@@ -333,13 +333,32 @@ def upload_main_video(youtube, video_path, thumb_path, title, description, tags,
     return video_id
 
 
-def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today_str):
+def build_daily_short_title(sdata):
+    """Shorts 標題必須直接對應短片主題，不以行情數字或恐慌指數充當標題。"""
+    details = (sdata or {}).get("slide_news_details") or []
+    topic = ""
+    if details and isinstance(details[0], dict):
+        topic = details[0].get("slide_title") or ""
+    if not topic:
+        topic = (sdata or {}).get("ai_title") or (sdata or {}).get("video_title") or ""
+
+    topic = presentation.sanitize_text(topic)
+    topic = re.sub(r"^【幣看趨勢】\\s*", "", topic)
+    topic = re.sub(r"\\s*[（(]\\d{4}年?\\d{1,2}月?\\d{1,2}日?[）)]\\s*$", "", topic)
+    topic = re.sub(r"\\s+", " ", topic).strip(" ｜|：:，,。")
+    if not topic:
+        raise RuntimeError("無法從當日短片主題產生 Shorts 標題，停止使用無關的行情通用標題。")
+
+    suffix = " #Shorts"
+    max_topic_length = 95 - len(suffix)
+    if len(topic) > max_topic_length:
+        topic = topic[:max_topic_length].rstrip(" ｜|：:，,。")
+    return f"{topic}{suffix}"
+
+
+def upload_short_video(youtube, short_path, main_video_id, cur_p, fng_num, today_str, short_title=None):
     main_video_url = f"https://www.youtube.com/watch?v={main_video_id}"
-    short_title = (
-        f"BTC {presentation.format_usd(cur_p)}｜恐慌指數 {fng_num} 點，這個訊號別忽略！ #Shorts"
-        if fng_num is not None else
-        f"BTC {presentation.format_usd(cur_p)}｜幣圈最新市場焦點與風險解析 #Shorts"
-    )
+    short_title = short_title or build_daily_short_title({})
     short_description = (
         f"{today_str} 幣圈市場 50 秒快訊。\n\n"
         "📊 比特汪 BTC 定期定額公開帳本（即時追蹤）：https://is.gd/2JOYTF\n\n"
