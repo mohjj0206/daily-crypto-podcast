@@ -290,6 +290,8 @@ def _build_story_prompt(news_items, prices):
 - 每頁盡量提供 2～4 個 metrics，label/value/detail 必須來自素材中可核實的數據；沒有數值依據時可少於 2 個，嚴禁捏造。
 - 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
 - lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
+- **畫面與口播順序必須一致**：lines 必須依照 dialogue 實際講述的先後順序排列；每個 line 都要在 dialogue 中有明確對應的解釋，不得先顯示尚未講到的結論。
+- metrics 依照 dialogue 中數值被提及的順序排列；只有講到該數值及其意義時才讓對應 KPI 卡出現。chart 亦須在口播開始解釋其比較內容時才出現。
 - dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
 - big 是本頁主標題，不再獨佔整張畫面的唯一資訊。
 
@@ -558,6 +560,8 @@ def _build_custom_prompt(material, prices):
 - chart 必須附 source 原文短句，且 labels／values 必須能由該證據支持；沒有證據就不要輸出 chart。
 - 至少有 2 組可比較的真實數值時才提供 chart；labels 與 values 必須一一對應，不能自行估算。
 - lines 保留 2～4 個短分析結論，每行 ≤{MAX_LINE_CHARS} 字，作為 KPI／圖表旁的解讀。
+- **畫面與口播順序必須一致**：lines 按照 dialogue 實際講述順序排列，每個 line 都必須在 dialogue 中有明確對應解釋；不可提前顯示尚未講到的結論。
+- metrics 按照 dialogue 提及數值的先後排列；口播講到該數值時才顯示相應 KPI。chart 必須在口播開始解釋該比較時才出現。
 - dialogue 為該頁要唸的 1～3 段對話，必須解釋畫面 KPI、圖表及其限制。
 - big 是本頁主標題，不再獨佔整張畫面的唯一資訊。
 
