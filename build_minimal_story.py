@@ -1360,13 +1360,6 @@ def render_main_story(story):
             "page": page_index,
             "start_seconds": round(item["start"], 3),
             "duration_seconds": round(item["dur"], 3),
-            "spoken_lines": [
-                {"text": text, "duration_seconds": round(float(duration), 3)}
-                for text, duration in [
-                    (groups[idx][1] if idx < len(groups) else display, duration)
-                    for idx, _fn, display, duration in synth_dialogues_cache[page_index - 1]
-                ]
-            ] if False else [],
             "insight_reveal_seconds": reveal,
             "metric_reveal_seconds": [
                 reveal[min(i, len(reveal) - 1)] for i in range(len(item["page"].get("metrics") or []))
