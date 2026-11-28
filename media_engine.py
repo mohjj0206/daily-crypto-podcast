@@ -1319,44 +1319,64 @@ li:nth-child(n+6) {{ animation-delay: calc(var(--pace) * 3.6); }}
 .slide-stage.style-data .chart-spotlight-layout {{ grid-template-columns: minmax(0, 68fr) minmax(0, 32fr); }}
 .slide-stage.style-data .insight-dock article {{ border-color: rgba(34,211,238,.52); background: rgba(5,21,34,.92); }}
 
-/* 影片優先：B-roll 全程作為底片播放，簡報只在該頁口播期間浮現。 */
-.broll-bg {{
-  opacity: 1 !important;
-  animation: none !important;
-}}
-.slide-stage.has-broll .ticker,
-.slide-stage.has-broll .frame,
-.slide-stage.has-broll .metric-rail,
-.slide-stage:not(.has-broll) .ticker,
-.slide-stage:not(.has-broll) .frame,
-.slide-stage:not(.has-broll) .metric-rail {{
-  animation: dataOverlayLifetime var(--slide-duration, 12s) linear both !important;
-  will-change: opacity;
-}}
-@keyframes dataOverlayLifetime {{
-  0% {{ opacity: 0; }}
-  1.5%, 98% {{ opacity: 1; }}
-  100% {{ opacity: 0; }}
-}}
-/* 不再固定顯示未必正在播報的行情跑馬燈與指標儀表；只呈現本頁對應口播的資料卡。 */
-.ticker,
-.metric-rail {{ display: none !important; }}
-/* 跑馬燈與底部固定指標已取消，資料卡擴展到主要畫面，保留字幕安全區。 */
-.slide-stage .frame {{
-  left: 48px !important;
-  right: 48px !important;
-  bottom: 190px !important;
-}}
-/* 保留影片可見範圍，資訊卡以半透明面板疊在影片上，不再互相輪播。 */
-.slide-stage.has-broll .frame {{
-  background-color: rgba(7, 13, 26, .84);
-  backdrop-filter: blur(14px);
-}}
-.slide-stage.has-broll .ticker {{
-  background: rgba(7, 13, 26, .72);
-  backdrop-filter: blur(12px);
-}}
-/* 每一項資料只在對應口播段落高亮，播報完即退場，不把舊數據堆滿畫面。 */
+/* 主片採影片底層＋口播資訊浮層；Pixabay 不再與簡報輪播或被整塊深色面板蓋住。 */
+ .broll-bg {{
+   opacity: 1 !important;
+   animation: none !important;
+ }}
+ .slide-stage.has-broll .ticker,
+ .slide-stage.has-broll .frame,
+ .slide-stage.has-broll .metric-rail,
+ .slide-stage:not(.has-broll) .ticker,
+ .slide-stage:not(.has-broll) .frame,
+ .slide-stage:not(.has-broll) .metric-rail {{
+   animation: dataOverlayLifetime var(--slide-duration, 12s) linear both !important;
+   will-change: opacity;
+ }}
+ @keyframes dataOverlayLifetime {{
+   0% {{ opacity: 0; }}
+   1.5%, 98% {{ opacity: 1; }}
+   100% {{ opacity: 0; }}
+ }}
+ /* 不顯示固定行情跑馬燈與底部儀表，避免與當前口播資訊競爭。 */
+ .ticker,
+ .metric-rail {{ display: none !important; }}
+ .slide-stage .frame {{
+   left: 48px !important;
+   right: 48px !important;
+   bottom: 190px !important;
+ }}
+ /* 關鍵修正：原本 frame 的 90% 不透明底色會把整片 Pixabay 蓋掉。 */
+ .slide-stage.has-broll .frame {{
+   background: rgba(7, 13, 26, .22) !important;
+   border-color: rgba(251, 191, 36, .68);
+   box-shadow: 0 0 24px rgba(56,189,248,.10);
+   backdrop-filter: blur(3px);
+ }}
+ .slide-stage.has-broll .frame.layout-impact_quote {{
+   background: rgba(7, 13, 26, .18) !important;
+ }}
+ /* 各種版型的內層卡片也改成半透明，避免近乎不透光的底色遮蔽影片。 */
+ .slide-stage.has-broll .impact-quote-box {{
+   background: linear-gradient(160deg, rgba(15,23,42,.54), rgba(10,15,28,.60));
+ }}
+ .slide-stage.has-broll .versus-panel.bear {{
+   background: linear-gradient(150deg, rgba(69,10,26,.52), rgba(15,23,42,.58));
+ }}
+ .slide-stage.has-broll .versus-panel.bull {{
+   background: linear-gradient(150deg, rgba(6,78,59,.48), rgba(15,23,42,.58));
+ }}
+ .slide-stage.has-broll .spotlight-visual {{
+   background: rgba(8,13,24,.38);
+ }}
+ .slide-stage.has-broll .spotlight-card {{
+   background: linear-gradient(170deg, rgba(15,23,42,.58), rgba(9,14,26,.64));
+ }}
+ .slide-stage.has-broll .timeline-card {{
+   background: rgba(11,18,34,.52);
+ }}
+ /* 圖表本身保留清晰度；只降低包覆圖表的底板遮蔽程度。 */
+ /* 每一項資料只在對應口播段落高亮，播報完即退場，不把舊數據堆滿畫面。 */
 .reveal-node.is-hidden,
 .reveal-node.is-dimmed {{
   opacity: 0 !important;
