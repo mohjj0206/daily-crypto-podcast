@@ -897,8 +897,15 @@ body {{
   0%, 68%, 94%, 100% {{ opacity: 0; }}
   72%, 90% {{ opacity: 1; }}
 }}
- .slide-stage.has-broll .ticker, .slide-stage.has-broll .frame, .slide-stage.has-broll .metric-rail {{
-  animation: slideInterlude var(--broll-cycle, 18s) linear infinite;
+/* B-Roll stays as the continuous base; overlays never disappear into alternating full-screen slides. */
+.slide-stage.has-broll .ticker,
+.slide-stage.has-broll .frame,
+.slide-stage.has-broll .metric-rail {{
+  animation: none !important;
+}}
+.slide-stage.has-broll .ticker {{
+  background: rgba(15, 23, 42, .42);
+  backdrop-filter: blur(6px);
 }}
 @keyframes slideInterlude {{
   0%, 68%, 94%, 100% {{ opacity: 1; }}
