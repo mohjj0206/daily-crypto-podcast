@@ -2999,6 +2999,12 @@ body {{
   0%,68%,94%,100% {{ opacity:1; }}
   72%,90% {{ opacity:0; }}
 }}
+/* Shorts 同樣採影片為底，主持人與資訊卡不再與 B-roll 互相輪播。 */
+.broll-bg {{ opacity:1 !important; animation:none !important; }}
+.short-stage.has-broll .brand,
+.short-stage.has-broll .avatar,
+.short-stage.has-broll .avatar-placeholder,
+.short-stage.has-broll .panel {{ animation:none !important; }}
 .broll-veil {{ display:none; }}
 .brand {{
   position:absolute; top:24px; width:100%; text-align:center; z-index:3;
