@@ -243,15 +243,10 @@ def _build_story_prompt(news_items, prices):
 
     btc = prices.get("BTC") or {}
     eth = prices.get("ETH") or {}
-    if btc.get("usd") is not None:
-        opening = (
-            f"開場第一句用一句話帶過 BTC 現價 {presentation.format_usd_price(btc['usd'])} 美元"
-            f"（24H {btc.get('change', 0):+.2f}%）與 ETH 現價 "
-            f"{presentation.format_usd_price(eth['usd']) if eth.get('usd') is not None else '未知'} 美元，"
-            "30 秒內講完，之後 95% 全部深挖單一主題。"
-        )
-    else:
-        opening = "開場第一句話不要報價，直接切入今日最震撼的單一主題。"
+    opening = (
+        "開場直接切入本集核心事件或研究問題。只有當 BTC／ETH 報價與本集主題有實質關聯，"
+        "且提供的價格資料能支持分析時，才自然帶入報價；不得為了每日例行報價打斷專題。"
+    )
 
     return f"""今日日期：{TODAY_STR}
 
@@ -512,15 +507,10 @@ def _section_covered_by_content(title, slides):
 def _build_custom_prompt(material, prices):
     btc = prices.get("BTC") or {}
     eth = prices.get("ETH") or {}
-    if btc.get("usd") is not None:
-        opening = (
-            f"開場第一句用一句話帶過 BTC 現價 {presentation.format_usd_price(btc['usd'])} 美元"
-            f"（24H {btc.get('change', 0):+.2f}%）與 ETH 現價 "
-            f"{presentation.format_usd_price(eth['usd']) if eth.get('usd') is not None else '未知'} 美元，"
-            "30 秒內講完，之後 95% 全部深挖這份自訂深度素材。"
-        )
-    else:
-        opening = "開場第一句話不要報價，直接切入這份自訂深度素材的核心主題。"
+    opening = (
+        "開場直接切入這份自訂深度素材的核心問題。只有當 BTC／ETH 報價與原始素材的論點"
+        "有實質關聯，且價格資料能支持分析時，才自然帶入；不得為了例行報價偏離研究主題。"
+    )
 
     required_sections = _extract_source_sections(material)
     section_checklist = "\n".join(f"- {section}" for section in required_sections)
