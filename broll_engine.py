@@ -433,12 +433,17 @@ def fetch_pixabay_broll_reel(
             for path in segment_paths:
                 handle.write(f"file '{path}'\n")
         concat_path = os.path.join(work, "reel_clips.mp4")
-        subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
-             "-pix_fmt", "yuv420p", concat_path],
-            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+                 "-pix_fmt", "yuv420p", concat_path],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            _episode_stats[orient]["failed"] += required
+            print(f"[Pixabay B-Roll] 串接素材失敗，退回既有動態背景：{error}")
+            return None
 
         # 素材池不足以覆蓋整段口播時，接原生動態背景，不重播舊素材。
         if elapsed + 0.05 < target_duration:
