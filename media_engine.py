@@ -2812,8 +2812,9 @@ def render_short_video(sdata, mdata, config):
     ).strip()
     short_news = (
         f"資料抓取時間：{mdata['data_fetched_at']}\n"
-        f"頭條：{headline_for_short}\n"
-        f"多空打折摘要：{short_summary}\n"
+        f"核心主題：{headline_for_short}\n"
+        f"核心矛盾：{short_core_conflict}\n"
+        f"補充證據：{short_summary}\n"
         f"BTC：{presentation.format_usd(mdata['cur_p'])}，24H {'+' if mdata['btc_pct'] >= 0 else ''}{mdata['btc_pct']:.2f}%，"
         f"100日均線 {presentation.format_usd(mdata['ma100d'])}，200日均線 {presentation.format_usd(mdata['ma200d'])}，RSI {mdata['btc_rsi']}\n"
         f"ETH：{presentation.format_usd(mdata['spot_prices']['ETH'])}，24H {'+' if mdata['eth_pct'] >= 0 else ''}{mdata['eth_pct']:.2f}%，"
@@ -2839,8 +2840,8 @@ def render_short_video(sdata, mdata, config):
 
     if script_writer.reuse_script_enabled():
         raw_short_script = (
-            f"男：{headline_for_short}，比特幣現在 {presentation.format_usd(mdata['cur_p'])}。\n"
-            "女：風險仍在，完整解析請看今天的正片。"
+            f"男：{headline_for_short}，這是本集最值得追查的核心問題。\n"
+            f"女：{short_core_conflict[:70]}。完整證據與反方分析，請看今天的正片。"
         )
         print("[REUSE_SCRIPT] Shorts 使用快取頭條，不呼叫 Gemini。")
     else:
