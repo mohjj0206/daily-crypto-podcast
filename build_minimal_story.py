@@ -770,6 +770,12 @@ def _slide_html(slide, reveal_seconds, broll_path, page_label, slide_duration=12
             '<div class="placeholder-note">本頁沒有足夠的可比較數值，避免使用推測數據製圖</div>'
             '</section>'
         )
+    chart_delay = float(reveal_seconds[0]) if reveal_seconds else 0.0
+    chart_life = max(0.5, float(slide_duration) - chart_delay)
+    chart_markup = (
+        f'<div class="chart-timed" style="--chart-delay:{chart_delay:.3f}s;'
+        f'--chart-life:{chart_life:.3f}s">{chart_markup}</div>'
+    )
     reveal_json = json.dumps([round(x, 3) for x in reveal_seconds])
     return f"""<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
@@ -824,6 +830,14 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   flex: 1; min-height: 0; }}
 .panel {{ min-width: 0; padding: 24px 28px; border: 1px solid rgba(125,160,205,.25);
   border-radius: 18px; background: rgba(8,19,37,.92); overflow: hidden; }}
+.chart-timed {{ min-width:0; min-height:0; opacity:0; visibility:hidden;
+  animation:chartPop var(--chart-life,5s) ease both;
+  animation-delay:var(--chart-delay,0s); }}
+@keyframes chartPop {{
+  0% {{ opacity:0; visibility:hidden; transform:translateY(12px); }}
+  4%,92% {{ opacity:1; visibility:visible; transform:translateY(0); }}
+  100% {{ opacity:0; visibility:hidden; transform:translateY(-8px); }}
+}}
 .panel-title {{ color: #ffffff; font-size: 30px; font-weight: 800; margin-bottom: 22px; }}
 .placeholder-note {{ color: #9fb4d1; font-size: 25px; line-height: 1.6; padding-top: 24px; }}
 .chart-row {{ display: grid; grid-template-columns: 170px 1fr 150px; gap: 16px;
