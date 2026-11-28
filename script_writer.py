@@ -1358,15 +1358,24 @@ def generate_script(mdata, dca_data, config):
 請重新撰寫整份完整逐字稿，目標 5,500 至 6,500 字；必須保留全部 {slide_count} 個投影片錨點，且每個錨點恰好一次、順序不變。
 依各主題證據量擴寫，不可平均灌水、不可重複觀點、不可新增主題，也不可把補充內容全部塞進最後一張投影片。
 只輸出完整逐字稿，不要解釋。"""
-        full_script = str(call_gemini(expansion_prompt, max_output_tokens=16384, timeout=360)).strip()
-        actual_anchors = [int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", full_script)]
-        if actual_anchors != expected_anchors:
-            raise RuntimeError(
-                "完整逐字稿擴寫後分鏡錨點缺失、重複或順序錯誤，停止製作。"
-                f" expected={expected_anchors}, actual={actual_anchors}"
-            )
-        total_chars = _spoken_chars(full_script)
-        print(f"完整逐字稿重新擴寫後：{total_chars} 字。")
+        try:
+            expanded_script = str(
+                call_gemini(expansion_prompt, max_output_tokens=16384, timeout=360)
+            ).strip()
+            expanded_anchors = [
+                int(value) for value in re.findall(r"\[SLIDE_(\d+)\]", expanded_script)
+            ]
+            if expanded_anchors == expected_anchors:
+                full_script = expanded_script
+                total_chars = _spoken_chars(full_script)
+                print(f"完整逐字稿重新擴寫後：{total_chars} 字。")
+            else:
+                print(
+                    "逐字稿擴寫版錨點不完整，保留原本已通過同步驗證的版本；"
+                    f"expected={expected_anchors}, actual={expanded_anchors}"
+                )
+        except Exception as error:
+            print(f"逐字稿擴寫服務失敗，保留原本已通過同步驗證的版本：{error}")
         if total_chars < 3200:
             print(f"警告：完整逐字稿只有 {total_chars} 字，低於建議下限；保留已通過錨點驗證的內容繼續製作。")
 
