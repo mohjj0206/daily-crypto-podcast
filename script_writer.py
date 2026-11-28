@@ -954,7 +954,7 @@ def _parse_editorial_brief(raw_text, mdata=None, slide_title_count=14):
 
 
 def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
-    """正式影片每幕至少 1,800 字；不足時最多補強兩輪，不再讓短稿靜默通過。"""
+    """正式影片每幕至少 1,800 字；不足時以追加對話補足，絕不要求模型重寫整幕。"""
     if is_test:
         return act_text
 
@@ -967,47 +967,60 @@ def _expand_act_if_short(act_text, act_num, act_name, context_hint, is_test):
 
     for attempt in range(1, 3):
         missing = minimum_chars - chars
+        # 留出緩衝，避免模型只補剛好缺少的字數，經清理後又低於門檻。
+        target_addition = min(max(missing + 180, 280), 500)
         print(
             f"第 {act_num} 幕（{act_name}）目前 {chars} 字，"
-            f"低於最低要求 {minimum_chars} 字，進行第 {attempt} 輪深度補強..."
+            f"低於最低要求 {minimum_chars} 字，進行第 {attempt} 輪追加補強..."
         )
-        expand_prompt = f"""以下是【幣看趨勢】播客第 {act_num} 幕（{act_name}）的口播對話。
-目前字數：{chars} 字；至少還缺 {missing} 字。
-請在保留原稿資訊與對話脈絡的前提下，補足深度，最後完整稿必須落在 {minimum_chars} 至 {maximum_chars} 個繁體中文字。
-要求：
-1. 只補充原稿尚未充分說明的因果、數據解讀、歷史對照、反方質疑與可驗證條件，不得換句話重複。
-2. 保留男：比特汪、女：以太喵角色，以及所有 [SLIDE_x] 投影片錨點；每個錨點都必須原樣保留且只出現一次。
-3. 不得捏造數據、新聞或來源；資料不足時明確說明限制。
-4. 嚴禁流水帳、空泛風險套話與冗長寒暄。
-5. 只輸出完整對話逐字稿，不要 Markdown、解說或 JSON。
+        expand_prompt = f"""你是【幣看趨勢】財經播客的資深編輯。以下是一幕已完成但字數不足的雙人播客逐字稿。
+幕次：第 {act_num} 幕「{act_name}」
+目前字數：{chars} 字；最低要求：{minimum_chars} 字；至少還缺 {missing} 字。
+請只寫一段可直接接在原稿最後面的「新增對話」，目標新增 {target_addition} 至 {target_addition + 120} 個繁體中文字。
 
-背景與核心脈絡：
+【原稿已經講過的內容，禁止重複】：
+{current_text}
+
+【本幕補充方向】：
 {context_hint}
 
-目前完整對話稿：
-{current_text}"""
+要求：
+1. 只輸出新增的對話，不要重貼、改寫或摘要原稿。
+2. 以「男：」或「女：」開頭，每句都是完整可口播台詞，兩位主播自然交鋒。
+3. 深入補充原稿尚未充分說明的因果、數據解讀、歷史對照、反方質疑或可驗證條件；不得換句話重複。
+4. 不得捏造數據、新聞、來源或價格；只使用原稿及本幕綱要已有的資訊。
+5. 不要新增任何 [SLIDE_x] 投影片錨點；原稿中的錨點必須原封不動保留。
+6. 不要 Markdown、標題、字數說明、編輯註解或 JSON，只輸出新增對話。
+7. 補充內容必須自然承接原稿最後一段，不能打招呼、不能重新開場，也不能用空泛風險套話灌水。
+"""
         try:
-            expanded = call_gemini(expand_prompt, max_output_tokens=16384, timeout=300)
-            expanded = str(expanded or "").strip()
-            expanded_chars = _spoken_chars(expanded)
-            if expanded_chars >= minimum_chars and expanded_chars <= maximum_chars:
-                print(f"第 {act_num} 幕補強成功：{chars} → {expanded_chars} 字。")
-                return expanded
-            if expanded_chars > chars:
-                current_text = expanded
-                chars = expanded_chars
-                if chars >= minimum_chars:
-                    if chars > maximum_chars:
-                        print(
-                            f"第 {act_num} 幕補強後 {chars} 字，略超過建議上限 "
-                            f"{maximum_chars}，但已達最低完整長度。"
-                        )
-                    return current_text
-            else:
+            addition = str(
+                call_gemini(expand_prompt, max_output_tokens=8192, timeout=300)
+            ).strip()
+            addition = re.sub(r"^\`\`\`(?:text)?\\s*|\\s*\`\`\`$", "", addition, flags=re.I)
+            addition_chars = _spoken_chars(addition)
+            has_speaker = bool(re.search(r"(?:^|\\n)\\s*(?:男|女)：", addition))
+            has_new_anchor = bool(re.search(r"\\[SLIDE_\\d+\\]", addition))
+            if not addition or not has_speaker or has_new_anchor:
                 print(
-                    f"第 {act_num} 幕第 {attempt} 輪補強未增加有效字數"
-                    f"（原稿 {chars}、回傳 {expanded_chars}），保留較完整版本。"
+                    f"第 {act_num} 幕第 {attempt} 輪補強格式無效"
+                    f"（新增 {addition_chars} 字、主播標記={has_speaker}、新增錨點={has_new_anchor}），略過。"
                 )
+                continue
+
+            current_text = current_text + "\\n" + addition
+            chars = _spoken_chars(current_text)
+            print(
+                f"第 {act_num} 幕追加補強 {addition_chars} 字，"
+                f"累計 {chars} 字。"
+            )
+            if chars >= minimum_chars:
+                if chars > maximum_chars:
+                    print(
+                        f"第 {act_num} 幕補強後 {chars} 字，略超過建議上限 "
+                        f"{maximum_chars}，但已達最低完整長度。"
+                    )
+                return current_text
         except Exception as e:
             print(f"第 {act_num} 幕第 {attempt} 輪補強失敗：{e}")
 
