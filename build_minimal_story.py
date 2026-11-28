@@ -711,18 +711,32 @@ def build_custom_story(material, prices):
                 for section in (slide.get("source_sections") or [])
             }
             missing_sections = []
-            inferred_coverage = {}
+            section_audit = {}
             for section in required_sections:
-                if section in covered_sections:
-                    continue
-                is_covered, matched = _section_covered_by_content(section, raw_slides)
-                inferred_coverage[section] = matched
+                # 先找模型明確標記的對應頁；若未標記，才在全文口播中尋找，
+                # 但不能只因 source_sections 有填標題就直接視為合格。
+                assigned_slides = [
+                    slide for slide in raw_slides
+                    if section in (slide.get("source_sections") or [])
+                ]
+                candidates = assigned_slides or raw_slides
+                is_covered, matched = _section_covered_by_content(section, candidates)
+                spoken_chars = sum(
+                    len(str(item.get("text", "") if isinstance(item, dict) else item))
+                    for slide in candidates
+                    for item in (slide.get("dialogue") or [])
+                )
+                section_audit[section] = {
+                    "tagged": bool(assigned_slides),
+                    "spoken_chars": spoken_chars,
+                    "matched_terms": matched,
+                }
                 if not is_covered:
                     missing_sections.append(section)
-            if inferred_coverage:
+            if section_audit:
                 print(
-                    "[Minimal] 章節正文覆蓋補充檢查："
-                    + json.dumps(inferred_coverage, ensure_ascii=False)
+                    "[Minimal] 章節實質口播覆蓋檢查："
+                    + json.dumps(section_audit, ensure_ascii=False)
                 )
             if missing_sections:
                 raise ValueError("原文一級章節未完整覆蓋：" + "；".join(missing_sections))
