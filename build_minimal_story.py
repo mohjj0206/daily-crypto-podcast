@@ -754,7 +754,7 @@ def _broll_background_html(broll_path):
     with open(broll_path, "rb") as handle:
         encoded = base64.b64encode(handle.read()).decode("ascii")
     return (
-        '<video class="broll" autoplay muted loop playsinline preload="auto" '
+        '<video class="broll" autoplay muted playsinline preload="auto" '
         f'src="data:video/mp4;base64,{encoded}"></video>'
         '<div class="dark-mask"></div>'
     )
@@ -865,7 +865,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .metrics {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 20px; margin-top: 32px; min-height: 190px; }}
 .metric-card {{ min-width: 0; padding: 22px 24px; border: 1px solid rgba(125,160,205,.28);
-  border-radius: 18px; background: rgba(9,22,42,.9); opacity:0; visibility:hidden;
+  border-radius: 18px; background: rgba(9,22,42,.42); backdrop-filter: blur(5px); opacity:0; visibility:hidden;
   animation:metricPop var(--card-life,3s) ease both; animation-delay:var(--card-delay,0s); }}
 @keyframes metricPop {{
   0% {{ opacity:0; visibility:hidden; transform:translateY(14px) scale(.98); }}
@@ -881,7 +881,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
 .lower {{ display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px;
   flex: 1; min-height: 0; }}
 .panel {{ min-width: 0; padding: 24px 28px; border: 1px solid rgba(125,160,205,.25);
-  border-radius: 18px; background: rgba(8,19,37,.92); overflow: hidden; }}
+  border-radius: 18px; background: rgba(8,19,37,.42); backdrop-filter: blur(5px); overflow: hidden; }}
 .chart-timed {{ min-width:0; min-height:0; opacity:0; visibility:hidden;
   animation:chartPop var(--chart-life,5s) ease both;
   animation-delay:var(--chart-delay,0s); }}
@@ -909,7 +909,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
 
 /* 影片優先：Pixabay 底片持續播放，圖表與數據卡依本頁口播時段浮現。 */
-.broll {{ opacity: 1 !important; animation: none !important; }}
+.broll {{ opacity: 1; animation: none; transition: opacity .65s ease; }}
 .stage .content {{
   animation: storyDataOverlayLifetime var(--slide-duration, 12s) linear both !important;
   will-change: opacity;
@@ -920,8 +920,8 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   100% {{ opacity: 0; }}
 }}
 .stage.has-broll .content {{
-  background: rgba(5, 12, 25, .34);
-  backdrop-filter: blur(3px);
+  background: transparent;
+  backdrop-filter: none;
 }}
 /* 逐條重點只在對應口播期間顯示，講完後退場。 */
 .insight {{ transition: opacity .32s ease, transform .32s ease; }}
@@ -951,6 +951,16 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   const nodes = Array.prototype.slice.call(document.querySelectorAll(".insight"));
   const times = {reveal_json};
   const start = performance.now();
+  // 每頁實景素材只播放一次，最多約 4.2 秒；淡出後停播，避免長頁面反覆循環造成重播感。
+  const broll = document.querySelector(".broll");
+  if (broll) {{
+    const hideBroll = () => {{
+      broll.style.opacity = "0";
+      window.setTimeout(() => broll.pause(), 700);
+    }};
+    broll.addEventListener("ended", hideBroll, {{ once: true }});
+    window.setTimeout(hideBroll, 4200);
+  }}
   function apply(active) {{
     for (let i = 0; i < nodes.length; i++) {{
       nodes[i].classList.remove("active", "done");
@@ -1535,6 +1545,8 @@ def render_main_story(story):
                     "asset": os.path.basename(broll_path) if broll_path else None,
                     "source": "Pixabay" if broll_path else "native_motion_fallback",
                     "reused": reused,
+                    "playback_seconds": 4.2 if broll_path else 0,
+                    "loop": False,
                 })
 
             if len(broll_manifest) != len(page_data):
