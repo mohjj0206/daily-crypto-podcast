@@ -1181,14 +1181,14 @@ def create_slides(coin_code, market, trigger, articles, dialogues):
         # 透明資料卡圖層：底下由 Pixabay 實景影片持續播放。
         image = Image.new("RGBA", (1280, 720), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
-        draw.rectangle((0, 0, 1280, 82), fill=(23, 23, 47, 224))
+        draw.rectangle((0, 0, 1280, 82), fill=(23, 23, 47, 145))
         draw.text(
             (40, 22),
             f"幣看深潛｜{metadata['name']} 深度專題・{TODAY_STR}",
             fill="#f8fafc",
             font=header_font,
         )
-        draw.rectangle((60, 115, 1220, 610), fill=(17, 17, 38, 226), outline=(214, 182, 107, 235), width=4)
+        draw.rectangle((60, 115, 1220, 610), fill=(17, 17, 38, 138), outline=(214, 182, 107, 235), width=4)
 
         title_font = load_font(initial_title_size, True)
         title_lines = wrap_by_width(draw, title, title_font, 1080)
@@ -1413,14 +1413,17 @@ def run_coin_special():
     lead_broll_path = None
     if lead_duration > 0.10:
         try:
-            lead_broll_path = broll_engine.fetch_pixabay_broll(
+            lead_broll_path = broll_engine.fetch_pixabay_broll_reel(
                 f"{metadata['english']} cryptocurrency cinematic finance technology",
+                lead_duration,
                 orientation=broll_engine.HORIZONTAL,
+                clip_seconds=4.0,
+                max_clips=4,
             )
         except Exception as error:
             print(f"[Pixabay] 專題開場背景素材取得失敗，改用動態底圖：{error}")
         if lead_broll_path:
-            lead_input = ["-stream_loop", "-1", "-i", lead_broll_path]
+            lead_input = ["-i", lead_broll_path]
             lead_filter = (
                 "[0:v]scale=1280:720:force_original_aspect_ratio=increase,"
                 f"crop=1280:720,fps=24,trim=duration={lead_duration:.4f},"
@@ -1476,8 +1479,12 @@ def run_coin_special():
             }) or f"{metadata['english']} cryptocurrency finance blockchain"
             broll_path = None
             try:
-                broll_path = broll_engine.fetch_pixabay_broll(
-                    query, orientation=broll_engine.HORIZONTAL
+                broll_path = broll_engine.fetch_pixabay_broll_reel(
+                    query,
+                    duration,
+                    orientation=broll_engine.HORIZONTAL,
+                    clip_seconds=4.0,
+                    max_clips=6,
                 )
             except Exception as error:
                 print(f"[Pixabay] 第 {index} 張專題背景影片取得失敗，改用動態底圖：{error}")
@@ -1485,7 +1492,7 @@ def run_coin_special():
                 print(f"[Pixabay] 第 {index} 張專題未取得新素材，改用動態底圖，不重複舊影片。")
 
             if broll_path:
-                background_input = ["-stream_loop", "-1", "-i", broll_path]
+                background_input = ["-i", broll_path]
                 background_filter = (
                     f"[0:v]scale=1280:720:force_original_aspect_ratio=increase,"
                     f"crop=1280:720,fps=24,trim=duration={duration:.4f},"
