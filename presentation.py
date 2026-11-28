@@ -152,6 +152,25 @@ def assign_broll_query(slide):
 
     return ", ".join(selected[:3])
 
+# 每種節目敘事形式對應不同的整集視覺主題；不只換投影片內容，也換主畫面構圖。
+VISUAL_STYLE_BY_FORMAT = {
+    "debate": "debate",
+    "history_mirror": "archive",
+    "deep_story": "editorial",
+    "psychology_flow": "psychology",
+    "case_file": "investigation",
+    "data_detective": "terminal",
+    "scenario_lab": "scenario",
+    "myth_busting": "editorial",
+    "capital_flow": "data",
+    "volatility_lab": "terminal",
+}
+
+
+def visual_style_for_format(format_id):
+    """將節目形式轉成主影片整集視覺模板，未知模式採用紀錄片風格。"""
+    return VISUAL_STYLE_BY_FORMAT.get(str(format_id or ""), "editorial")
+
 DAILY_LAYOUTS = ("impact_quote", "versus_clash", "chart_spotlight", "timeline_steps")
 
 DAILY_STORY_BEATS = {
