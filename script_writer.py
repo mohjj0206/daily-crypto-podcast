@@ -1359,6 +1359,10 @@ def generate_script(mdata, dca_data, config):
         for item in slide_news_details
     ]
 
+    editorial_lead = editorial_brief.get("editorial_lead") or suggest_editorial_lead(mdata)
+    if any(banned in editorial_lead for banned in BANNED_SLIDE_TITLES):
+        editorial_lead = suggest_editorial_lead(mdata)
+
     ai_title = silence_gap_leaks(sanitize_text(editorial_brief.get("title") or editorial_lead or "加密市場焦點調查"))
     if not ai_title:
         ai_title = editorial_lead or "加密市場焦點調查"
@@ -1371,10 +1375,6 @@ def generate_script(mdata, dca_data, config):
         if cleaned:
             cleaned_week.append(cleaned)
     slide_24h_conditions = cleaned_week or list(slide_24h_conditions)
-
-    editorial_lead = editorial_brief.get("editorial_lead") or suggest_editorial_lead(mdata)
-    if any(banned in editorial_lead for banned in BANNED_SLIDE_TITLES):
-        editorial_lead = suggest_editorial_lead(mdata)
 
     slide_titles = align_slide_titles(
         editorial_brief.get("slide_titles"),
