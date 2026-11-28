@@ -1599,7 +1599,7 @@ def _load_tutorial_cache():
             cached = json.load(handle)
     except (OSError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 1 <= len(cached.get("sections") or []) <= 8:
+    if not isinstance(cached, dict) or cached.get("structure_version") != 2 or not 3 <= len(cached.get("sections") or []) <= 8:
         return None
     print("[REUSE_SCRIPT] 使用 cache_last_tutorial_script.json，教學稿不呼叫 Gemini。")
     return cached
