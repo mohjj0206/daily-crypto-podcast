@@ -824,7 +824,7 @@ html, body {{ margin: 0; padding: 0; width: {MAIN_W}px; height: {MAIN_H}px;
   color: #8195b2; font-size: 18px; letter-spacing: 1px; }}
 </style></head>
 <body>
-<div class="stage" style="--broll-cycle:{min(18.0, max(8.0, float(sum(reveal_seconds) if reveal_seconds else 18.0))):.3f}s;">
+<div class="stage" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">
   {_broll_background_html(broll_path)}
   <div class="content">
     <div class="topline"><span class="brand">幣看深潛｜數據分析</span><span>{html.escape(page_label)}</span></div>
@@ -1436,7 +1436,7 @@ transition:color .5s,opacity .5s,text-shadow .5s,transform .5s;}}
 .line.active{{color:#fff;opacity:1;transform:scale(1.05);
 text-shadow:0 0 26px rgba(251,191,36,.75),0 0 54px rgba(251,191,36,.4);}}
 .line.done{{color:#3b4656;opacity:.5;}}
-</style></head><body><div class="stage" style="--broll-cycle:{max(12.0, float(sum(reveal_seconds) if reveal_seconds else 18.0)):.3f}s;">{broll_markup}<div class="center">
+</style></head><body><div class="stage" style="--broll-cycle:{min(18.0, max(8.0, float(reveal_seconds[-1] if reveal_seconds else 18.0))):.3f}s;">{broll_markup}<div class="center">
 <div class="big">{big}</div><div class="lines">{line_markup}</div></div></div>
 <script>(function(){{
 const nodes=[].slice.call(document.querySelectorAll(".line"));const times={reveal_json};
