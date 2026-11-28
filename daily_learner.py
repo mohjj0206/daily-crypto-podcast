@@ -406,6 +406,7 @@ def archive_episode(is_test, upload_id, mdata, sdata, audit):
         title_warnings = check_title_uniqueness(yt_title, today)
         if title_warnings:
             record["quality_audit"]["warnings"].extend(title_warnings)
+            record["quality_audit"]["content_status"] = "needs_review"
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
