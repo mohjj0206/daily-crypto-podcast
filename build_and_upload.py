@@ -213,6 +213,7 @@ def main():
                 fng_num=mdata["fng_num"],
                 today_str=today_str,
                 short_title=short_title,
+                description_suffix=broll_credits,
             )
         except Exception as error:
             # 主片已成功上傳後，Shorts API 失敗不應讓整個工作流程回報全數失敗；
